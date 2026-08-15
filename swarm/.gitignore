@@ -1,0 +1,9 @@
+.ansible/
+.l/
+.state/
+.venv/
+.uv-cache/
+.tools/
+__pycache__/
+inventories/*/.vault-pass
+inventories/*/group_vars/all/vault.yml

@@ -1,0 +1,8 @@
+- name: Safely remove template-local WireGuard lockdown
+  hosts: localhost
+  gather_facts: true
+  environment:
+    LIMA_HOME: "{{ lima_runtime_home }}"
+    LIMA_SSH_PORT_FORWARDER: "false"
+  roles:
+    - wireguard_remove

@@ -1,0 +1,21 @@
+---
+- name: Show macOS production WireGuard status
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Show macOS production WireGuard peers without assuming a device name
+      ansible.builtin.command:
+        argv: [wg, show]
+      become: true
+      changed_when: false
+
+- name: Show production server WireGuard status through the mesh
+  hosts: wireguard_nodes
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Show this production manager's WireGuard peer state
+      ansible.builtin.command:
+        argv: [wg, show, "{{ prod_wireguard_interface }}"]
+      become: true
+      changed_when: false

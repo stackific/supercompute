@@ -1,0 +1,8 @@
+version: '3'
+
+tasks:
+  all:
+    requires:
+      vars: [PROVIDER, CONFIRM]
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/reset.sh" "{{.PROVIDER}}" "{{.CONFIRM}}"

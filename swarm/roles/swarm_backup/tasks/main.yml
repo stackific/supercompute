@@ -1,0 +1,9 @@
+---
+- name: Require a supported Swarm backup lifecycle state
+  ansible.builtin.assert:
+    that:
+      - swarm_backup_state in ['present', 'absent']
+    fail_msg: "swarm_backup_state must be present or absent."
+
+- name: Apply the requested Swarm backup lifecycle state
+  ansible.builtin.include_tasks: "{{ swarm_backup_state }}.yml"

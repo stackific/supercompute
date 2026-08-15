@@ -1,0 +1,32 @@
+---
+- name: Read installed {{ swarm_docker_artifact.package }} version
+  ansible.builtin.command:
+    argv: [dpkg-query, --show, '--showformat=${Version}', "{{ swarm_docker_artifact.package }}"]
+  register: swarm_docker_artifact_installed_version
+  failed_when: false
+  changed_when: false
+
+- name: Download pinned {{ swarm_docker_artifact.package }} package
+  ansible.builtin.get_url:
+    url: "{{ swarm_docker_base_url }}/{{ swarm_docker_artifact.path }}"
+    dest: "{{ swarm_docker_cache_dir }}/{{ swarm_docker_artifact.filename }}"
+    checksum: "sha256:{{ swarm_docker_artifact.sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: >-
+    swarm_docker_artifact_installed_version.rc != 0 or
+    swarm_docker_artifact_installed_version.stdout != swarm_docker_artifact.version
+
+- name: Install pinned {{ swarm_docker_artifact.package }} package
+  ansible.builtin.apt:
+    deb: "{{ swarm_docker_cache_dir }}/{{ swarm_docker_artifact.filename }}"
+    state: present
+    allow_downgrade: true
+    allow_change_held_packages: true
+    install_recommends: false
+  become: true
+  when: >-
+    swarm_docker_artifact_installed_version.rc != 0 or
+    swarm_docker_artifact_installed_version.stdout != swarm_docker_artifact.version

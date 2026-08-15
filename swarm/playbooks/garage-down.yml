@@ -1,0 +1,10 @@
+---
+- name: Stop standalone template-local Garage without deleting its data
+  hosts: localhost
+  gather_facts: false
+  environment:
+    DOCKER_HOST: "{{ garage_docker_host }}"
+  vars:
+    garage_lifecycle: down
+  roles:
+    - garage

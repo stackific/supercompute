@@ -1,0 +1,576 @@
+---
+- name: Verify the WireGuard, Docker, gVisor, and Swarm baseline
+  hosts: wireguard_nodes
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - ../roles/swarm_engine/defaults/main.yml
+    - ../roles/swarm_gvisor/defaults/main.yml
+    - ../roles/secure_storage/defaults/main.yml
+  vars:
+    swarm_verify_first_manager: "{{ groups['wireguard_nodes'][0] }}"
+    swarm_verify_wireguard_interface: "{{ prod_wireguard_interface | default('wg0') }}"
+    swarm_backup_config_path: "/etc/{{ deployment_name }}-backup/config.json"
+    swarm_backup_restic_binary: "/usr/local/libexec/{{ deployment_name }}-backup/restic"
+    swarm_backup_restic_password: "{{ vault_swarm_backup_restic_password | default('') }}"
+    swarm_backup_restic_version: 0.19.1
+    swarm_backup_runner_path: "/usr/local/sbin/{{ deployment_name }}-backup-run"
+    swarm_backup_runtime_dir: "/var/lib/{{ deployment_name }}-backup"
+    swarm_backup_service: "{{ deployment_name }}-backup.service"
+    swarm_backup_timer: "{{ deployment_name }}-backup.timer"
+  tasks:
+    - name: Require the expected three-node Ubuntu platform
+      ansible.builtin.assert:
+        that:
+          - deployment_name is string
+          - deployment_name is match('^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$')
+          - encryption_at_rest is boolean
+          - groups['wireguard_nodes'] | length == 3
+          - ansible_facts.distribution == 'Ubuntu'
+          - ansible_facts.distribution_version == node_ubuntu_version
+          - ansible_facts.distribution_release == node_ubuntu_codename
+          - ansible_facts.architecture == node_host_architecture
+          - ansible_facts.architecture in swarm_docker_architectures
+          - swarm_availability == 'active'
+          - swarm_run_on_backup is boolean
+
+    - name: Read the business-data encryption ownership files
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ secure_storage_marker_path }}"
+        - "{{ secure_storage_sentinel_path }}"
+        - "{{ secure_storage_docker_drop_in_path }}"
+      register: swarm_verify_secure_storage_files
+
+    - name: Read the business-data fscrypt policy
+      ansible.builtin.command:
+        argv: [fscrypt, status, "{{ secure_storage_path }}"]
+      register: swarm_verify_secure_storage_status
+      become: true
+      changed_when: false
+      when: encryption_at_rest | bool
+
+    - name: Require the configured business-data encryption state
+      ansible.builtin.assert:
+        that:
+          - >-
+            not (encryption_at_rest | bool) or
+            (
+              swarm_verify_secure_storage_files.results |
+              map(attribute='stat.exists') |
+              select('equalto', true) |
+              list |
+              length == 3
+            )
+          - >-
+            not (encryption_at_rest | bool) or
+            'is encrypted with fscrypt' in swarm_verify_secure_storage_status.stdout
+          - >-
+            not (encryption_at_rest | bool) or
+            'Unlocked: Yes' in swarm_verify_secure_storage_status.stdout
+          - >-
+            not (encryption_at_rest | bool) or
+            'policy_version:2' in swarm_verify_secure_storage_status.stdout
+          - >-
+            (encryption_at_rest | bool) or
+            not swarm_verify_secure_storage_files.results[0].stat.exists
+          - >-
+            (encryption_at_rest | bool) or
+            not swarm_verify_secure_storage_files.results[2].stat.exists
+        fail_msg: >-
+          {{ inventory_hostname }} does not match deployment.yml's
+          encryption_at_rest state for {{ secure_storage_path }}.
+
+    - name: Select this node's pinned Docker artifacts
+      ansible.builtin.set_fact:
+        swarm_verify_docker_artifacts: >-
+          {{ swarm_docker_artifacts[swarm_docker_architectures[ansible_facts.architecture]] }}
+
+    - name: Read the installed Docker package versions
+      ansible.builtin.command:
+        argv: [dpkg-query, --show, '--showformat=${Version}', "{{ item.package }}"]
+      loop: "{{ swarm_verify_docker_artifacts }}"
+      loop_control:
+        label: "{{ item.package }}"
+      register: swarm_verify_docker_packages
+      changed_when: false
+
+    - name: Require the SHA256-pinned Docker package versions
+      ansible.builtin.assert:
+        that:
+          - item.stdout == item.item.version
+        fail_msg: >-
+          {{ item.item.package }} must be {{ item.item.version }} but is
+          {{ item.stdout | default('absent', true) }} on {{ inventory_hostname }}.
+      loop: "{{ swarm_verify_docker_packages.results }}"
+      loop_control:
+        label: "{{ item.item.package }}"
+
+    - name: Require Docker Engine to be active
+      ansible.builtin.command:
+        argv: [systemctl, is-active, docker.service]
+      become: true
+      changed_when: false
+
+    - name: Require Docker Engine to be enabled
+      ansible.builtin.command:
+        argv: [systemctl, is-enabled, docker.service]
+      become: true
+      changed_when: false
+
+    - name: Read the server WireGuard interface address
+      ansible.builtin.command:
+        argv: [ip, -o, -4, address, show, dev, "{{ swarm_verify_wireguard_interface }}", scope, global]
+      register: swarm_verify_wireguard_address
+      become: true
+      changed_when: false
+
+    - name: Read the server WireGuard peers
+      ansible.builtin.command:
+        argv: [wg, show, "{{ swarm_verify_wireguard_interface }}", peers]
+      register: swarm_verify_wireguard_peers
+      become: true
+      changed_when: false
+
+    - name: Require the project WireGuard interface and peer set
+      ansible.builtin.assert:
+        that:
+          - "' ' ~ swarm_node_address ~ '/' in swarm_verify_wireguard_address.stdout"
+          - swarm_verify_wireguard_peers.stdout_lines | length == groups['wireguard_nodes'] | length
+        fail_msg: >-
+          {{ inventory_hostname }} does not have the expected
+          {{ swarm_verify_wireguard_interface }}/{{ swarm_node_address }} mesh state.
+
+    - name: Require the server WireGuard service to be active
+      ansible.builtin.command:
+        argv: [systemctl, is-active, "wg-quick@{{ swarm_verify_wireguard_interface }}.service"]
+      become: true
+      changed_when: false
+
+    - name: Read the local project firewall service state
+      ansible.builtin.command:
+        argv: [systemctl, is-active, manual-wg-firewall.service]
+      become: true
+      changed_when: false
+      when: wireguard_firewall_source is defined
+
+    - name: Read the active local project firewall table
+      ansible.builtin.command:
+        argv: [nft, list, table, inet, manual_wireguard]
+      register: swarm_verify_local_firewall
+      become: true
+      changed_when: false
+      when: wireguard_firewall_source is defined
+
+    - name: Require the local firewall's WireGuard-only Swarm ports
+      ansible.builtin.assert:
+        that:
+          - "'wg0' in swarm_verify_local_firewall.stdout"
+          - "'2377' in swarm_verify_local_firewall.stdout"
+          - "'7946' in swarm_verify_local_firewall.stdout"
+          - "'4789' in swarm_verify_local_firewall.stdout"
+      when: wireguard_firewall_source is defined
+
+    - name: Check the complete gVisor runtime bundle
+      ansible.builtin.stat:
+        path: "{{ swarm_gvisor_install_dir }}/{{ item }}"
+      loop:
+        - runsc
+        - containerd-shim-runsc-v1
+        - gvisor-bin/checkpointgofer
+        - gvisor-bin/gvisor_sentry
+        - gvisor-bin/runsc-metric-server
+      register: swarm_verify_gvisor_files
+      become: true
+
+    - name: Require every gVisor runtime component to be executable
+      ansible.builtin.assert:
+        that:
+          - item.stat.exists
+          - item.stat.isreg
+          - item.stat.executable
+        fail_msg: "Missing or non-executable gVisor component {{ item.item }}."
+      loop: "{{ swarm_verify_gvisor_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Read the installed gVisor version
+      ansible.builtin.command:
+        argv: ["{{ swarm_gvisor_install_dir }}/runsc", --version]
+      register: swarm_verify_gvisor_version
+      changed_when: false
+
+    - name: Require the pinned gVisor release
+      ansible.builtin.assert:
+        that:
+          - swarm_verify_gvisor_version.stdout is search('release-' ~ swarm_gvisor_release)
+
+    - name: Read the project-owned Docker daemon configuration
+      ansible.builtin.slurp:
+        src: "{{ swarm_gvisor_daemon_config_path }}"
+      register: swarm_verify_docker_daemon_config
+      become: true
+
+    - name: Require the exact gVisor netstack Docker runtime configuration
+      ansible.builtin.assert:
+        that:
+          - swarm_gvisor_docker_config['default-runtime'] == 'runsc'
+          - swarm_gvisor_docker_config['runtimes']['runsc']['runtimeArgs'] == ['--network=sandbox']
+          - (swarm_verify_docker_daemon_config.content | b64decode | from_json) == swarm_gvisor_docker_config
+
+    - name: Read this node's Docker and Swarm identity
+      ansible.builtin.command:
+        argv:
+          - docker
+          - info
+          - --format
+          - >-
+            {% raw %}{{.Name}}|{{.ServerVersion}}|{{.Swarm.LocalNodeState}}|{{.Swarm.ControlAvailable}}|
+            {{- if .Swarm.Cluster}}{{.Swarm.Cluster.ID}}{{end}}|{{.Swarm.NodeID}}|{{.DefaultRuntime}}{% endraw %}
+      register: swarm_verify_docker_info
+      become: true
+      changed_when: false
+
+    - name: Parse this node's Docker and Swarm identity
+      ansible.builtin.set_fact:
+        swarm_verify_docker_fields: "{{ swarm_verify_docker_info.stdout.split('|') }}"
+
+    - name: Require an active manager using gVisor by default
+      ansible.builtin.assert:
+        that:
+          - swarm_verify_docker_fields | length == 7
+          - swarm_verify_docker_fields[0] | length > 0
+          - swarm_verify_docker_fields[1] | length > 0
+          - swarm_verify_docker_fields[2] == 'active'
+          - swarm_verify_docker_fields[3] == 'true'
+          - swarm_verify_docker_fields[4] | length > 0
+          - swarm_verify_docker_fields[5] | length > 0
+          - swarm_verify_docker_fields[6] == 'runsc'
+
+    - name: Require every manager to share the first manager's cluster
+      ansible.builtin.assert:
+        that:
+          - swarm_verify_docker_fields[4] == hostvars[swarm_verify_first_manager].swarm_verify_docker_fields[4]
+
+    - name: Inspect project backup files on every manager
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "/etc/systemd/system/{{ swarm_backup_timer }}"
+        - "/etc/systemd/system/{{ swarm_backup_service }}"
+        - "{{ swarm_backup_config_path }}"
+        - "{{ swarm_backup_runner_path }}"
+        - "{{ swarm_backup_restic_binary }}"
+      register: swarm_verify_backup_files
+      become: true
+
+    - name: Require backup ownership only on the labeled active manager
+      ansible.builtin.assert:
+        that:
+          - >-
+            (swarm_run_on_backup | bool and
+             swarm_verify_backup_files.results | map(attribute='stat.exists') | select('equalto', true) | list | length == 5) or
+            (not (swarm_run_on_backup | bool) and
+             swarm_verify_backup_files.results | map(attribute='stat.exists') | select('equalto', true) | list | length == 0)
+        fail_msg: >-
+          Backup service ownership must exist only on the one manager marked
+          swarm_run_on_backup=true.
+
+    - name: Read the labeled manager's backup timer state
+      ansible.builtin.command:
+        argv: [systemctl, is-enabled, "{{ swarm_backup_timer }}"]
+      register: swarm_verify_backup_timer_enabled
+      changed_when: false
+      become: true
+      when: swarm_run_on_backup | bool
+
+    - name: Require the labeled manager's backup timer to be active
+      ansible.builtin.command:
+        argv: [systemctl, is-active, "{{ swarm_backup_timer }}"]
+      changed_when: false
+      become: true
+      when: swarm_run_on_backup | bool
+
+    - name: Read the labeled manager's six-hour timer definition
+      ansible.builtin.slurp:
+        src: "/etc/systemd/system/{{ swarm_backup_timer }}"
+      register: swarm_verify_backup_timer_definition
+      become: true
+      when: swarm_run_on_backup | bool
+
+    - name: Read the labeled manager's private backup configuration
+      ansible.builtin.slurp:
+        src: "{{ swarm_backup_config_path }}"
+      register: swarm_verify_backup_config
+      become: true
+      no_log: true
+      when: swarm_run_on_backup | bool
+
+    - name: Require the exact six-hour, 30-day backup policy
+      ansible.builtin.assert:
+        that:
+          - swarm_verify_backup_timer_enabled.stdout == 'enabled'
+          - "'OnActiveSec=21600s' in (swarm_verify_backup_timer_definition.content | b64decode)"
+          - "'OnUnitInactiveSec=21600s' in (swarm_verify_backup_timer_definition.content | b64decode)"
+          - (swarm_verify_backup_config.content | b64decode | from_json).manager == inventory_hostname
+          - (swarm_verify_backup_config.content | b64decode | from_json).manager_address == swarm_node_address
+          - (swarm_verify_backup_config.content | b64decode | from_json).retention_days == 30
+          - (swarm_verify_backup_config.content | b64decode | from_json).object_prefix == swarm_backup_object_prefix
+          - (swarm_verify_backup_config.content | b64decode | from_json).s3_endpoint == swarm_backup_s3_endpoint
+          - (swarm_verify_backup_config.content | b64decode | from_json).s3_bucket == swarm_backup_s3_bucket
+          - (swarm_verify_backup_config.content | b64decode | from_json).s3_region == swarm_backup_s3_region
+          - (swarm_verify_backup_config.content | b64decode | from_json).s3_bucket_lookup == swarm_backup_s3_bucket_lookup
+          - (swarm_verify_backup_config.content | b64decode | from_json).s3_access_key == swarm_backup_s3_access_key
+          - (swarm_verify_backup_config.content | b64decode | from_json).s3_secret_key == swarm_backup_s3_secret_key
+          - (swarm_verify_backup_config.content | b64decode | from_json).restic_password == swarm_backup_restic_password
+        fail_msg: >-
+          The labeled manager does not have the exact six-hour, 30-day encrypted backup policy.
+      no_log: true
+      when: swarm_run_on_backup | bool
+
+    - name: Require the pinned Restic version on the labeled manager
+      ansible.builtin.command:
+        argv: ["{{ swarm_backup_restic_binary }}", version]
+      register: swarm_verify_backup_restic_version
+      changed_when: false
+      failed_when: >-
+        swarm_verify_backup_restic_version.rc != 0 or
+        ('restic ' ~ swarm_backup_restic_version ~ ' ') not in swarm_verify_backup_restic_version.stdout
+      when: swarm_run_on_backup | bool
+
+    - name: Require the labeled manager to open its encrypted S3 repository
+      ansible.builtin.command:
+        argv:
+          - "{{ swarm_backup_restic_binary }}"
+          - -o
+          - "s3.bucket-lookup={{ swarm_backup_s3_bucket_lookup }}"
+          - -o
+          - "s3.region={{ swarm_backup_s3_region }}"
+          - cat
+          - config
+      environment:
+        RESTIC_REPOSITORY: >-
+          s3:{{ swarm_backup_s3_endpoint }}/{{ swarm_backup_s3_bucket }}/{{ swarm_backup_object_prefix }}
+        RESTIC_PASSWORD: "{{ swarm_backup_restic_password }}"
+        RESTIC_CACHE_DIR: "{{ swarm_backup_runtime_dir }}/cache"
+        AWS_ACCESS_KEY_ID: "{{ swarm_backup_s3_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ swarm_backup_s3_secret_key }}"
+        AWS_DEFAULT_REGION: "{{ swarm_backup_s3_region }}"
+      changed_when: false
+      no_log: true
+      become: true
+      when: swarm_run_on_backup | bool
+
+- name: Verify manager membership and a temporary gVisor workload
+  hosts: "{{ groups['wireguard_nodes'][0] }}"
+  gather_facts: true
+  any_errors_fatal: true
+  vars_files:
+    - ../roles/swarm_gvisor/defaults/main.yml
+  tasks:
+    - name: Collect the expected Swarm node IDs
+      ansible.builtin.set_fact:
+        swarm_verify_expected_node_ids: >-
+          {{ (swarm_verify_expected_node_ids | default([])) +
+             [hostvars[item].swarm_verify_docker_fields[5]] }}
+      loop: "{{ groups['wireguard_nodes'] }}"
+
+    - name: List the Swarm node IDs
+      ansible.builtin.command:
+        argv: [docker, node, ls, --quiet]
+      register: swarm_verify_node_ids
+      become: true
+      changed_when: false
+
+    - name: Require exactly the three inventory nodes in the Swarm
+      ansible.builtin.assert:
+        that:
+          - swarm_verify_node_ids.stdout_lines | sort == swarm_verify_expected_node_ids | sort
+
+    - name: Inspect every manager from the first manager
+      ansible.builtin.command:
+        argv:
+          - docker
+          - node
+          - inspect
+          - --format
+          - >-
+            {% raw %}{{.Description.Hostname}}|{{.Status.State}}|{{.Status.Addr}}|
+            {{- .ManagerStatus.Reachability}}|{{.ManagerStatus.Addr}}|{{.ManagerStatus.Leader}}|
+            {{- .Spec.Availability}}|{{index .Spec.Labels "run_on_backup"}}|{{.ID}}{% endraw %}
+          - "{{ hostvars[item].swarm_verify_docker_fields[5] }}"
+      loop: "{{ groups['wireguard_nodes'] }}"
+      loop_control:
+        label: "{{ item }}"
+      register: swarm_verify_manager_inspections
+      become: true
+      changed_when: false
+
+    - name: Require ready managers on private WireGuard addresses
+      ansible.builtin.assert:
+        that:
+          - item.stdout.split('|') | length == 9
+          - item.stdout.split('|')[0] | length > 0
+          - item.stdout.split('|')[1] == 'ready'
+          - item.stdout.split('|')[2] == hostvars[item.item].swarm_node_address
+          - item.stdout.split('|')[3] == 'reachable'
+          - item.stdout.split('|')[4] == hostvars[item.item].swarm_node_address ~ ':2377'
+          - item.stdout.split('|')[6] == hostvars[item.item].swarm_availability | default('active')
+          - item.stdout.split('|')[7] == ((hostvars[item.item].swarm_run_on_backup | bool) | ternary('true', 'false'))
+          - item.stdout.split('|')[8] == hostvars[item.item].swarm_verify_docker_fields[5]
+        fail_msg: "{{ item.item }} does not match the private three-manager baseline."
+      loop: "{{ swarm_verify_manager_inspections.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Require exactly one Swarm leader
+      ansible.builtin.assert:
+        that:
+          - >-
+            swarm_verify_manager_inspections.results |
+            selectattr('stdout', 'search', '^[^|]*\\|[^|]*\\|[^|]*\\|[^|]*\\|[^|]*\\|true\\|') |
+            list |
+            length == 1
+
+    - name: Require exactly one labeled backup workload manager
+      ansible.builtin.assert:
+        that:
+          - >-
+            swarm_verify_manager_inspections.results |
+            selectattr('stdout', 'search', '\\|true\\|[^|]+$') |
+            list |
+            length == 1
+
+    - name: Collect the labeled manager for the gVisor job
+      ansible.builtin.set_fact:
+        swarm_verify_backup_nodes: >-
+          {{ (swarm_verify_backup_nodes | default([])) + [item.stdout.split('|')[0]] }}
+      loop: "{{ swarm_verify_manager_inspections.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: hostvars[item.item].swarm_run_on_backup | bool
+
+    - name: Require one selected manager for the temporary workload
+      ansible.builtin.assert:
+        that:
+          - swarm_verify_backup_nodes | default([]) | length == 1
+
+    - name: Create a unique temporary service name
+      ansible.builtin.set_fact:
+        swarm_verify_service_name: >-
+          {{ deployment_name }}-verify-{{ ansible_facts.date_time.epoch }}-{{ 999999 | random }}
+
+    - name: Require the temporary service name to be unused
+      ansible.builtin.command:
+        argv: [docker, service, inspect, "{{ swarm_verify_service_name }}"]
+      register: swarm_verify_service_preexisting
+      become: true
+      failed_when: false
+      changed_when: false
+
+    - name: Refuse to remove a pre-existing service
+      ansible.builtin.assert:
+        that:
+          - swarm_verify_service_preexisting.rc != 0
+        fail_msg: >-
+          Temporary verification service {{ swarm_verify_service_name }} already exists;
+          refusing to reuse or remove it.
+
+    - name: Run and remove the temporary gVisor global job
+      block:
+        - name: Create the digest-pinned gVisor verification job
+          ansible.builtin.command:
+            argv:
+              - docker
+              - service
+              - create
+              - --detach=true
+              - --mode
+              - global-job
+              - --restart-condition
+              - none
+              - --constraint
+              - node.labels.run_on_backup==true
+              - --label
+              - "com.stackific.{{ deployment_name }}.verify=true"
+              - --name
+              - "{{ swarm_verify_service_name }}"
+              - "{{ swarm_gvisor_verify_image }}"
+              - sh
+              - -ec
+              - "dmesg | grep -qi gvisor; printf '{{ deployment_name }}_GVISOR_OK\\n'"
+          become: true
+          changed_when: true
+
+        - name: Wait for one successful gVisor job on the labeled manager
+          ansible.builtin.command:
+            argv:
+              - docker
+              - service
+              - ps
+              - --no-trunc
+              - --format
+              - '{% raw %}{{.Node}}|{{.CurrentState}}|{{.Error}}{% endraw %}'
+              - "{{ swarm_verify_service_name }}"
+          register: swarm_verify_job_status
+          become: true
+          changed_when: false
+          until:
+            - swarm_verify_job_status.stdout_lines | length == swarm_verify_backup_nodes | length
+            - swarm_verify_job_status.stdout_lines | select('search', '\\|Complete ') | list | length == swarm_verify_backup_nodes | length
+          retries: 30
+          delay: 2
+
+        - name: Require a completed gVisor job on the labeled manager
+          ansible.builtin.assert:
+            that:
+              - swarm_verify_job_status.stdout_lines | select('match', '^' ~ item ~ '\\|Complete ') | list | length == 1
+          loop: "{{ swarm_verify_backup_nodes }}"
+          loop_control:
+            label: "{{ item }}"
+
+        - name: Read the gVisor verification job logs
+          ansible.builtin.command:
+            argv: [docker, service, logs, --raw, "{{ swarm_verify_service_name }}"]
+          register: swarm_verify_job_logs
+          become: true
+          changed_when: false
+
+        - name: Require every job task to report the gVisor marker
+          ansible.builtin.assert:
+            that:
+              - swarm_verify_job_logs.stdout | regex_findall(deployment_name ~ '_GVISOR_OK') | length == swarm_verify_backup_nodes | length
+
+      always:
+        - name: Remove the temporary gVisor verification job
+          ansible.builtin.command:
+            argv: [docker, service, rm, "{{ swarm_verify_service_name }}"]
+          register: swarm_verify_service_cleanup
+          become: true
+          failed_when: false
+          changed_when: swarm_verify_service_cleanup.rc == 0
+
+        - name: Wait for the temporary service to be absent
+          ansible.builtin.command:
+            argv: [docker, service, inspect, "{{ swarm_verify_service_name }}"]
+          register: swarm_verify_service_absent
+          become: true
+          failed_when: false
+          changed_when: false
+          until: swarm_verify_service_absent.rc != 0
+          retries: 15
+          delay: 1
+
+        - name: Require temporary workload cleanup
+          ansible.builtin.assert:
+            that:
+              - swarm_verify_service_absent.rc != 0
+            fail_msg: "Temporary service {{ swarm_verify_service_name }} was not removed."
+
+    - name: Report the verified provider baseline
+      ansible.builtin.debug:
+        msg: >-
+          Verified three ready WireGuard-only managers, pinned Docker and gVisor,
+          active scheduling, the one run_on_backup=true node, and a constrained
+          temporary runsc job on that node; {{ swarm_verify_service_name }} was removed.

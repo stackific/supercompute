@@ -1,0 +1,84 @@
+---
+- name: Make every project inventory node leave Docker Swarm
+  hosts: wireguard_nodes
+  gather_facts: false
+  order: reverse_inventory
+  serial: 1
+  tasks:
+    - name: Remove the project backup timer before leaving Swarm
+      ansible.builtin.include_role:
+        name: swarm_backup
+      vars:
+        swarm_backup_state: absent
+
+    - name: Check whether Docker is installed
+      ansible.builtin.command:
+        argv: [which, docker]
+      register: swarm_down_docker
+      failed_when: false
+      changed_when: false
+
+    - name: Read the local Swarm state
+      ansible.builtin.command:
+        argv:
+          - docker
+          - info
+          - --format
+          - '{% raw %}{{.Swarm.LocalNodeState}}{% endraw %}'
+      register: swarm_down_state
+      become: true
+      failed_when: false
+      changed_when: false
+      when: swarm_down_docker.rc == 0
+
+    - name: Require readable Docker state before attempting removal
+      ansible.builtin.assert:
+        that:
+          - swarm_down_state.rc == 0
+        fail_msg: >-
+          Docker is installed on {{ inventory_hostname }} but its local Swarm
+          state cannot be read. Refusing to report a successful shutdown.
+      when: swarm_down_docker.rc == 0
+
+    - name: Leave Docker Swarm on this manager
+      ansible.builtin.command:
+        argv: [docker, swarm, leave, --force]
+      become: true
+      changed_when: true
+      when:
+        - swarm_down_docker.rc == 0
+        - swarm_down_state.stdout | default('inactive') == 'active'
+
+    - name: Verify the final local Swarm state
+      ansible.builtin.command:
+        argv:
+          - docker
+          - info
+          - --format
+          - '{% raw %}{{.Swarm.LocalNodeState}}{% endraw %}'
+      register: swarm_down_final_state
+      become: true
+      changed_when: false
+      when: swarm_down_docker.rc == 0
+
+    - name: Require Docker Swarm to be inactive on this node
+      ansible.builtin.assert:
+        that:
+          - swarm_down_final_state.stdout == 'inactive'
+        fail_msg: "Docker Swarm remains active on {{ inventory_hostname }}."
+      when: swarm_down_docker.rc == 0
+
+    - name: Remove the baseline gVisor runtime configuration
+      ansible.builtin.include_role:
+        name: swarm_gvisor
+      vars:
+        swarm_gvisor_state: absent
+      when: swarm_down_docker.rc == 0
+
+    - name: Report this node's final Swarm state
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: Docker Swarm is inactive, the baseline
+          gVisor runtime and backup timer were removed, and Docker uses runc;
+          Docker Engine, its package cache, S3 backups, and WireGuard were not removed.
+      when: swarm_down_docker.rc == 0

@@ -1,0 +1,167 @@
+---
+- name: Require an architecture-specific pinned gVisor release
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture in swarm_gvisor_artifacts
+    fail_msg: >-
+      gVisor {{ swarm_gvisor_release }} is pinned only for AMD64 and ARM64;
+      {{ inventory_hostname }} reports {{ ansible_facts.architecture | default('unknown') }}.
+
+- name: Require the isolated gVisor netstack runtime policy
+  ansible.builtin.assert:
+    that:
+      - swarm_gvisor_docker_config['default-runtime'] == 'runsc'
+      - swarm_gvisor_docker_config['runtimes']['runsc']['runtimeArgs'] == ['--network=sandbox']
+    fail_msg: >-
+      The baseline requires runsc as Docker's default runtime with
+      --network=sandbox so workloads use gVisor netstack, not host networking.
+
+- name: Select the pinned gVisor artifact
+  ansible.builtin.set_fact:
+    swarm_gvisor_artifact: "{{ swarm_gvisor_artifacts[ansible_facts.architecture] }}"
+
+- name: Check the installed gVisor runtime components
+  ansible.builtin.stat:
+    path: "{{ swarm_gvisor_install_dir }}/{{ item }}"
+  loop: "{{ swarm_gvisor_required_components }}"
+  register: swarm_gvisor_installed_components
+  become: true
+
+- name: Read the existing gVisor version
+  ansible.builtin.command:
+    argv: ["{{ swarm_gvisor_install_dir }}/runsc", --version]
+  register: swarm_gvisor_existing_version
+  failed_when: false
+  changed_when: false
+  when:
+    - swarm_gvisor_installed_components.results[0].stat.exists
+    - swarm_gvisor_installed_components.results[0].stat.executable
+
+- name: Decide whether the pinned gVisor bundle needs installation
+  ansible.builtin.set_fact:
+    swarm_gvisor_install_required: >-
+      {{ (swarm_gvisor_installed_components.results |
+          selectattr('stat.exists', 'equalto', true) |
+          selectattr('stat.isreg', 'equalto', true) |
+          selectattr('stat.executable', 'equalto', true) |
+          list |
+          length) != (swarm_gvisor_required_components | length) or
+         (swarm_gvisor_existing_version.rc | default(1)) != 0 or
+         not (swarm_gvisor_existing_version.stdout | default('') is
+              search('release-' ~ swarm_gvisor_release)) }}
+
+- name: Create the required gVisor and Docker directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ swarm_gvisor_cache_dir }}"
+      mode: '0755'
+      required: "{{ swarm_gvisor_install_required }}"
+    - path: "{{ swarm_gvisor_install_dir }}"
+      mode: '0755'
+      required: "{{ swarm_gvisor_install_required }}"
+    - path: /etc/docker
+      mode: '0755'
+      required: true
+  become: true
+  when: item.required | bool
+
+- name: Download the SHA512-pinned gVisor release
+  ansible.builtin.get_url:
+    url: "{{ swarm_gvisor_base_url }}/{{ swarm_gvisor_release }}/{{ ansible_facts.architecture }}/gvisor.tar.bz2"
+    dest: "{{ swarm_gvisor_cache_dir }}/{{ swarm_gvisor_artifact.filename }}"
+    checksum: "sha512:{{ swarm_gvisor_artifact.sha512 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: swarm_gvisor_install_required
+
+- name: Install the complete pinned gVisor runtime bundle
+  ansible.builtin.unarchive:
+    src: "{{ swarm_gvisor_cache_dir }}/{{ swarm_gvisor_artifact.filename }}"
+    dest: "{{ swarm_gvisor_install_dir }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when: swarm_gvisor_install_required
+
+- name: Read the installed gVisor version
+  ansible.builtin.command:
+    argv: ["{{ swarm_gvisor_install_dir }}/runsc", --version]
+  register: swarm_gvisor_version
+  changed_when: false
+
+- name: Require the exact pinned gVisor release
+  ansible.builtin.assert:
+    that:
+      - swarm_gvisor_version.stdout is search('release-' ~ swarm_gvisor_release)
+    fail_msg: >-
+      Installed runsc does not report pinned release {{ swarm_gvisor_release }}.
+
+- name: Check for an existing Docker daemon configuration
+  ansible.builtin.stat:
+    path: "{{ swarm_gvisor_daemon_config_path }}"
+  register: swarm_gvisor_existing_daemon_config
+  become: true
+
+- name: Read the existing Docker daemon configuration
+  ansible.builtin.slurp:
+    src: "{{ swarm_gvisor_daemon_config_path }}"
+  register: swarm_gvisor_existing_daemon_content
+  become: true
+  when: swarm_gvisor_existing_daemon_config.stat.exists
+
+- name: Refuse to overwrite Docker configuration not owned by this baseline
+  ansible.builtin.assert:
+    that:
+      - >-
+        not swarm_gvisor_existing_daemon_config.stat.exists or
+        (swarm_gvisor_existing_daemon_content.content | b64decode | from_json) ==
+        swarm_gvisor_docker_config or
+        (swarm_gvisor_existing_daemon_content.content | b64decode | from_json) in
+        swarm_gvisor_legacy_docker_configs
+    fail_msg: >-
+      {{ swarm_gvisor_daemon_config_path }} contains Docker settings outside
+      this baseline. Merge gVisor deliberately instead of overwriting them.
+
+- name: Configure gVisor as Docker's default runtime
+  ansible.builtin.copy:
+    content: "{{ swarm_gvisor_docker_config | to_nice_json(indent=2) }}\n"
+    dest: "{{ swarm_gvisor_daemon_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+    validate: /usr/bin/dockerd --validate --config-file %s
+  register: swarm_gvisor_daemon_config
+  become: true
+
+- name: Restart Docker after installing the gVisor runtime
+  ansible.builtin.systemd_service:
+    name: docker.service
+    state: restarted
+  become: true
+  when: swarm_gvisor_daemon_config.changed
+
+- name: Read Docker's default runtime
+  ansible.builtin.command:
+    argv:
+      - docker
+      - info
+      - --format
+      - '{% raw %}{{.DefaultRuntime}}{% endraw %}'
+  register: swarm_gvisor_docker_default_runtime
+  become: true
+  changed_when: false
+
+- name: Require Docker to use gVisor by default
+  ansible.builtin.assert:
+    that:
+      - swarm_gvisor_docker_default_runtime.stdout == 'runsc'
+    fail_msg: "Docker did not activate runsc as its default runtime."
