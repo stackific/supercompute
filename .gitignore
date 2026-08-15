@@ -1,0 +1,90 @@
+*.orig
+*.pyc
+*.swp
+*.symcache
+.env
+
+/.cargo_home/
+/.idea/
+/.vs/
+/.vscode/
+gclient_config.py_entries
+/target/
+/std/hash/_wasm/target
+/tests/wpt/runner/manifest.json
+/third_party/
+/tests/napi/node_modules
+/tests/napi/build
+/tests/napi/third_party_tests/node_modules
+
+/result
+
+# MacOS generated files
+.DS_Store
+.DS_Store?
+
+# Flamegraphs
+/flamebench*.svg
+/flamegraph*.svg
+
+# WPT generated cert files
+/tests/wpt/runner/certs/index.txt*
+/tests/wpt/runner/certs/serial*
+
+/ext/websocket/autobahn/reports
+
+# Coverage files
+/coverage
+
+# JUnit files produced by deno test --junit
+junit.xml
+
+# Jupyter files
+.ipynb_checkpoints/
+Untitled*.ipynb
+
+# playwright browser binary cache
+/.ms-playwright
+
+**/.claude/settings.local.json
+**/.claude/scheduled_tasks.lock
+
+# pyenv
+/.python-version
+
+
+
+
+
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# Editor/IDE
+# .idea/
+# .vscode/

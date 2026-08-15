@@ -1,0 +1,1 @@
+Read and follow AGENTS.md as your constitution. If you want to ignore it, STOP.
