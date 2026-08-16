@@ -67,5 +67,7 @@ to encrypt existing plaintext data in place.
 - [Template-local setup](docs/setup-templ-local.md)
 - [Template-production setup](docs/setup-templ-prod.md)
 - [Add or remove a Swarm node](docs/node-lifecycle.md)
+- [Node lifecycle Taskfile automation
+  proposal](docs/node-lifecycle-automation-proposal.md)
 - [Encrypted business-data storage](docs/encrypted-at-rest.md)
 - [Networking](docs/networking.md)
