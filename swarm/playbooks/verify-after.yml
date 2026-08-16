@@ -1,0 +1,24 @@
+- name: Verify post-WireGuard guest services and mesh
+  hosts: wireguard_nodes
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Wait for WireGuard SSH access
+      ansible.builtin.wait_for_connection:
+        timeout: 30
+    - name: Run post-WireGuard guest acceptance checks
+      ansible.builtin.include_role:
+        name: wireguard_verify
+        tasks_from: after-guest
+
+- name: Verify post-WireGuard controller acceptance checks
+  hosts: localhost
+  gather_facts: true
+  environment:
+    LIMA_HOME: "{{ lima_runtime_home }}"
+    LIMA_SSH_PORT_FORWARDER: "false"
+  tasks:
+    - name: Run post-WireGuard controller acceptance checks
+      ansible.builtin.include_role:
+        name: wireguard_verify
+        tasks_from: after-controller

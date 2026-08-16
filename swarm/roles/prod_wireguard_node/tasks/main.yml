@@ -1,0 +1,93 @@
+---
+- name: Require Ubuntu 26.04 AMD64 before production bootstrap
+  ansible.builtin.assert:
+    that:
+      - node_ubuntu_version == '26.04'
+      - node_ubuntu_codename == 'resolute'
+      - node_host_architecture == 'x86_64'
+      - ansible_facts['distribution'] == 'Ubuntu'
+      - ansible_facts['distribution_version'] == node_ubuntu_version
+      - ansible_facts['distribution_release'] == node_ubuntu_codename
+      - ansible_facts['architecture'] == node_host_architecture
+    fail_msg: >-
+      Production bootstrap requires Ubuntu {{ node_ubuntu_version }}
+      ({{ node_ubuntu_codename }}) AMD64;
+      {{ inventory_hostname }} reports
+      {{ ansible_facts['distribution'] | default('unknown') }}
+      {{ ansible_facts['distribution_version'] | default('unknown') }}
+      {{ ansible_facts['distribution_release'] | default('unknown') }}
+      {{ ansible_facts['architecture'] | default('unknown') }}.
+
+- name: Require a WireGuard identity for this production server
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in prod_wireguard_node_addresses
+      - vault_prod_wireguard_private_keys[inventory_hostname] is string
+      - vault_prod_wireguard_public_keys[inventory_hostname] is string
+      - vault_prod_wireguard_private_keys.macos is string
+      - vault_prod_wireguard_public_keys.macos is string
+      - prod_wireguard_endpoint is string
+      - prod_wireguard_endpoint | length > 0
+      - prod_wireguard_endpoint is not match('^REPLACE_WITH_')
+    fail_msg: >-
+      This server lacks a complete Vault-managed WireGuard identity or a
+      public bootstrap endpoint.
+  no_log: true
+
+- name: Require WireGuard material for every production server
+  ansible.builtin.assert:
+    that:
+      - vault_prod_wireguard_private_keys[item] is string
+      - vault_prod_wireguard_public_keys[item] is string
+  loop: "{{ groups['wireguard_nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+
+- name: Install the pinned WireGuard package
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    name: "wireguard-tools={{ prod_wireguard_tools_version }}"
+    state: present
+    allow_downgrade: true
+  become: true
+
+- name: Load the kernel WireGuard module
+  ansible.builtin.command:
+    argv: [modprobe, wireguard]
+  become: true
+  changed_when: false
+
+- name: Create the private WireGuard configuration directory
+  ansible.builtin.file:
+    path: /etc/wireguard
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+
+- name: Render this production server's private WireGuard configuration
+  ansible.builtin.template:
+    src: scwg0.conf.j2
+    dest: "/etc/wireguard/{{ prod_wireguard_interface }}.conf"
+    owner: root
+    group: root
+    mode: '0600'
+  register: prod_wireguard_node_config
+  become: true
+  no_log: true
+
+- name: Enable and start this production server's WireGuard interface
+  ansible.builtin.systemd_service:
+    name: "wg-quick@{{ prod_wireguard_interface }}.service"
+    enabled: true
+    state: "{{ 'restarted' if prod_wireguard_node_config.changed else 'started' }}"
+  become: true
+
+- name: Show this production server's WireGuard peers without private keys
+  ansible.builtin.command:
+    argv: [wg, show, "{{ prod_wireguard_interface }}"]
+  become: true
+  changed_when: false

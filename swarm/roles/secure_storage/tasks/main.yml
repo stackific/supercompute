@@ -1,0 +1,55 @@
+---
+- name: Require an explicit encryption-at-rest feature flag
+  ansible.builtin.assert:
+    that:
+      - encryption_at_rest is boolean
+    fail_msg: "deployment.yml must define encryption_at_rest as true or false."
+
+- name: Create the business-data root
+  ansible.builtin.file:
+    path: "{{ secure_storage_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+
+- name: Read the project encryption ownership marker
+  ansible.builtin.stat:
+    path: "{{ secure_storage_marker_path }}"
+  register: secure_storage_marker
+
+- name: Read the existing project encryption ownership marker
+  ansible.builtin.slurp:
+    src: "{{ secure_storage_marker_path }}"
+  register: secure_storage_marker_content
+  become: true
+  when: secure_storage_marker.stat.exists
+
+- name: Require the exact project encryption ownership marker
+  ansible.builtin.assert:
+    that:
+      - secure_storage_marker.stat.isreg
+      - secure_storage_marker.stat.pw_name == 'root'
+      - secure_storage_marker.stat.gr_name == 'root'
+      - secure_storage_marker.stat.mode == '0600'
+      - (secure_storage_marker_content.content | b64decode | from_json).deployment_name == deployment_name
+      - (secure_storage_marker_content.content | b64decode | from_json).directory == secure_storage_path
+    fail_msg: >-
+      {{ secure_storage_marker_path }} is not the exact root-owned marker for
+      this deployment; refusing to adopt or alter the storage policy.
+  when: secure_storage_marker.stat.exists
+
+- name: Refuse to disable project-owned encryption implicitly
+  ansible.builtin.assert:
+    that:
+      - not secure_storage_marker.stat.exists
+    fail_msg: >-
+      {{ secure_storage_path }} is already managed as encrypted storage by
+      {{ deployment_name }}. Migrate the data deliberately before disabling
+      encryption_at_rest; this role will not decrypt it in place.
+  when: not (encryption_at_rest | bool)
+
+- name: Configure and unlock encrypted business-data storage
+  ansible.builtin.include_tasks: enabled.yml
+  when: encryption_at_rest | bool

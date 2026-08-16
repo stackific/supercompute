@@ -1,0 +1,14 @@
+[Unit]
+Description=Restrict project management traffic to WireGuard
+After=network-online.target ssh.service wg-quick@wg0.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The gate is a long-running service so multi-user boot and Lima's guest agent
+# are not blocked while it waits. It applies the nft policy before idling.
+ExecStart={{ wireguard_firewall_wait_path }} wg0 {{ wireguard_macos_address }} {{ wireguard_firewall_wait_seconds }} /etc/wireguard/manual-wireguard-lockdown.nft
+ExecStop=-/usr/sbin/nft delete table inet manual_wireguard
+
+[Install]
+WantedBy=multi-user.target

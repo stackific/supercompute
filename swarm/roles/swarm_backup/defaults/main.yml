@@ -1,0 +1,25 @@
+---
+swarm_backup_state: present
+swarm_backup_timer_interval_seconds: 21600
+swarm_backup_retention_days: 30
+swarm_backup_object_prefix: "{{ deployment_name }}/{{ inventory_slug }}/swarm-state/v1"
+swarm_backup_restic_version: 0.19.1
+swarm_backup_restic_install_dir: "/usr/local/libexec/{{ deployment_name }}-backup"
+swarm_backup_restic_binary: "{{ swarm_backup_restic_install_dir }}/restic"
+swarm_backup_cache_dir: "/var/cache/{{ deployment_name }}/backup"
+swarm_backup_runtime_dir: "/var/lib/{{ deployment_name }}-backup"
+swarm_backup_config_path: "/etc/{{ deployment_name }}-backup/config.json"
+swarm_backup_runner_path: "/usr/local/sbin/{{ deployment_name }}-backup-run"
+swarm_backup_service: "{{ deployment_name }}-backup.service"
+swarm_backup_timer: "{{ deployment_name }}-backup.timer"
+swarm_backup_s3_require_https: true
+swarm_backup_restic_password: "{{ vault_swarm_backup_restic_password | default('') }}"
+swarm_backup_restic_artifacts:
+  x86_64:
+    filename: restic_0.19.1_linux_amd64.bz2
+    sha256: f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+  aarch64:
+    filename: restic_0.19.1_linux_arm64.bz2
+    sha256: a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465
+swarm_backup_restic_base_url: >-
+  https://github.com/restic/restic/releases/download/v{{ swarm_backup_restic_version }}

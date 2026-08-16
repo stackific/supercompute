@@ -1,0 +1,55 @@
+- name: Require the macOS WireGuard configuration
+  ansible.builtin.stat:
+    path: "{{ wireguard_state_dir }}/wg.conf"
+  register: wireguard_verify_macos_wireguard_config
+
+- name: Refuse post-configuration verification without the macOS WireGuard configuration
+  ansible.builtin.assert:
+    that:
+      - wireguard_verify_macos_wireguard_config.stat.exists
+      - wireguard_verify_macos_wireguard_config.stat.mode == '0600'
+    fail_msg: "The private macOS WireGuard configuration is missing or unsafe."
+
+- name: Require the macOS WireGuard address
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: wireguard_verify_postflight_interfaces
+  changed_when: false
+
+- name: Assert the macOS WireGuard address is active
+  ansible.builtin.assert:
+    that:
+      - "'inet ' ~ wireguard_macos_address ~ ' ' in wireguard_verify_postflight_interfaces.stdout"
+    fail_msg: "The macOS WireGuard interface is not active."
+
+- name: Require all Lima UDP forwards
+  ansible.builtin.command:
+    argv: [lsof, -nP, -a, -c, limactl, "-iUDP:{{ item.wg_host_port }}"]
+  loop: "{{ lima_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+
+- name: Pair every local VM with a different user-v2 peer
+  ansible.builtin.set_fact:
+    wireguard_verify_user_v2_ssh_pairs: >-
+      {{ lima_nodes | zip(lima_nodes[1:] + lima_nodes[:1]) | list }}
+
+- name: Prove non-WireGuard user-v2 SSH is blocked after lockdown
+  ansible.builtin.command:
+    argv:
+      - limactl
+      - shell
+      - "{{ item.0.name }}"
+      - --
+      - timeout
+      - '3'
+      - bash
+      - -c
+      - "exec 3<>/dev/tcp/lima-{{ item.1.name }}.internal/22"
+  register: wireguard_verify_blocked_user_v2_ssh
+  failed_when: wireguard_verify_blocked_user_v2_ssh.rc == 0
+  changed_when: false
+  loop: "{{ wireguard_verify_user_v2_ssh_pairs }}"
+  loop_control:
+    label: "{{ item.0.name }} -> {{ item.1.name }}"

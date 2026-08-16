@@ -1,0 +1,1 @@
+All commands must work against the all inventories as we intend to keep them in parity.

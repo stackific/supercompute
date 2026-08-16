@@ -1,0 +1,54 @@
+- name: Verify the pinned Lima profiles before WireGuard
+  ansible.builtin.include_role:
+    name: lima
+  vars:
+    lima_lifecycle: verify
+
+- name: Require no existing private macOS WireGuard configuration
+  ansible.builtin.stat:
+    path: "{{ wireguard_state_dir }}/wg.conf"
+  register: wireguard_verify_preflight_macos_wireguard_config
+
+- name: Refuse a preflight with stale WireGuard state
+  ansible.builtin.assert:
+    that:
+      - not wireguard_verify_preflight_macos_wireguard_config.stat.exists
+    fail_msg: "WireGuard state still exists; run `task wg-remove` before preflight."
+
+- name: Confirm ordinary Lima access to each VM
+  ansible.builtin.command:
+    argv: [limactl, shell, "{{ item.name }}", --, 'true']
+  loop: "{{ lima_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+
+- name: Require no WireGuard interface before configuration
+  ansible.builtin.command:
+    argv: [limactl, shell, "{{ item.name }}", --, ip, link, show, wg0]
+  register: wireguard_verify_preflight_wg_interface
+  failed_when: wireguard_verify_preflight_wg_interface.rc == 0
+  changed_when: false
+  loop: "{{ lima_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Require no project nftables table before configuration
+  ansible.builtin.command:
+    argv: [limactl, shell, "{{ item.name }}", --, sudo, nft, list, table, inet, manual_wireguard]
+  register: wireguard_verify_preflight_firewall
+  failed_when: wireguard_verify_preflight_firewall.rc == 0
+  changed_when: false
+  loop: "{{ lima_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Require Lima's dynamic WireGuard forwards to be absent before configuration
+  ansible.builtin.command:
+    argv: [lsof, -nP, -a, -c, limactl, "-iUDP:{{ item.wg_host_port }}"]
+  register: wireguard_verify_preflight_udp_forward
+  failed_when: wireguard_verify_preflight_udp_forward.rc == 0
+  changed_when: false
+  loop: "{{ lima_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"

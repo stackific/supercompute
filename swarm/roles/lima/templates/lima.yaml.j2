@@ -1,0 +1,46 @@
+minimumLimaVersion: "{{ lima_version }}"
+vmType: vz
+arch: aarch64
+images:
+  - location: {{ lima_image_url }}
+    arch: aarch64
+    digest: {{ lima_image_digest }}
+    variant: server
+cpus: 2
+memory: "2GiB"
+disk: "10GiB"
+mounts: []
+networks:
+  - lima: user-v2
+    macAddress: "{{ item.mac_address }}"
+ssh:
+  localPort: {{ item.ssh_port }}
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+vmOpts:
+  vz:
+    rosetta:
+      enabled: false
+      binfmt: false
+containerd:
+  system: false
+  user: false
+hostResolver:
+  enabled: true
+  ipv6: false
+# Ubuntu 26.04 cloud-init can fail its first-boot NIC rename while the link is
+# already up. This Lima 2.2 parameter makes netplan's initial interfaces
+# optional while Lima's cidata boot command completes the rename.
+param:
+  internal_netplanOptional: "true"
+portForwards:
+  # Keep this dynamic: Lima's gRPC forwarder carries UDP; static forwarding does not.
+  - guestPort: {{ wireguard_listen_port }}
+    hostPort: {{ item.wg_host_port }}
+    hostIP: 127.0.0.1
+    proto: udp
+  # Do not automatically expose any other guest listener on macOS.
+  - guestPortRange: [1, 65535]
+    proto: any
+    ignore: true
+message: docker-swarm owned template-local VM

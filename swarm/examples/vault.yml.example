@@ -1,0 +1,32 @@
+# This is intentionally not an active inventory variable file. Run
+# `task vault-init PROVIDER=templ-local` instead; it atomically generates four
+# WireGuard key pairs and a Garage credential set, then encrypts them at
+# inventories/templ-local/group_vars/all/vault.yml.
+vault_wireguard_private_keys:
+  macos: REPLACE_WITH_ANSIBLE_VAULT
+  templ-local-1: REPLACE_WITH_ANSIBLE_VAULT
+  templ-local-2: REPLACE_WITH_ANSIBLE_VAULT
+  templ-local-3: REPLACE_WITH_ANSIBLE_VAULT
+vault_wireguard_public_keys:
+  macos: REPLACE_WITH_ANSIBLE_VAULT
+  templ-local-1: REPLACE_WITH_ANSIBLE_VAULT
+  templ-local-2: REPLACE_WITH_ANSIBLE_VAULT
+  templ-local-3: REPLACE_WITH_ANSIBLE_VAULT
+
+# The five Garage fields are all-or-nothing. `task garage-up` adds this whole
+# set to an older WireGuard-only Vault, but fails safely if only some fields
+# are present.
+vault_garage_access_key: GKREPLACE_WITH_ANSIBLE_VAULT
+vault_garage_secret_key: REPLACE_WITH_ANSIBLE_VAULT
+vault_garage_rpc_secret: REPLACE_WITH_ANSIBLE_VAULT
+vault_garage_admin_token: REPLACE_WITH_ANSIBLE_VAULT
+vault_garage_metrics_token: REPLACE_WITH_ANSIBLE_VAULT
+
+# Restic encrypts the cold Swarm-state repository with this password. Preserve
+# it with the encrypted Vault and its matching ignored .vault-pass file.
+vault_swarm_backup_restic_password: REPLACE_WITH_ANSIBLE_VAULT
+
+# Template-production only: add dedicated S3-compatible object-storage credentials with
+# `task vault-edit PROVIDER=templ-prod`.
+vault_swarm_backup_s3_access_key: REPLACE_WITH_ANSIBLE_VAULT
+vault_swarm_backup_s3_secret_key: REPLACE_WITH_ANSIBLE_VAULT

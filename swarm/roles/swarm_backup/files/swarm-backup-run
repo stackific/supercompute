@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""Create one encrypted Docker Swarm manager-state backup as root."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+DOCKER = "/usr/bin/docker"
+SYSTEMCTL = "/usr/bin/systemctl"
+TAR = "/usr/bin/tar"
+DEPLOYMENT_NAME_PATTERN = re.compile(r"^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$")
+
+
+class BackupRefused(RuntimeError):
+  """A safety precondition failed before Docker could be stopped."""
+
+
+def command(
+  *argv: str,
+  capture: bool = False,
+  env: dict[str, str] | None = None,
+) -> str:
+  completed = subprocess.run(
+    list(argv),
+    check=True,
+    text=True,
+    stdout=subprocess.PIPE if capture else None,
+    stderr=subprocess.PIPE if capture else None,
+    env=env,
+  )
+  return completed.stdout if capture else ""
+
+
+def parse_args() -> argparse.Namespace:
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--config", required=True, type=Path)
+  parser.add_argument("--restore-active", action="store_true")
+  return parser.parse_args()
+
+
+def load_config(config_path: Path) -> dict[str, object]:
+  try:
+    if config_path.is_symlink() or not config_path.is_file():
+      raise BackupRefused(f"{config_path} must be a regular file.")
+    config_stat = config_path.stat()
+    if config_stat.st_uid != 0:
+      raise BackupRefused(f"{config_path} must be owned by root.")
+    if config_stat.st_mode & 0o077:
+      raise BackupRefused(f"{config_path} must not be group- or world-readable.")
+    document = json.loads(config_path.read_text(encoding="utf-8"))
+  except (OSError, json.JSONDecodeError) as exc:
+    raise BackupRefused(f"Cannot read the root-owned backup configuration: {exc}") from exc
+
+  required_strings = (
+    "backup_tag",
+    "deployment_name",
+    "lock_path",
+    "manager",
+    "manager_address",
+    "object_prefix",
+    "restic_binary",
+    "restic_cache_dir",
+    "restic_password",
+    "runtime_dir",
+    "s3_access_key",
+    "s3_bucket",
+    "s3_bucket_lookup",
+    "s3_endpoint",
+    "s3_region",
+    "s3_secret_key",
+  )
+  for field in required_strings:
+    if not isinstance(document.get(field), str) or not str(document[field]):
+      raise BackupRefused(f"Backup configuration field {field!r} must be a non-empty string.")
+  if document.get("s3_bucket_lookup") not in {"auto", "dns", "path"}:
+    raise BackupRefused("Backup configuration has an invalid S3 bucket lookup style.")
+  if document.get("retention_days") != 30:
+    raise BackupRefused("Backup configuration must retain exactly 30 days.")
+  deployment_name = str(document["deployment_name"])
+  if not DEPLOYMENT_NAME_PATTERN.fullmatch(deployment_name):
+    raise BackupRefused("Backup configuration has an invalid deployment name.")
+  if document["backup_tag"] != f"{deployment_name}-swarm-state":
+    raise BackupRefused("Backup tag does not belong to this deployment.")
+  if document["lock_path"] != f"/run/{deployment_name}-backup.lock":
+    raise BackupRefused("Backup lock path does not belong to this deployment.")
+  if not str(document["object_prefix"]).startswith(f"{deployment_name}/"):
+    raise BackupRefused("Backup object prefix does not belong to this deployment.")
+  restic = Path(str(document["restic_binary"]))
+  if not restic.is_file() or not os.access(restic, os.X_OK):
+    raise BackupRefused(f"Pinned Restic executable is unavailable: {restic}")
+  return document
+
+
+def inspect_nodes() -> list[dict[str, str]]:
+  node_ids = command(DOCKER, "node", "ls", "--quiet", capture=True).split()
+  if not node_ids:
+    return []
+  document = json.loads(command(DOCKER, "node", "inspect", *node_ids, capture=True))
+  result: list[dict[str, str]] = []
+  for node in document:
+    manager = node.get("ManagerStatus") or {}
+    spec = node.get("Spec") or {}
+    labels = spec.get("Labels") or {}
+    manager_status = ""
+    if manager:
+      manager_status = "Leader" if manager.get("Leader") else str(manager.get("Reachability", "")).title()
+    result.append(
+      {
+        "Address": str((node.get("Status") or {}).get("Addr", "")),
+        "Availability": str(spec.get("Availability", "")).title(),
+        "ID": str(node.get("ID", "")),
+        "ManagerStatus": manager_status,
+        "RunOnBackup": str(labels.get("run_on_backup", "")),
+        "Status": str((node.get("Status") or {}).get("State", "")).title(),
+      }
+    )
+  return result
+
+
+def local_swarm_identity() -> tuple[str, str, str]:
+  fields = command(
+    DOCKER,
+    "info",
+    "--format",
+    "{{.Swarm.NodeAddr}}|{{.Swarm.NodeID}}|{{.Swarm.Cluster.ID}}",
+    capture=True,
+  ).strip().split("|")
+  if len(fields) != 3 or any(not field for field in fields):
+    raise BackupRefused("Docker reported an incomplete local Swarm identity.")
+  return fields[0], fields[1], fields[2]
+
+
+def require_healthy_quorum(
+  config: dict[str, object], expected_availability: str = "Active"
+) -> tuple[str, str]:
+  if expected_availability not in {"Active", "Drain"}:
+    raise ValueError(f"Unsupported expected availability: {expected_availability}")
+  nodes = inspect_nodes()
+  managers = [node for node in nodes if node["ManagerStatus"]]
+  leaders = [node for node in managers if node["ManagerStatus"] == "Leader"]
+  reachable = [node for node in managers if node["ManagerStatus"] == "Reachable"]
+  labeled = [node for node in managers if node["RunOnBackup"] == "true"]
+  address = str(config["manager_address"])
+  selected = [node for node in managers if node["Address"] == address]
+  if not (
+    len(nodes) == 3
+    and len(managers) == 3
+    and len(leaders) == 1
+    and len(reachable) == 2
+    and all(node["Status"] == "Ready" for node in managers)
+    and all(node["RunOnBackup"] in {"true", "false"} for node in managers)
+    and len(labeled) == 1
+  ):
+    raise BackupRefused(
+      "Swarm is not exactly three Ready managers with one Leader, two Reachable, "
+      "and exactly one explicit run_on_backup=true label."
+    )
+  if not (
+    len(selected) == 1
+    and selected[0]["ID"] == labeled[0]["ID"]
+    and selected[0]["Status"] == "Ready"
+    and selected[0]["Availability"] == expected_availability
+    and selected[0]["ManagerStatus"] in {"Leader", "Reachable"}
+    and all(
+      node["Availability"] == "Active"
+      for node in managers
+      if node["ID"] != selected[0]["ID"]
+    )
+  ):
+    raise BackupRefused(
+      "The configured backup manager is not the uniquely labeled Ready manager "
+      f"with {expected_availability} availability."
+    )
+  local_address, local_node_id, cluster_id = local_swarm_identity()
+  if local_address != address or local_node_id != selected[0]["ID"]:
+    raise BackupRefused(
+      f"This service belongs to {address}/{selected[0]['ID']}, but Docker reports "
+      f"local Swarm identity {local_address!r}/{local_node_id!r}."
+    )
+  return local_node_id, cluster_id
+
+
+def running_containers() -> list[str]:
+  return command(DOCKER, "ps", "--quiet", capture=True).split()
+
+
+def require_no_standalone_containers() -> list[str]:
+  running = running_containers()
+  if not running:
+    return []
+  document = json.loads(command(DOCKER, "inspect", *running, capture=True))
+  standalone = []
+  for container in document:
+    labels = (container.get("Config") or {}).get("Labels") or {}
+    if not labels.get("com.docker.swarm.task.id"):
+      standalone.append(str(container.get("Id", "unknown"))[:12])
+  if standalone:
+    raise BackupRefused(
+      "Refusing to drain and stop Docker: standalone containers are running: "
+      + ", ".join(standalone)
+    )
+  return running
+
+
+def require_empty_manager() -> None:
+  running = running_containers()
+  if running:
+    raise BackupRefused("Refusing to stop Docker: the backup manager still has running containers.")
+
+
+def wait_for_empty_manager() -> None:
+  for _ in range(60):
+    if not require_no_standalone_containers():
+      return
+    time.sleep(2)
+  raise RuntimeError("Swarm tasks did not stop after the backup manager was drained.")
+
+
+def set_manager_availability(node_id: str, availability: str) -> None:
+  command(DOCKER, "node", "update", "--availability", availability, node_id)
+
+
+def restic_environment(config: dict[str, object]) -> dict[str, str]:
+  endpoint = str(config["s3_endpoint"]).rstrip("/")
+  prefix = str(config["object_prefix"]).strip("/")
+  environment = os.environ | {
+    "AWS_ACCESS_KEY_ID": str(config["s3_access_key"]),
+    "AWS_DEFAULT_REGION": str(config["s3_region"]),
+    "AWS_SECRET_ACCESS_KEY": str(config["s3_secret_key"]),
+    "RESTIC_CACHE_DIR": str(config["restic_cache_dir"]),
+    "RESTIC_PASSWORD": str(config["restic_password"]),
+    "RESTIC_REPOSITORY": f"s3:{endpoint}/{config['s3_bucket']}/{prefix}",
+  }
+  environment.pop("AWS_SESSION_TOKEN", None)
+  return environment
+
+
+def restic(config: dict[str, object], *arguments: str, capture: bool = False) -> str:
+  return command(
+    str(config["restic_binary"]),
+    "-o",
+    f"s3.bucket-lookup={config['s3_bucket_lookup']}",
+    "-o",
+    f"s3.region={config['s3_region']}",
+    *arguments,
+    capture=capture,
+    env=restic_environment(config),
+  )
+
+
+def restart_docker() -> None:
+  command(SYSTEMCTL, "start", "docker.socket", "docker.service")
+  for _ in range(90):
+    result = subprocess.run(
+      [DOCKER, "info"],
+      stdout=subprocess.DEVNULL,
+      stderr=subprocess.DEVNULL,
+      check=False,
+    )
+    if result.returncode == 0:
+      return
+    time.sleep(1)
+  raise RuntimeError("Docker did not become available after the cold archive was captured.")
+
+
+def capture_cold_archive(archive: Path) -> None:
+  require_empty_manager()
+  docker_restart_required = False
+  try:
+    docker_restart_required = True
+    command(SYSTEMCTL, "stop", "docker.socket")
+    command(SYSTEMCTL, "stop", "docker.service")
+    command(
+      TAR,
+      "--numeric-owner",
+      "--xattrs",
+      "--acls",
+      "-C",
+      "/var/lib/docker",
+      "-cf",
+      str(archive),
+      "swarm",
+    )
+  finally:
+    if docker_restart_required:
+      restart_docker()
+
+
+def wait_for_healthy_quorum(
+  config: dict[str, object], expected_availability: str
+) -> tuple[str, str]:
+  last_error: Exception | None = None
+  for _ in range(60):
+    try:
+      return require_healthy_quorum(config, expected_availability)
+    except (BackupRefused, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+      last_error = exc
+      time.sleep(2)
+  raise RuntimeError(
+    f"The backup manager did not reach healthy {expected_availability} state: {last_error}"
+  )
+
+
+def restore_active_availability(config: dict[str, object]) -> None:
+  restart_docker()
+  last_error: Exception | None = None
+  for _ in range(60):
+    try:
+      nodes = inspect_nodes()
+      local_address, local_node_id, _ = local_swarm_identity()
+      address = str(config["manager_address"])
+      labeled = [node for node in nodes if node["RunOnBackup"] == "true"]
+      selected = [node for node in nodes if node["ID"] == local_node_id]
+      if not (
+        local_address == address
+        and len(labeled) == 1
+        and len(selected) == 1
+        and selected[0]["ID"] == labeled[0]["ID"]
+      ):
+        raise BackupRefused(
+          "This manager does not own the unique run_on_backup=true label."
+        )
+      availability = selected[0]["Availability"]
+      if availability == "Drain":
+        set_manager_availability(local_node_id, "active")
+      elif availability != "Active":
+        raise BackupRefused(
+          f"Unsupported backup cleanup availability {availability!r}."
+        )
+      wait_for_healthy_quorum(config, "Active")
+      return
+    except (BackupRefused, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+      last_error = exc
+      time.sleep(2)
+  raise RuntimeError(
+    "Refusing to report successful backup cleanup: the uniquely labeled manager "
+    f"could not be restored to healthy Active state: {last_error}"
+  )
+
+
+def create_backup(config: dict[str, object]) -> None:
+  local_node_id, cluster_id = require_healthy_quorum(config, "Active")
+  require_no_standalone_containers()
+  restic(config, "cat", "config")
+
+  runtime = Path(str(config["runtime_dir"]))
+  runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+  os.chmod(runtime, 0o700)
+  with tempfile.TemporaryDirectory(prefix="run-", dir=runtime) as directory:
+    archive = Path(directory) / "swarm-state.tar"
+    backup_node_drained = False
+    try:
+      set_manager_availability(local_node_id, "drain")
+      backup_node_drained = True
+      wait_for_healthy_quorum(config, "Drain")
+      wait_for_empty_manager()
+      capture_cold_archive(archive)
+      wait_for_healthy_quorum(config, "Drain")
+    finally:
+      if backup_node_drained:
+        restore_active_availability(config)
+    cluster_tag = re.sub(r"[^A-Za-z0-9_-]", "", cluster_id)[:32]
+    restic(
+      config,
+      "backup",
+      "--host",
+      str(config["manager"]),
+      "--tag",
+      str(config["backup_tag"]),
+      "--tag",
+      f"cluster-{cluster_tag}",
+      "--json",
+      str(archive),
+    )
+    restic(
+      config,
+      "snapshots",
+      "--host",
+      str(config["manager"]),
+      "--tag",
+      str(config["backup_tag"]),
+      "--latest",
+      "1",
+      "--json",
+    )
+    restic(
+      config,
+      "forget",
+      "--tag",
+      str(config["backup_tag"]),
+      "--keep-within",
+      f"{config['retention_days']}d",
+      "--prune",
+    )
+    print(
+      json.dumps(
+        {
+          "cluster_id": cluster_id,
+          "manager": config["manager"],
+          "retention_days": config["retention_days"],
+          "result": "encrypted Restic snapshot created and pruned",
+        },
+        sort_keys=True,
+      )
+    )
+
+
+def main() -> int:
+  arguments = parse_args()
+  config = load_config(arguments.config)
+  if arguments.restore_active:
+    restore_active_availability(config)
+    return 0
+  lock_path = Path(str(config["lock_path"]))
+  lock_path.touch(mode=0o600, exist_ok=True)
+  with lock_path.open("r+", encoding="utf-8") as lock:
+    try:
+      fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+      raise BackupRefused(
+        f"Another {config['deployment_name']} backup is already running."
+      ) from exc
+    create_backup(config)
+  return 0
+
+
+if __name__ == "__main__":
+  try:
+    raise SystemExit(main())
+  except (
+    BackupRefused,
+    RuntimeError,
+    OSError,
+    subprocess.CalledProcessError,
+    json.JSONDecodeError,
+  ) as error:
+    print(str(error), file=sys.stderr)
+    raise SystemExit(1)

@@ -1,0 +1,25 @@
+version: '3'
+
+tasks:
+  up:
+    deps: [':bootstrap:sync', ':swarm:syntax']
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/vault-swarm-secrets-ensure.sh" "{{.PROVIDER}}"
+      - bash "{{.ROOT_DIR}}/scripts/ansible-playbook.sh" "{{.PROVIDER}}" playbooks/swarm-up.yml
+
+  down:
+    deps: [':bootstrap:sync', ':swarm:syntax']
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/ansible-playbook.sh" "{{.PROVIDER}}" playbooks/swarm-down.yml
+
+  status:
+    deps: [':bootstrap:sync', ':swarm:syntax']
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/ansible-playbook.sh" "{{.PROVIDER}}" playbooks/swarm-status.yml
+
+  syntax:
+    deps: [':bootstrap:sync']
+    cmds:
+      - bash "{{.ROOT_DIR}}/scripts/ansible-playbook.sh" "{{.PROVIDER}}" --syntax-check playbooks/swarm-up.yml
+      - bash "{{.ROOT_DIR}}/scripts/ansible-playbook.sh" "{{.PROVIDER}}" --syntax-check playbooks/swarm-down.yml
+      - bash "{{.ROOT_DIR}}/scripts/ansible-playbook.sh" "{{.PROVIDER}}" --syntax-check playbooks/swarm-status.yml

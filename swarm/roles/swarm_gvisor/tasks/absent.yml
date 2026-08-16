@@ -1,0 +1,63 @@
+---
+- name: Check for the Docker daemon configuration
+  ansible.builtin.stat:
+    path: "{{ swarm_gvisor_daemon_config_path }}"
+  register: swarm_gvisor_remove_daemon_config
+  become: true
+
+- name: Read the Docker daemon configuration before removal
+  ansible.builtin.slurp:
+    src: "{{ swarm_gvisor_daemon_config_path }}"
+  register: swarm_gvisor_remove_daemon_content
+  become: true
+  when: swarm_gvisor_remove_daemon_config.stat.exists
+
+- name: Refuse to remove Docker configuration not owned by this baseline
+  ansible.builtin.assert:
+    that:
+      - >-
+        not swarm_gvisor_remove_daemon_config.stat.exists or
+        (swarm_gvisor_remove_daemon_content.content | b64decode | from_json) ==
+        swarm_gvisor_docker_config or
+        (swarm_gvisor_remove_daemon_content.content | b64decode | from_json) in
+        swarm_gvisor_legacy_docker_configs
+    fail_msg: >-
+      {{ swarm_gvisor_daemon_config_path }} no longer matches this baseline.
+      Refusing to remove operator-managed Docker settings.
+
+- name: Remove the baseline gVisor Docker configuration
+  ansible.builtin.file:
+    path: "{{ swarm_gvisor_daemon_config_path }}"
+    state: absent
+  register: swarm_gvisor_removed_daemon_config
+  become: true
+
+- name: Restart Docker with its default runc runtime
+  ansible.builtin.systemd_service:
+    name: docker.service
+    state: restarted
+  become: true
+  when: swarm_gvisor_removed_daemon_config.changed
+
+- name: Remove the project-owned gVisor runtime bundle
+  ansible.builtin.file:
+    path: "{{ swarm_gvisor_install_dir }}"
+    state: absent
+  become: true
+
+- name: Read Docker's restored default runtime
+  ansible.builtin.command:
+    argv:
+      - docker
+      - info
+      - --format
+      - '{% raw %}{{.DefaultRuntime}}{% endraw %}'
+  register: swarm_gvisor_restored_docker_runtime
+  become: true
+  changed_when: false
+
+- name: Require Docker to return to runc
+  ansible.builtin.assert:
+    that:
+      - swarm_gvisor_restored_docker_runtime.stdout == 'runc'
+    fail_msg: "Docker did not return to its default runc runtime."

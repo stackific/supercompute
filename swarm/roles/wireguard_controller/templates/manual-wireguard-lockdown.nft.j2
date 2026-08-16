@@ -1,0 +1,19 @@
+table inet manual_wireguard {
+  chain input {
+    type filter hook input priority -10;
+    policy accept;
+
+    ct state invalid drop
+    iifname "wg0" ip saddr {{ wireguard_macos_address }} tcp dport 22 accept
+    iifname "eth0" ip saddr 192.168.104.0/24 tcp dport 22 ct state established accept
+    iifname "wg0" ip saddr { {% for node in lima_nodes %}{{ node.wg_address }}{{ ", " if not loop.last else "" }}{% endfor %} } tcp dport { 2377, 7946 } accept
+    iifname "wg0" ip saddr { {% for node in lima_nodes %}{{ node.wg_address }}{{ ", " if not loop.last else "" }}{% endfor %} } udp dport { 4789, 7946 } accept
+    tcp dport 22 drop
+    iifname "lo" accept
+    ct state established,related accept
+    iifname "wg0" ip saddr { {{ wireguard_macos_address }}, {% for node in lima_nodes %}{{ node.wg_address }}{{ ", " if not loop.last else "" }}{% endfor %} } icmp type echo-request accept
+    iifname "eth0" udp sport 67 udp dport 68 accept
+    iifname "eth0" ip saddr 192.168.104.0/24 udp dport {{ wireguard_listen_port }} accept
+    drop
+  }
+}

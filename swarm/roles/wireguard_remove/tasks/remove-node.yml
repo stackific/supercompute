@@ -1,0 +1,54 @@
+- name: Remove WireGuard through the overlay | {{ node.name }}
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -F
+      - /dev/null
+      - -i
+      - "{{ lima_home_dir }}/_config/user"
+      - -o
+      - IdentitiesOnly=yes
+      - -o
+      - BatchMode=yes
+      - -o
+      - ControlMaster=no
+      - -o
+      - ControlPath=none
+      - -o
+      - StrictHostKeyChecking=accept-new
+      - -o
+      - "UserKnownHostsFile={{ wireguard_known_hosts }}"
+      - -o
+      - ConnectTimeout=5
+      - "{{ wireguard_guest_user }}@{{ node.wg_address }}"
+      - sudo bash -se
+    stdin: |
+      set -euo pipefail
+      systemctl disable --now manual-wg-firewall.service >/dev/null 2>&1 || true
+      nft delete table inet manual_wireguard >/dev/null 2>&1 || true
+      rm -f /etc/wireguard/manual-wireguard-lockdown.nft
+      rm -f /etc/systemd/system/manual-wg-firewall.service
+      rm -f /usr/local/libexec/manual-wg-firewall-wait
+      systemctl disable wg-quick@wg0.service >/dev/null 2>&1 || true
+      systemctl daemon-reload
+      systemd-run --no-block --collect --unit="manual-wg-remove-$(date +%s)" --on-active=2s /bin/sh -c \
+        'systemctl stop wg-quick@wg0.service || true; rm -f /etc/wireguard/wg0.conf'
+  register: wireguard_remove_over_wireguard
+  failed_when: false
+  changed_when: wireguard_remove_over_wireguard.rc == 0
+
+- name: Remove partial WireGuard state through Lima | {{ node.name }}
+  ansible.builtin.command:
+    argv: [limactl, shell, "{{ node.name }}", --, sudo, bash, -se]
+    stdin: |
+      set -euo pipefail
+      systemctl disable --now manual-wg-firewall.service >/dev/null 2>&1 || true
+      nft delete table inet manual_wireguard >/dev/null 2>&1 || true
+      systemctl disable --now wg-quick@wg0.service >/dev/null 2>&1 || true
+      rm -f /etc/wireguard/wg0.conf
+      rm -f /etc/wireguard/manual-wireguard-lockdown.nft
+      rm -f /etc/systemd/system/manual-wg-firewall.service
+      rm -f /usr/local/libexec/manual-wg-firewall-wait
+      systemctl daemon-reload
+  when: wireguard_remove_over_wireguard.rc != 0
+  changed_when: false

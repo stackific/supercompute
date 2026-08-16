@@ -1,0 +1,83 @@
+---
+project_root: "{{ playbook_dir | dirname }}"
+provider_state_dir: "{{ project_root }}/.state/{{ inventory_slug }}"
+lima_version: "2.2.0"
+lima_image_url: "https://cloud-images.ubuntu.com/releases/resolute/release-20260731/ubuntu-26.04-server-cloudimg-arm64.img"
+lima_image_digest: "sha256:3e113fdd41f39e13729375173bb2ae793f87dc6db4294e5251ff2476971788ba"
+lima_state_dir: "{{ provider_state_dir }}/lima"
+lima_runtime_home: "{{ lookup('ansible.builtin.env', 'LIMA_HOME') }}"
+# Lima resolves symlinks before checking macOS's 104-byte Unix-socket limit,
+# so both runtime and persistent state must use the real short path.
+lima_home_dir: "{{ lima_runtime_home }}"
+lima_recovery_dir: "{{ provider_state_dir }}/recovery"
+
+wireguard_state_dir: "{{ provider_state_dir }}/wireguard"
+wireguard_known_hosts: "{{ wireguard_state_dir }}/known_hosts"
+wireguard_firewall_source: "{{ project_root }}/roles/wireguard_controller/templates/manual-wireguard-lockdown.nft.j2"
+wireguard_firewall_unit_source: "{{ project_root }}/roles/wireguard_controller/templates/manual-wg-firewall.service.j2"
+wireguard_firewall_wait_source: "{{ project_root }}/roles/wireguard_controller/files/manual-wg-firewall-wait"
+wireguard_firewall_wait_path: /usr/local/libexec/manual-wg-firewall-wait
+wireguard_firewall_wait_seconds: 600
+wireguard_guest_user: "{{ lookup('ansible.builtin.env', 'USER') }}"
+wireguard_macos_address: "10.79.0.1"
+wireguard_listen_port: 51830
+swarm_node_address: "{{ ansible_host }}"
+
+# This prefix is the source for all generated template-local VM names. The static
+# inventory must contain the same three names.
+lima_node_prefix: templ-local
+lima_nodes:
+  - name: "{{ lima_node_prefix }}-1"
+    wg_address: 10.79.0.11
+    ssh_port: 61122
+    wg_host_port: 51921
+    mac_address: "52:55:55:78:00:11"
+  - name: "{{ lima_node_prefix }}-2"
+    wg_address: 10.79.0.12
+    ssh_port: 61123
+    wg_host_port: 51922
+    mac_address: "52:55:55:78:00:12"
+  - name: "{{ lima_node_prefix }}-3"
+    wg_address: 10.79.0.13
+    ssh_port: 61124
+    wg_host_port: 51923
+    mac_address: "52:55:55:78:00:13"
+
+ansible_user: "{{ wireguard_guest_user }}"
+ansible_ssh_private_key_file: "{{ lima_home_dir }}/_config/user"
+ansible_ssh_common_args: >-
+  -F /dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o ControlMaster=no -o ControlPath=none
+  -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={{ wireguard_known_hosts }}
+
+node_ubuntu_version: "26.04"
+node_ubuntu_codename: resolute
+node_host_architecture: aarch64
+
+# Garage runs outside the project-owned VMs. The shared `default` Lima profile
+# remains owned by its existing operator.
+garage_lima_profile: default
+garage_docker_host: "unix://{{ lookup('ansible.builtin.env', 'HOME') }}/.lima/{{ garage_lima_profile }}/sock/docker.sock"
+garage_image: "dxflrs/garage@sha256:866bd13ed2038ba7e7190e840482bc27234c4afaf77be8cfa439ae088c1e4690"
+garage_container: swarm-garage
+garage_network: swarm-garage
+garage_metadata_volume: swarm-garage-metadata
+garage_data_volume: swarm-garage-data
+garage_state_dir: "{{ provider_state_dir }}/garage"
+garage_config_path: "{{ garage_state_dir }}/garage.toml"
+garage_bucket: "{{ deployment_name }}-backups"
+garage_region: garage
+garage_s3_host_port: 3901
+garage_s3_container_port: 3900
+garage_s3_bind_hostname: "lima-{{ garage_lima_profile }}.internal"
+
+# The one inventory node marked `swarm_run_on_backup: true` owns the server-side
+# cold Swarm-state backup timer. Garage exposes this private listener on Lima
+# user-v2; the project VMs never use the controller's 127.0.0.1 listener.
+swarm_backup_s3_endpoint: "http://host.lima.internal:{{ garage_s3_host_port }}"
+swarm_backup_s3_require_https: false
+swarm_backup_s3_bucket: "{{ garage_bucket }}"
+swarm_backup_s3_region: "{{ garage_region }}"
+swarm_backup_s3_bucket_lookup: path
+swarm_backup_s3_access_key: "{{ vault_garage_access_key }}"
+swarm_backup_s3_secret_key: "{{ vault_garage_secret_key }}"
+swarm_backup_object_prefix: "{{ deployment_name }}/{{ inventory_slug }}/swarm-state/v1"
