@@ -47,11 +47,13 @@ task lima-up PROVIDER=local
 
 `lima-up` sets `LIMA_HOME` to that provider home, creates it when needed, checks
 the longest expected `ssh.sock.*` path for every declared deployment host, and
-creates each missing host from `provider.image.source` (`template:ubuntu-26.04`)
-with `provider.resources` pinned to 1 CPU, 2 GiB RAM, and 5 GiB disk, and with
-`--containerd=none --mount-none` so first boot does not wait on Lima's bundled
-nerdctl install or home mounts. Existing instances are only started; their CPU,
-memory, disk, containerd, and mounts are not rewritten.
+creates each missing host from a tracked Lima definition under
+`.state/<provider>/lima/`. That definition pins `provider.resources` (1 CPU,
+2 GiB RAM, 5 GiB disk), disables containerd and mounts, attaches `user-v2` with a
+stable MAC, and forwards guest UDP `51830` to a per-host loopback port so
+WireGuard can reach the VM. Existing instances are only started; their CPU,
+memory, disk, networks, and port forwards are not rewritten. If an existing VM
+does not match the tracked contract, destroy and recreate it before `wg-up`.
 
 Show the provider Lima home and instance status without creating state:
 
@@ -70,6 +72,52 @@ task lima-destroy PROVIDER=local CONFIRM=destroy-lima-local
 
 Read-only helpers must call `scripts/lima-runtime-home.sh <provider> path` or
 `existing` so they never create the directory. Mutating commands use `ensure`.
+
+## WireGuard mesh (Lima providers)
+
+`local` and `cust-local` share the same WireGuard Task surface. Production
+(`prod`) is refused until the next slice.
+
+| Command | Purpose |
+| --- | --- |
+| `task wg-up PROVIDER=local` | Install guest `wg0`, bring up the Mac controller, lockdown INPUT |
+| `task wg-status PROVIDER=local` | Show controller and guest WireGuard peers |
+| `task wg-ssh PROVIDER=local NODE=local-1` | SSH to a node over the mesh |
+| `task wg-remove PROVIDER=local` | Tear down lockdown and controller mesh state |
+
+`wg-up` ensures Vault WireGuard key pairs (`macos` plus each deployment host),
+verifies Lima membership, bootstraps guests through ordinary Lima access, then
+applies a fail-closed nftables INPUT policy:
+
+- Allow TCP 22 on `wg0` from the Mac controller address
+- Deny new TCP 22 on `eth0` after bootstrap (established Lima SSH may drain)
+- Allow UDP `51830` on `eth0` from the Lima user-v2 subnet
+- Allow TCP `80` and `443` inbound
+- Outbound remains unrestricted
+
+Addressing (do not overlap `local` and `cust-local` on one Mac without these
+disjoint ranges):
+
+| Provider | Mac | Nodes | Host UDP forwards |
+| --- | --- | --- | --- |
+| `local` | `10.79.0.1` | `10.79.0.11–13` | `51921–51923` → guest `51830` |
+| `cust-local` | `10.79.1.1` | `10.79.1.11–13` | `51931–51933` → guest `51830` |
+
+Controller state lives under `.state/<provider>/wireguard/` (gitignored). Guests
+created before UDP forwards existed must be destroyed and recreated:
+
+```sh
+task wg-remove PROVIDER=local
+task lima-destroy PROVIDER=local CONFIRM=destroy-lima-local
+task lima-up PROVIDER=local
+task wg-up PROVIDER=local
+```
+
+Ensure keys without bringing the mesh up:
+
+```sh
+task vault-wireguard-ensure PROVIDER=local
+```
 
 ## Provider vaults
 

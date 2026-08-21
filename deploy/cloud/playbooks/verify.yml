@@ -14,13 +14,44 @@
         fail_msg: "deployment.yml and inventory_slug must identify this provider run."
 
     - name: Verify Lima membership when the provider is Lima-backed
-      ansible.builtin.include_role:
-        name: lima
-      vars:
-        lima_lifecycle: verify
       when: provider.platform == 'lima'
       environment:
         LIMA_HOME: "{{ lima_runtime_home }}"
         LIMA_SSH_PORT_FORWARDER: "false"
+      block:
+        - name: Run Lima verify lifecycle
+          ansible.builtin.include_role:
+            name: lima
+          vars:
+            lima_lifecycle: verify
 
-    # Future provider checks (WireGuard, cluster, storage, …) land here.
+    - name: Check whether Lima WireGuard controller state exists
+      ansible.builtin.stat:
+        path: "{{ wireguard_state_dir }}/wg.conf"
+      register: verify_wireguard_controller_config
+      when:
+        - provider.platform == 'lima'
+        - wireguard_state_dir is defined
+
+    - name: Verify Lima WireGuard controller acceptance when mesh state exists
+      when:
+        - provider.platform == 'lima'
+        - verify_wireguard_controller_config.stat.exists | default(false)
+      environment:
+        LIMA_HOME: "{{ lima_runtime_home }}"
+        LIMA_SSH_PORT_FORWARDER: "false"
+      block:
+        - name: Run WireGuard controller acceptance checks
+          ansible.builtin.include_role:
+            name: wireguard_verify
+            tasks_from: after-controller
+
+    - name: Report when Lima WireGuard verify is skipped
+      ansible.builtin.debug:
+        msg: >-
+          WireGuard controller state is absent under
+          {{ wireguard_state_dir | default('(undefined)') }}; skipped mesh verify.
+          Run task wg-up PROVIDER={{ inventory_slug }} after lima-up when ready.
+      when:
+        - provider.platform == 'lima'
+        - not (verify_wireguard_controller_config.stat.exists | default(false))

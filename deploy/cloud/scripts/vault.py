@@ -342,9 +342,145 @@ def destroy(provider: str) -> None:
     print(f"Vault password already absent: {password_file.relative_to(ROOT)}")
 
 
+def deployment_host_names(provider: str) -> list[str]:
+  path = inventory_directory(provider) / "hosts.yml"
+  try:
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+  except FileNotFoundError as error:
+    raise VaultError(f"Provider inventory does not exist: {path}") from error
+  except yaml.YAMLError as error:
+    raise VaultError(f"Invalid YAML in {path}: {error}") from error
+
+  if not isinstance(document, dict):
+    raise VaultError("hosts.yml must contain a YAML mapping")
+  children = document.get("all")
+  if not isinstance(children, dict):
+    raise VaultError("hosts.yml must contain an all mapping")
+  groups = children.get("children")
+  if not isinstance(groups, dict):
+    raise VaultError("hosts.yml must contain all.children")
+  deployment = groups.get("deployment")
+  if not isinstance(deployment, dict):
+    raise VaultError("hosts.yml must contain all.children.deployment")
+  hosts = deployment.get("hosts")
+  if hosts is None:
+    return []
+  if not isinstance(hosts, dict):
+    raise VaultError("deployment.hosts must be a mapping")
+  return sorted(hosts)
+
+
+def generate_wireguard_keypair() -> tuple[str, str]:
+  private = subprocess.run(
+    ["wg", "genkey"],
+    check=False,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+  )
+  if private.returncode != 0:
+    detail = private.stderr.strip() if private.stderr else "wg genkey failed"
+    raise VaultError(detail)
+  private_key = private.stdout.strip()
+  public = subprocess.run(
+    ["wg", "pubkey"],
+    input=private_key,
+    check=False,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+  )
+  if public.returncode != 0:
+    detail = public.stderr.strip() if public.stderr else "wg pubkey failed"
+    raise VaultError(detail)
+  return private_key, public.stdout.strip()
+
+
+def ensure_wireguard(provider: str) -> None:
+  platform_path = (
+    inventory_directory(provider) / "group_vars" / "all" / "main.yml"
+  )
+  try:
+    platform_document = yaml.safe_load(platform_path.read_text(encoding="utf-8"))
+  except FileNotFoundError as error:
+    raise VaultError(f"Provider configuration does not exist: {platform_path}") from error
+  except yaml.YAMLError as error:
+    raise VaultError(f"Invalid YAML in {platform_path}: {error}") from error
+  if not isinstance(platform_document, dict):
+    raise VaultError(f"{platform_path} must contain a YAML mapping")
+  provider_config = platform_document.get("provider")
+  if not isinstance(provider_config, dict) or provider_config.get("platform") != "lima":
+    raise VaultError(
+      f"WireGuard key ensure requires a Lima provider; refused for {provider}"
+    )
+
+  if subprocess.run(["which", "wg"], check=False, capture_output=True).returncode != 0:
+    raise VaultError("Install wireguard-tools (wg) before ensuring WireGuard vault keys")
+
+  password_file = password_path(provider)
+  encrypted_vault = vault_path(provider)
+  read_password(password_file)
+  content = decrypt(encrypted_vault, provider, password_file)
+  document = yaml.safe_load(content)
+  if not isinstance(document, dict):
+    raise VaultError("Vault root must be a YAML mapping")
+
+  required_names = ["macos", *deployment_host_names(provider)]
+  private_keys = document.get("vault_wireguard_private_keys")
+  public_keys = document.get("vault_wireguard_public_keys")
+  if private_keys is None:
+    private_keys = {}
+  if public_keys is None:
+    public_keys = {}
+  if not isinstance(private_keys, dict) or not isinstance(public_keys, dict):
+    raise VaultError(
+      "vault_wireguard_private_keys and vault_wireguard_public_keys must be mappings"
+    )
+
+  changed = False
+  for name in required_names:
+    private = private_keys.get(name)
+    public = public_keys.get(name)
+    if isinstance(private, str) and private and isinstance(public, str) and public:
+      continue
+    if (isinstance(private, str) and private) ^ (isinstance(public, str) and public):
+      raise VaultError(
+        f"WireGuard key pair for {name} is incomplete; fix with vault-edit"
+      )
+    generated_private, generated_public = generate_wireguard_keypair()
+    private_keys[name] = generated_private
+    public_keys[name] = generated_public
+    changed = True
+
+  if not changed:
+    print(f"WireGuard vault keys already present for {provider}")
+    return
+
+  document["vault_wireguard_private_keys"] = private_keys
+  document["vault_wireguard_public_keys"] = public_keys
+  plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
+
+  prefix = f"{deployment_name()}-vault-wg-{provider}-"
+  with tempfile.TemporaryDirectory(prefix=prefix) as name:
+    plaintext = Path(name) / "vault.yml"
+    plaintext.write_text(plaintext_body, encoding="utf-8")
+    plaintext.chmod(0o600)
+    encrypt_and_replace(
+      plaintext,
+      encrypted_vault,
+      provider,
+      password_file,
+    )
+
+  print(f"WireGuard vault keys ensured: {encrypted_vault.relative_to(ROOT)}")
+
+
 def parse_arguments() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Manage deployment provider vaults")
-  parser.add_argument("action", choices=("init", "edit", "reset", "destroy"))
+  parser.add_argument(
+    "action",
+    choices=("init", "edit", "reset", "destroy", "ensure-wireguard"),
+  )
   return parser.parse_args()
 
 
@@ -358,6 +494,8 @@ def main() -> int:
       edit(provider)
     elif arguments.action == "reset":
       reset(provider)
+    elif arguments.action == "ensure-wireguard":
+      ensure_wireguard(provider)
     else:
       destroy(provider)
   except VaultError as error:

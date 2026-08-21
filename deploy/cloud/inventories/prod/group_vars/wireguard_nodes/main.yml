@@ -1,0 +1,20 @@
+---
+# Connection settings for deployment / wireguard_nodes only.
+# localhost (controller) must not inherit ansible_host from this file.
+#
+# Steady-state management uses the WireGuard address below, not the public
+# prod_wireguard_endpoint in hosts.yml.
+ansible_host: "{{ prod_wireguard_node_addresses[inventory_hostname] }}"
+wireguard_node_address: "{{ prod_wireguard_node_addresses[inventory_hostname] }}"
+
+ansible_connection: "{{ prod_connection }}"
+ansible_user: "{{ prod_default_ssh_user }}"
+ansible_port: "{{ prod_default_ssh_port }}"
+ansible_become: true
+ansible_become_method: sudo
+ansible_ssh_common_args: >-
+  -F /dev/null -o BatchMode=yes -o ControlMaster=no -o ControlPath=none
+  -o HostKeyAlias={{ inventory_hostname }} -o StrictHostKeyChecking=yes
+  -o UserKnownHostsFile={{ prod_known_hosts }}
+# If you set prod_ssh_private_key_file in group_vars/all, uncomment:
+# ansible_ssh_private_key_file: "{{ prod_ssh_private_key_file }}"

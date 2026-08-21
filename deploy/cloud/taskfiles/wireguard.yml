@@ -1,0 +1,87 @@
+version: "3"
+
+env:
+  PROVIDER: "{{.PROVIDER}}"
+
+tasks:
+  wg-require-lima:
+    internal: true
+    requires:
+      vars: [PROVIDER]
+    cmds:
+      - |
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        if [[ "${platform}" != "lima" ]]; then
+          echo "PROVIDER={{.PROVIDER}} is not a Lima local provider. Production WireGuard is the next slice." >&2
+          exit 2
+        fi
+
+  wg-up:
+    desc: Bring up the Lima WireGuard mesh for a local provider
+    requires:
+      vars: [PROVIDER]
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running wg-up
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running wg-up
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running wg-up
+    cmds:
+      - task: wg-require-lima
+      - uv run --locked python scripts/vault.py ensure-wireguard
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-up.yml
+
+  wg-status:
+    desc: Show Lima WireGuard mesh status for a local provider
+    requires:
+      vars: [PROVIDER]
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running wg-status
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running wg-status
+    cmds:
+      - task: wg-require-lima
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-status.yml
+
+  wg-remove:
+    desc: Remove Lima WireGuard lockdown and controller mesh state
+    requires:
+      vars: [PROVIDER]
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running wg-remove
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running wg-remove
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running wg-remove
+    cmds:
+      - task: wg-require-lima
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-remove.yml
+
+  wg-ssh:
+    desc: SSH to a Lima node over WireGuard (NODE=local-1)
+    requires:
+      vars: [PROVIDER, NODE]
+    env:
+      NODE: "{{.NODE}}"
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running wg-ssh
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running wg-ssh
+    cmds:
+      - task: wg-require-lima
+      - bash scripts/wg-ssh.sh
+
+  wg-syntax:
+    desc: Syntax-check Lima WireGuard playbooks
+    requires:
+      vars: [PROVIDER]
+    cmds:
+      - task: wg-require-lima
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-up.yml
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-status.yml
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-remove.yml
+      - bash -n scripts/wg-ssh.sh

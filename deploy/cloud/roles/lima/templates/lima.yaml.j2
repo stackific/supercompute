@@ -1,0 +1,38 @@
+minimumLimaVersion: "{{ lima_version }}"
+base:
+  - template:ubuntu-26.04
+vmType: vz
+arch: aarch64
+cpus: {{ provider.resources.cpus }}
+memory: "{{ provider.resources.memory_gib }}GiB"
+disk: "{{ provider.resources.disk_gib }}GiB"
+mounts: []
+networks:
+  - lima: user-v2
+    macAddress: "{{ item.mac_address }}"
+ssh:
+  localPort: {{ item.ssh_port }}
+  loadDotSSHPubKeys: false
+  forwardAgent: false
+vmOpts:
+  vz:
+    rosetta:
+      enabled: false
+      binfmt: false
+containerd:
+  system: false
+  user: false
+hostResolver:
+  enabled: true
+  ipv6: false
+portForwards:
+  # Keep this dynamic: Lima's gRPC forwarder carries UDP; static forwarding does not.
+  - guestPort: {{ wireguard_listen_port }}
+    hostPort: {{ item.wg_host_port }}
+    hostIP: 127.0.0.1
+    proto: udp
+  # Do not automatically expose any other guest listener on macOS.
+  - guestPortRange: [1, 65535]
+    proto: any
+    ignore: true
+message: "{{ lima_ownership_message }}"

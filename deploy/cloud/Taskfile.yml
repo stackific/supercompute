@@ -12,6 +12,9 @@ includes:
   lima:
     taskfile: ./taskfiles/lima.yml
     flatten: true
+  wireguard:
+    taskfile: ./taskfiles/wireguard.yml
+    flatten: true
 
 tasks:
   default:

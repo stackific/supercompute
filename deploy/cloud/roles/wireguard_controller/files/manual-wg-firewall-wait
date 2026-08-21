@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+policy_path="${4:-/etc/wireguard/manual-wireguard-lockdown.nft}"
+lockdown_applied=false
+
+apply_lockdown() {
+  if /usr/sbin/nft -f "${policy_path}"; then
+    lockdown_applied=true
+    return 0
+  fi
+  return 1
+}
+
+fail_closed_on_exit() {
+  local status=$?
+  if [[ "${lockdown_applied}" != true ]]; then
+    echo "manual-wg-firewall-wait: startup gate failed; applying fail-closed lockdown" >&2
+    apply_lockdown || true
+  fi
+  exit "${status}"
+}
+
+trap fail_closed_on_exit EXIT
+trap 'exit 1' HUP INT TERM
+
+if [[ $# -ne 4 ]]; then
+  echo "manual-wg-firewall-wait: expected INTERFACE CONTROLLER_ADDRESS TIMEOUT_SECONDS POLICY_PATH" >&2
+  exit 2
+fi
+
+interface="$1"
+controller_address="$2"
+timeout_seconds="$3"
+
+if [[ ! "${interface}" =~ ^[a-zA-Z0-9_.-]+$ ||
+      ! "${controller_address}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ||
+      ! "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "manual-wg-firewall-wait: invalid argument; applying lockdown immediately" >&2
+  exit 2
+fi
+
+controller_cidr="${controller_address}/32"
+deadline=$(( $(date +%s) + timeout_seconds ))
+
+while (( $(date +%s) < deadline )); do
+  controller_key="$({ wg show "${interface}" allowed-ips 2>/dev/null || true; } |
+    awk -v expected="${controller_cidr}" '$2 == expected { print $1 }')"
+
+  if [[ -n "${controller_key}" && "${controller_key}" != *$'\n'* ]]; then
+    latest_handshake="$({ wg show "${interface}" latest-handshakes 2>/dev/null || true; } |
+      awk -v expected="${controller_key}" '$1 == expected { print $2 }')"
+    now="$(date +%s)"
+    if [[ "${latest_handshake}" =~ ^[0-9]+$ &&
+          "${latest_handshake}" -gt 0 &&
+          $(( now - latest_handshake )) -ge 0 &&
+          $(( now - latest_handshake )) -le 60 ]]; then
+      echo "manual-wg-firewall-wait: verified a recent handshake from ${controller_cidr}; applying lockdown" >&2
+      apply_lockdown
+      trap - EXIT HUP INT TERM
+      exec /usr/bin/sleep infinity
+    fi
+  fi
+
+  sleep 1
+done
+
+echo "manual-wg-firewall-wait: no recent handshake from ${controller_cidr} within ${timeout_seconds}s; applying fail-closed lockdown" >&2
+apply_lockdown
+trap - EXIT HUP INT TERM
+exec /usr/bin/sleep infinity

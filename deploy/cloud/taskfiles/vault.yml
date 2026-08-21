@@ -39,3 +39,10 @@ tasks:
       CONFIRM: "{{.CONFIRM}}"
     cmds:
       - uv run --locked python scripts/vault.py destroy
+
+  vault-wireguard-ensure:
+    desc: Ensure Lima WireGuard key pairs exist in the provider vault
+    requires:
+      vars: [PROVIDER]
+    cmds:
+      - uv run --locked python scripts/vault.py ensure-wireguard

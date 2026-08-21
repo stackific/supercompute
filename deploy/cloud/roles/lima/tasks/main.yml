@@ -18,9 +18,14 @@
       - provider.resources.cpus | int >= 1
       - provider.resources.memory_gib | int >= 1
       - provider.resources.disk_gib | int >= 1
+      - lima_version is string
+      - lima_version | length > 0
+      - lima_nodes | length > 0
+      - wireguard_listen_port | int > 0
     fail_msg: >-
       Lima lifecycle requires provider.platform=lima with Ubuntu
-      {{ node_ubuntu_version }} arm64 image and positive resources.
+      {{ node_ubuntu_version }} arm64 image, positive resources, and WireGuard
+      UDP forward metadata on lima_nodes.
 
 - name: Require the supported controller platform
   ansible.builtin.assert:
@@ -43,15 +48,31 @@
   register: lima_version_check
   changed_when: false
 
+- name: Require the pinned Lima version
+  ansible.builtin.assert:
+    that:
+      - lima_version_check.stdout is search('(^|\\s)' ~ lima_version ~ '(\\s|$)')
+    fail_msg: >-
+      Lima {{ lima_version }} is required; found
+      {{ lima_version_check.stdout | default('unknown', true) }}.
+
 - name: Record desired inventory Lima instance names
   ansible.builtin.set_fact:
-    lima_desired_instance_names: "{{ lima_nodes }}"
+    lima_desired_instance_names: "{{ lima_nodes | map(attribute='name') | list | sort }}"
 
 - name: Require at least one deployment host for Lima mutation and verify
   ansible.builtin.assert:
     that:
       - lima_desired_instance_names | length > 0
     fail_msg: "The deployment group declares no Lima VM hosts."
+  when: lima_lifecycle != 'status'
+
+- name: Require lima_nodes names to match the deployment inventory
+  ansible.builtin.assert:
+    that:
+      - lima_desired_instance_names | sort == (groups['deployment'] | default([]) | sort)
+    fail_msg: >-
+      lima_nodes names must exactly match hosts in the deployment group.
   when: lima_lifecycle != 'status'
 
 - name: Inspect Lima instances in the dedicated provider home
@@ -158,6 +179,12 @@
         mode: "0700"
       when: lima_missing_instance_names | length > 0
 
+    - name: Create the tracked Lima definition directory
+      ansible.builtin.file:
+        path: "{{ lima_state_dir }}"
+        state: directory
+        mode: "0700"
+
     - name: Observe free capacity for newly created Lima VMs
       ansible.builtin.command:
         argv: [df, -Pk, "{{ lima_home_dir }}"]
@@ -178,36 +205,142 @@
           {{ provider.resources.disk_gib }} GiB Lima disk(s).
       when: lima_missing_instance_names | length > 0
 
-    - name: Create absent Lima instances from the provider image source
+    - name: Render the tracked Lima definitions
+      ansible.builtin.template:
+        src: lima.yaml.j2
+        dest: "{{ lima_state_dir }}/{{ item.name }}.yaml"
+        mode: "0600"
+      loop: "{{ lima_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Validate the tracked Lima definitions
+      ansible.builtin.command:
+        argv:
+          - limactl
+          - validate
+          - "{{ lima_state_dir }}/{{ item.name }}.yaml"
+      loop: "{{ lima_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: false
+
+    - name: Check host WireGuard UDP ports before creating Lima instances
+      ansible.builtin.command:
+        argv: [lsof, -nP, "-iUDP:{{ item.wg_host_port }}"]
+      register: lima_wireguard_host_port_check
+      failed_when: false
+      changed_when: false
+      loop: "{{ lima_nodes }}"
+      loop_control:
+        label: "{{ item.name }}:{{ item.wg_host_port }}"
+      when: item.name in lima_missing_instance_names
+
+    - name: Refuse WireGuard host ports owned outside the Lima instance
+      ansible.builtin.assert:
+        that:
+          - item.rc != 0
+        fail_msg: >-
+          Cannot create {{ item.item.name }} because UDP/{{ item.item.wg_host_port }}
+          is already in use. Choose a free wg_host_port in the provider inventory.
+          Current holder: {{ item.stdout | default('unknown', true) }}
+      loop: "{{ lima_wireguard_host_port_check.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name | default('unknown') }}"
+      when: not (item.skipped | default(false))
+
+    - name: Verify existing Lima instances match the tracked WireGuard forward contract
+      ansible.builtin.command:
+        argv:
+          - limactl
+          - template
+          - yq
+          - "{{ lima_home_dir }}/{{ item.name }}/lima.yaml"
+          - >-
+            .minimumLimaVersion == "{{ lima_version }}" and .vmType == "vz" and
+            .arch == "aarch64" and .cpus == {{ provider.resources.cpus }} and
+            .memory == "{{ provider.resources.memory_gib }}GiB" and
+            .disk == "{{ provider.resources.disk_gib }}GiB" and
+            (.networks | length) == 1 and .networks[0].lima == "user-v2" and
+            .networks[0].macAddress == "{{ item.mac_address }}" and
+            .ssh.localPort == {{ item.ssh_port }} and .containerd.system == false and
+            .containerd.user == false and (.portForwards | length) == 2 and
+            .portForwards[0].guestPort == {{ wireguard_listen_port }} and
+            .portForwards[0].hostPort == {{ item.wg_host_port }} and
+            .portForwards[0].hostIP == "127.0.0.1" and .portForwards[0].proto == "udp" and
+            .portForwards[0].static != true and .portForwards[1].guestPortRange[0] == 1 and
+            .portForwards[1].guestPortRange[1] == 65535 and .portForwards[1].proto == "any" and
+            .portForwards[1].ignore == true and .message == "{{ lima_ownership_message }}"
+      loop: "{{ lima_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: lima_instance_contract
+      changed_when: false
+      when: item.name in lima_project_instance_names
+
+    - name: Reject Lima instances that differ from the tracked definition
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim == 'true'
+        fail_msg: >-
+          Existing Lima instance {{ item.item.name }} differs from the tracked
+          contract (including UDP {{ wireguard_listen_port }} host forwards).
+          Run task wg-remove PROVIDER={{ inventory_slug }} when WireGuard state
+          exists, then task lima-destroy CONFIRM=destroy-lima-{{ inventory_slug }},
+          task lima-up, and task wg-up PROVIDER={{ inventory_slug }}.
+      loop: "{{ lima_instance_contract.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: not (item.skipped | default(false))
+
+    - name: Create absent Lima instances from the tracked definition
       ansible.builtin.command:
         argv:
           - limactl
           - start
           - --tty=false
-          - --containerd=none
-          - --mount-none
-          - "--cpus={{ provider.resources.cpus }}"
-          - "--memory={{ provider.resources.memory_gib }}"
-          - "--disk={{ provider.resources.disk_gib }}"
-          - "--name={{ item }}"
-          - "--set=.message=\"{{ lima_ownership_message }}\""
-          - "{{ provider.image.source }}"
+          - "--name={{ item.name }}"
+          - "{{ lima_state_dir }}/{{ item.name }}.yaml"
       environment:
         LIMA_SSH_PORT_FORWARDER: "false"
-      loop: "{{ lima_desired_instance_names }}"
-      when: item in lima_missing_instance_names
+      loop: "{{ lima_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.name in lima_missing_instance_names
       changed_when: true
 
     - name: Start stopped inventory Lima instances
       ansible.builtin.command:
-        argv: [limactl, start, --tty=false, "{{ item }}"]
+        argv: [limactl, start, --tty=false, "{{ item.name }}"]
       environment:
         LIMA_SSH_PORT_FORWARDER: "false"
-      loop: "{{ lima_desired_instance_names }}"
+      loop: "{{ lima_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
       when:
-        - item in lima_project_instance_names
-        - lima_project_instance_states[item] == 'Stopped'
+        - item.name in lima_project_instance_names
+        - lima_project_instance_states[item.name] == 'Stopped'
       changed_when: true
+
+    - name: Check whether controller WireGuard state already exists
+      ansible.builtin.stat:
+        path: "{{ wireguard_state_dir }}/wg.conf"
+      register: lima_existing_controller_wireguard_config
+
+    - name: Wait for each pre-existing Lima WireGuard UDP forward
+      ansible.builtin.command:
+        argv: [lsof, -nP, -a, -c, limactl, "-iUDP:{{ item.wg_host_port }}"]
+      register: lima_wireguard_udp_forward
+      until: lima_wireguard_udp_forward.rc == 0
+      retries: 60
+      delay: 1
+      changed_when: false
+      loop: "{{ lima_nodes }}"
+      loop_control:
+        label: "{{ item.name }}:{{ item.wg_host_port }}"
+      when:
+        - item.name in lima_project_instance_names
+        - lima_existing_controller_wireguard_config.stat.exists | default(false)
 
     - name: Reinspect Lima after the owner action
       ansible.builtin.command:
@@ -238,7 +371,7 @@
         argv:
           - limactl
           - shell
-          - "{{ item }}"
+          - "{{ item.name }}"
           - --
           - sh
           - -c
@@ -248,8 +381,10 @@
             uname -m
       register: lima_guest_os_contract
       changed_when: false
-      loop: "{{ lima_desired_instance_names }}"
-      when: item in lima_missing_instance_names
+      loop: "{{ lima_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.name in lima_missing_instance_names
 
     - name: Require Ubuntu 26.04 Resolute ARM64 inside every new guest
       ansible.builtin.assert:
@@ -258,7 +393,7 @@
             item.stdout | trim ==
             'ubuntu|' ~ node_ubuntu_version ~ '|' ~ node_ubuntu_codename ~ '|' ~ node_host_architecture
         fail_msg: >-
-          {{ item.item }} is not Ubuntu {{ node_ubuntu_version }}
+          {{ item.item.name }} is not Ubuntu {{ node_ubuntu_version }}
           ({{ node_ubuntu_codename }}) {{ node_host_architecture }}.
       loop: "{{ lima_guest_os_contract.results | default([]) }}"
       when: not (item.skipped | default(false))
@@ -312,6 +447,11 @@
           - (lima_destroy_remaining.stdout | from_json).all_names | length == 0
         fail_msg: "Lima instances remain after lima-destroy."
       when: lima_destroy_home.stat.exists
+
+    - name: Remove tracked Lima definitions after destroy
+      ansible.builtin.file:
+        path: "{{ lima_state_dir }}"
+        state: absent
 
     - name: Report Lima destroy completion
       ansible.builtin.debug:
