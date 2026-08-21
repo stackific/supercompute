@@ -41,8 +41,15 @@ tasks:
       - uv run --locked python scripts/vault.py destroy
 
   vault-wireguard-ensure:
-    desc: Ensure Lima WireGuard key pairs exist in the provider vault
+    desc: Ensure WireGuard key pairs exist in the provider vault
     requires:
       vars: [PROVIDER]
     cmds:
       - uv run --locked python scripts/vault.py ensure-wireguard
+
+  vault-secure-ensure:
+    desc: Ensure per-node /srv/secure fscrypt passphrases exist in the provider vault
+    requires:
+      vars: [PROVIDER]
+    cmds:
+      - uv run --locked python scripts/vault.py ensure-secure-storage

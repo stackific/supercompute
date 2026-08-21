@@ -118,6 +118,19 @@ Ensure keys without bringing the mesh up:
 task vault-wireguard-ensure PROVIDER=local
 ```
 
+## Secure storage (`/srv/secure`)
+
+After the WireGuard mesh is up, configure node-local encryption from
+`deployment.yml`'s `encryption_at_rest` flag:
+
+```sh
+task secure-up PROVIDER=local
+task secure-status PROVIDER=local
+```
+
+See [encrypted-at-rest.md](encrypted-at-rest.md). After a VM reboot, rerun
+`secure-up` to unlock; the passphrase stays in the provider Vault on the Mac.
+
 ## Provider vaults
 
 Initialize local access to a provider vault:

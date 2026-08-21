@@ -88,23 +88,13 @@ connection_values="$(
   cd "${project_dir}"
   uv run --locked python scripts/prod-wireguard-ssh-config.py "${requested_provider}" "${node}"
 )"
-IFS=$'\t' read -r node_address node_user node_port <<<"${connection_values}"
+IFS=$'\t' read -r node_address node_user node_port private_key <<<"${connection_values}"
 if [[ -z "${node_address}" || -z "${node_user}" || -z "${node_port}" ]]; then
   echo "Could not resolve the production SSH address, user, and port for ${node}." >&2
   exit 1
 fi
 
 ssh_identity_args=()
-private_key="$(
-  cd "${project_dir}"
-  uv run --locked python - <<PY
-from pathlib import Path
-import yaml
-main = yaml.safe_load(Path("inventories/${requested_provider}/group_vars/all/main.yml").read_text())
-value = main.get("prod_ssh_private_key_file")
-print(value if isinstance(value, str) else "")
-PY
-)"
 if [[ -n "${private_key}" ]]; then
   [[ -r "${private_key}" ]] || {
     echo "prod_ssh_private_key_file must name a readable private key: ${private_key}" >&2

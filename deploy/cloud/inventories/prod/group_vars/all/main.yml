@@ -17,10 +17,11 @@ provider:
     source: REPLACE_WITH_PROVIDER_IMAGE_ID
 
 # Bootstrap SSH to the public endpoint (before / outside WireGuard).
+# REQUIRED before first wg-up: set to the Linux user on every VPS (e.g. ops).
+# Stub clones ship REPLACE_WITH_SSH_USER; Ansible SSHes as this exact string.
 # Override per host in hosts.yml if a node differs.
 prod_connection: ssh
-prod_default_ssh_user: REPLACE_WITH_SSH_USER
-# Example: ops
+prod_default_ssh_user: ops
 prod_default_ssh_port: 22
 prod_known_hosts: "{{ provider_state_dir }}/known_hosts"
 
@@ -39,11 +40,10 @@ prod_wireguard_node_addresses:
   prod-1: 10.217.79.11
   prod-2: 10.217.79.12
   prod-3: 10.217.79.13
-
-# Absolute path to the Mac SSH private key from docs/setup-prod.md, e.g.
-# "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+# Absolute path to the Mac SSH private key from docs/setup-prod.md.
+# Do not use a leading ~ — Ansible does not expand it.
 # Leave unset to use ssh-agent / default identities.
-# prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
 
 node_ubuntu_version: "26.04"
 node_ubuntu_codename: resolute

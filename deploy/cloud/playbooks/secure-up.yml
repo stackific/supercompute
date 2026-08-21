@@ -1,0 +1,18 @@
+---
+- name: Configure and unlock node-local secure storage
+  hosts: wireguard_nodes
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Wait for WireGuard SSH access
+      ansible.builtin.wait_for_connection:
+        timeout: 30
+
+    - name: Require the encryption_at_rest feature flag
+      ansible.builtin.assert:
+        that:
+          - encryption_at_rest is boolean
+        fail_msg: "deployment.yml must define encryption_at_rest as true or false."
+  roles:
+    - secure_storage

@@ -3,15 +3,21 @@
 
 from __future__ import annotations
 
-import sys
+import os
 from pathlib import Path
 import re
+import sys
 
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+HOME_LOOKUP = re.compile(
+  r"\{\{\s*lookup\(\s*['\"](?:ansible\.builtin\.)?env['\"]\s*,\s*['\"]HOME['\"]\s*\)\s*\}\}"
+)
+DEPLOYMENT_NAME_VAR = re.compile(r"\{\{\s*deployment_name\s*\}\}")
+INVENTORY_SLUG_VAR = re.compile(r"\{\{\s*inventory_slug\s*\}\}")
 
 
 def read_mapping(path: Path) -> dict:
@@ -19,6 +25,16 @@ def read_mapping(path: Path) -> dict:
   if not isinstance(document, dict):
     raise ValueError(f"{path.relative_to(ROOT)} must contain a YAML mapping.")
   return document
+
+
+def deployment_name() -> str:
+  document = read_mapping(ROOT / "deployment.yml")
+  name = document.get("deployment_name")
+  if not isinstance(name, str) or not name.strip():
+    raise ValueError("deployment.yml must contain a non-empty deployment_name")
+  if Path(name).name != name or name in {".", ".."} or not SLUG.fullmatch(name):
+    raise ValueError("deployment_name must be a lowercase DNS-label name")
+  return name
 
 
 def scalar(value: object, description: str) -> str:
@@ -56,7 +72,37 @@ def wireguard_host_vars(hosts_document: dict) -> dict[str, dict]:
   return result
 
 
-def resolve(inventory_slug: str, node: str) -> tuple[str, str, str]:
+def resolve_private_key_file(
+  value: object,
+  *,
+  inventory_slug: str,
+) -> str:
+  """Expand the supported Ansible path form used in group_vars for wg-ssh."""
+  if value is None:
+    return ""
+  if not isinstance(value, str) or not value.strip():
+    raise ValueError("prod_ssh_private_key_file must be a non-empty string when set")
+
+  home = os.environ.get("HOME", "")
+  if not home:
+    raise ValueError("HOME must be set to resolve prod_ssh_private_key_file")
+
+  resolved = HOME_LOOKUP.sub(home, value)
+  resolved = DEPLOYMENT_NAME_VAR.sub(deployment_name(), resolved)
+  resolved = INVENTORY_SLUG_VAR.sub(inventory_slug, resolved)
+  if "{{" in resolved or "{%" in resolved:
+    raise ValueError(
+      "prod_ssh_private_key_file contains unsupported Jinja; use "
+      "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/"
+      "{{ deployment_name }}-{{ inventory_slug }} or an absolute path"
+    )
+  path = Path(resolved).expanduser()
+  if not path.is_absolute():
+    raise ValueError(f"prod_ssh_private_key_file must resolve to an absolute path: {path}")
+  return str(path)
+
+
+def resolve(inventory_slug: str, node: str) -> tuple[str, str, str, str]:
   if not SLUG.fullmatch(inventory_slug):
     raise ValueError("inventory slug must be a lowercase DNS-label slug")
   inventory = ROOT / "inventories" / inventory_slug
@@ -85,7 +131,11 @@ def resolve(inventory_slug: str, node: str) -> tuple[str, str, str]:
   )
   if not port.isdecimal() or not 0 < int(port) < 65536:
     raise ValueError("SSH port must be an integer between 1 and 65535.")
-  return address, user, port
+  private_key = resolve_private_key_file(
+    main.get("prod_ssh_private_key_file"),
+    inventory_slug=inventory_slug,
+  )
+  return address, user, port, private_key
 
 
 def main() -> int:

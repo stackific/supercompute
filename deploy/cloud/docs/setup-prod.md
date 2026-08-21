@@ -35,15 +35,12 @@ ssh-add ~/.ssh/<deployment_name>-<provider>
 pbcopy < ~/.ssh/<deployment_name>-<provider>.pub
 ```
 
-Set `prod_ssh_private_key_file` in
-`inventories/<provider>/group_vars/all/main.yml` to that private key path, or
-rely on `ssh-agent` after `ssh-add`.
-
 ## Prepare each VPS (provider web console)
 
 Create Ubuntu Server 26.04 AMD64 instances. On each VM, create the inventory SSH
 user (sample `ops`), install the Mac public key, and grant passwordless sudo.
-Replace `ops` and the sudoers filename if your inventory uses different values.
+Use the **same** username you will set as `prod_default_ssh_user` in the next
+section (do not leave `REPLACE_WITH_SSH_USER` in inventory).
 
 ```sh
 sudo adduser --disabled-password --gecos '' ops
@@ -94,26 +91,55 @@ Store the full `SHA256:…` value in your password manager. Put the same value i
 host. This is the **server** host key, not the operator key from
 `authorized_keys`.
 
-## Fill the production inventory
+## Fill the production inventory (required before wg-up)
+
+Replace every `REPLACE_WITH_*` stub. Leaving any of them causes SSH failures such
+as `REPLACE_WITH_SSH_USER@…: Permission denied`.
+
+### 1. `group_vars/all/main.yml` (SSH user + private key)
+
+Edit `inventories/<provider>/group_vars/all/main.yml` and set at least:
+
+```yaml
+prod_default_ssh_user: ops
+prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+```
+
+- `prod_default_ssh_user` must match the Linux user you created on every VPS
+  (sample `ops`). The stub ships as `REPLACE_WITH_SSH_USER`; Ansible will SSH as
+  that literal string until you change it.
+- `prod_ssh_private_key_file` should use the form above (Ansible and `wg-ssh`
+  both expand it). A leading `~` is **not** expanded; do not hardcode only a
+  tilde path.
+- Optionally set `provider.image.source` to your provider’s image id.
+- Keep `prod_wireguard_node_addresses` in sync with every hostname in
+  `hosts.yml` (disjoint from Lima `10.79.0.0/24` and `10.79.1.0/24` on this Mac).
+
+### 2. `hosts.yml` (endpoints + host-key fingerprints)
 
 Edit `inventories/<provider>/hosts.yml` for every deployment host:
-
-- `prod_wireguard_endpoint` — public IPv4 or DNS name (not the mesh address)
-- `prod_ssh_host_ed25519_sha256` — complete `SHA256:…` host-key fingerprint
-
-Edit `inventories/<provider>/group_vars/all/main.yml`:
-
-- `provider.image.source`, `prod_default_ssh_user`, optional `prod_ssh_private_key_file`
-- `prod_wireguard_node_addresses` — one mesh IP per inventory hostname (any N;
-  must stay disjoint from Lima `10.79.0.0/24` and `10.79.1.0/24` on the same Mac)
-
-Example shape (replace placeholders; add or rename hosts as needed):
 
 ```yaml
 prod-1:
   prod_wireguard_endpoint: "203.0.113.11"
-  prod_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT"
+  prod_ssh_host_ed25519_sha256: "SHA256:…"
 ```
+
+- `prod_wireguard_endpoint` — public IPv4 or DNS name (not the mesh address)
+- `prod_ssh_host_ed25519_sha256` — complete `SHA256:…` from
+  `/etc/ssh/ssh_host_ed25519_key.pub` on that VM
+
+### 3. Prove bootstrap SSH from the Mac
+
+Before `wg-up`, confirm the inventory user and key work (replace host and paths):
+
+```sh
+ssh -i ~/.ssh/<deployment_name>-<provider> -o IdentitiesOnly=yes \
+  ops@203.0.113.11 true
+```
+
+If this fails, fix keys/user/firewall first. Matching key fingerprints alone is
+not enough when `prod_default_ssh_user` is still a placeholder.
 
 ## Provider firewall
 
@@ -148,6 +174,20 @@ Controller-only disconnect (does not change servers):
 task wg-remove PROVIDER=prod
 ```
 
+## Secure storage (`/srv/secure`)
+
+After the WireGuard mesh is up, configure node-local encryption from
+`deployment.yml`'s `encryption_at_rest` flag:
+
+```sh
+task secure-up PROVIDER=prod
+task secure-status PROVIDER=prod
+```
+
+See [encrypted-at-rest.md](encrypted-at-rest.md). After a server reboot, rerun
+`secure-up` to unlock; passphrases stay in the provider Vault on the Mac (never
+as a guest keyfile).
+
 ## Backup for a fresh computer
 
 Store the following in your personal secret manager. Without them you cannot
@@ -160,13 +200,13 @@ mesh from a new Mac. Do **not** rely on git for anything marked gitignored.
 | --- | --- | --- |
 | Operator SSH private key | `~/.ssh/<deployment_name>-<provider>` | Proves you are the operator on every node (`ops` / inventory user) |
 | Operator SSH public key | `~/.ssh/<deployment_name>-<provider>.pub` | Rebuild authorized_keys or verify the key pair |
-| Ansible Vault password | `inventories/<provider>/.vault-pass` | Decrypts WireGuard private keys; **gitignored**—losing this loses the vault contents |
+| Ansible Vault password | `inventories/<provider>/.vault-pass` | Decrypts WireGuard private keys and `/srv/secure` fscrypt passphrases; **gitignored**—losing this loses the vault contents |
 
 ### Must store or already have in git (recovery inputs)
 
 | Item | Where | Why |
 | --- | --- | --- |
-| Encrypted vault | `inventories/<provider>/group_vars/all/vault.yml` | Holds `vault_prod_wireguard_*` key pairs. Prefer committing it; also keep a secret-manager copy |
+| Encrypted vault | `inventories/<provider>/group_vars/all/vault.yml` | Holds `vault_prod_wireguard_*` key pairs and `vault_encryption_at_rest_passphrases`. Prefer committing it; also keep a secret-manager copy |
 | Per-node host-key fingerprints | `SHA256:…` from each `/etc/ssh/ssh_host_ed25519_key.pub` | Must match `prod_ssh_host_ed25519_sha256` in `hosts.yml` for `wg-up` / known_hosts |
 | Per-node public endpoints | IPv4 or DNS in `hosts.yml` | WireGuard peer endpoints and bootstrap SSH |
 | Inventory + `deployment.yml` | Git clone | Host names, mesh IPs, SSH user, launchd label namespace |
@@ -192,7 +232,8 @@ secrets above and clone the repo:
 4. Confirm `hosts.yml` fingerprints and endpoints match what you stored.
 5. Update the provider firewall with this Mac’s public `/32` if it changed.
 6. Run `task wg-up PROVIDER=<provider>` (temporarily allow TCP 22 from the new Mac if the mesh is down and public SSH was closed).
-7. Confirm with `task wg-ssh PROVIDER=<provider> NODE=<inventory_hostname>`.
+7. Run `task secure-up PROVIDER=<provider>` when `encryption_at_rest: true` so `/srv/secure` is unlocked again after restore.
+8. Confirm with `task wg-ssh PROVIDER=<provider> NODE=<inventory_hostname>`.
 
 ## Sample mesh addresses
 
@@ -204,3 +245,14 @@ Default stub uses:
 | Inventory nodes | `10.217.79.11+` in `prod_wireguard_node_addresses` |
 
 Interface name on servers: `scwg0`. Listen port: `51830`.
+
+```code
+# From VPS, ping macOS's address
+ping -c 10 -I scwg0 10.217.79.1
+
+# < 20 ms: Excellent (same metro / nearby region)
+# 20–50 ms: Very good (typical same-country / nearby DC)
+# 50–100 ms: Fine for SSH, Ansible, mesh ops
+# 100–200 ms: Usable; feel a bit of lag on interactive work
+# > 200 ms: Cross-ocean / congested path; still OK for automation, poor for “snappy” shells
+```

@@ -1,0 +1,52 @@
+---
+- name: Report secure storage status on every WireGuard node
+  hosts: wireguard_nodes
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars_files:
+    - ../roles/secure_storage/defaults/main.yml
+  pre_tasks:
+    - name: Wait for WireGuard SSH access
+      ansible.builtin.wait_for_connection:
+        timeout: 30
+  tasks:
+    - name: Require the encryption_at_rest feature flag
+      ansible.builtin.assert:
+        that:
+          - encryption_at_rest is boolean
+        fail_msg: "deployment.yml must define encryption_at_rest as true or false."
+
+    - name: Read the project encryption ownership marker
+      ansible.builtin.stat:
+        path: "{{ secure_storage_marker_path }}"
+      register: secure_storage_status_marker
+
+    - name: Read the unlock sentinel
+      ansible.builtin.stat:
+        path: "{{ secure_storage_sentinel_path }}"
+      register: secure_storage_status_sentinel
+
+    - name: Read the business-data fscrypt policy
+      ansible.builtin.command:
+        argv: [fscrypt, status, "{{ secure_storage_path }}"]
+      register: secure_storage_status_fscrypt
+      become: true
+      failed_when: false
+      changed_when: false
+      when: encryption_at_rest | bool
+
+    - name: Show secure storage status
+      ansible.builtin.debug:
+        msg:
+          - "encryption_at_rest={{ encryption_at_rest }}"
+          - "marker={{ secure_storage_marker_path }} exists={{ secure_storage_status_marker.stat.exists }}"
+          - "sentinel={{ secure_storage_sentinel_path }} exists={{ secure_storage_status_sentinel.stat.exists }}"
+          - >-
+            {{
+              (encryption_at_rest | bool)
+              | ternary(
+                  secure_storage_status_fscrypt.stdout | default('(fscrypt status unavailable)'),
+                  'fscrypt status skipped (encryption_at_rest=false)'
+                )
+            }}

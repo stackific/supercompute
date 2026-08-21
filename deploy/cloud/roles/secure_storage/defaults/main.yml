@@ -1,0 +1,21 @@
+---
+secure_storage_path: /srv/secure
+secure_storage_marker_path: "/etc/{{ deployment_name }}-secure-storage.json"
+secure_storage_sentinel_path: "{{ secure_storage_path }}/.{{ deployment_name }}-unlocked"
+secure_storage_passphrase: >-
+  {{ (vault_encryption_at_rest_passphrases | default({})).get(inventory_hostname, '') }}
+secure_storage_package_cache_dir: "/var/cache/{{ deployment_name }}/packages"
+secure_storage_fscrypt_package: fscrypt
+secure_storage_fscrypt_version: 0.3.5-1syncable1build1
+# Ubuntu Resolute pool debs; SHA256 from packages.ubuntu.com download pages.
+secure_storage_fscrypt_debs:
+  amd64:
+    filename: fscrypt_0.3.5-1syncable1build1_amd64.deb
+    url: >-
+      https://archive.ubuntu.com/ubuntu/pool/universe/f/fscrypt/fscrypt_0.3.5-1syncable1build1_amd64.deb
+    sha256: ef1c45b13d24bff6b2c53de52998b357f5584e5219c153de83d9e7e9d56ea959
+  arm64:
+    filename: fscrypt_0.3.5-1syncable1build1_arm64.deb
+    url: >-
+      https://ports.ubuntu.com/ubuntu-ports/pool/universe/f/fscrypt/fscrypt_0.3.5-1syncable1build1_arm64.deb
+    sha256: 9d4d1455b45fdb0711eb4a06ee23755c60b89d385fbae6ab2a1d7624ee75a95c

@@ -396,6 +396,72 @@ def generate_wireguard_keypair() -> tuple[str, str]:
   return private_key, public.stdout.strip()
 
 
+STORAGE_PASSPHRASE_FIELD = "vault_encryption_at_rest_passphrases"
+MINIMUM_STORAGE_PASSPHRASE_LENGTH = 32
+
+
+def generate_storage_passphrase() -> str:
+  return secrets.token_urlsafe(48)
+
+
+def ensure_secure_storage(provider: str) -> None:
+  password_file = password_path(provider)
+  encrypted_vault = vault_path(provider)
+  read_password(password_file)
+  content = decrypt(encrypted_vault, provider, password_file)
+  document = yaml.safe_load(content)
+  if not isinstance(document, dict):
+    raise VaultError("Vault root must be a YAML mapping")
+
+  required_names = deployment_host_names(provider)
+  if not required_names:
+    raise VaultError(
+      f"Provider inventory {provider} has no deployment hosts for storage passphrases"
+    )
+
+  passphrases = document.get(STORAGE_PASSPHRASE_FIELD)
+  if passphrases is None:
+    passphrases = {}
+  if not isinstance(passphrases, dict):
+    raise VaultError(f"{STORAGE_PASSPHRASE_FIELD} must be a mapping")
+
+  changed = False
+  for name in required_names:
+    existing = passphrases.get(name)
+    if isinstance(existing, str) and len(existing) >= MINIMUM_STORAGE_PASSPHRASE_LENGTH:
+      continue
+    if isinstance(existing, str) and existing:
+      raise VaultError(
+        f"{STORAGE_PASSPHRASE_FIELD}.{name} must contain at least "
+        f"{MINIMUM_STORAGE_PASSPHRASE_LENGTH} characters; fix with vault-edit"
+      )
+    passphrases[name] = generate_storage_passphrase()
+    changed = True
+
+  if not changed:
+    print(f"Secure storage vault passphrases already present for {provider}")
+    return
+
+  document[STORAGE_PASSPHRASE_FIELD] = passphrases
+  plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
+
+  prefix = f"{deployment_name()}-vault-secure-{provider}-"
+  with tempfile.TemporaryDirectory(prefix=prefix) as name:
+    plaintext = Path(name) / "vault.yml"
+    plaintext.write_text(plaintext_body, encoding="utf-8")
+    plaintext.chmod(0o600)
+    encrypt_and_replace(
+      plaintext,
+      encrypted_vault,
+      provider,
+      password_file,
+    )
+
+  print(
+    f"Secure storage vault passphrases ensured: {encrypted_vault.relative_to(ROOT)}"
+  )
+
+
 def ensure_wireguard(provider: str) -> None:
   platform_path = (
     inventory_directory(provider) / "group_vars" / "all" / "main.yml"
@@ -486,7 +552,14 @@ def parse_arguments() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Manage deployment provider vaults")
   parser.add_argument(
     "action",
-    choices=("init", "edit", "reset", "destroy", "ensure-wireguard"),
+    choices=(
+      "init",
+      "edit",
+      "reset",
+      "destroy",
+      "ensure-wireguard",
+      "ensure-secure-storage",
+    ),
   )
   return parser.parse_args()
 
@@ -503,6 +576,8 @@ def main() -> int:
       reset(provider)
     elif arguments.action == "ensure-wireguard":
       ensure_wireguard(provider)
+    elif arguments.action == "ensure-secure-storage":
+      ensure_secure_storage(provider)
     else:
       destroy(provider)
   except VaultError as error:

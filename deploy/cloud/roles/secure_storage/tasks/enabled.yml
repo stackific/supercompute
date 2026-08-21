@@ -1,0 +1,255 @@
+---
+- name: Require this node's Vault-managed storage passphrase
+  ansible.builtin.assert:
+    that:
+      - secure_storage_passphrase is string
+      - secure_storage_passphrase | length >= 32
+    fail_msg: >-
+      The encrypted provider Vault must contain a passphrase of at least 32
+      characters at vault_encryption_at_rest_passphrases.{{ inventory_hostname }}.
+  no_log: true
+
+- name: Read the filesystem containing the business-data root
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - --noheadings
+      - --output
+      - SOURCE,FSTYPE,TARGET
+      - --target
+      - "{{ secure_storage_path }}"
+  register: secure_storage_findmnt
+  changed_when: false
+
+- name: Require an unambiguous business-data filesystem
+  ansible.builtin.assert:
+    that:
+      - secure_storage_findmnt.stdout.split() | length == 3
+    fail_msg: >-
+      Could not identify exactly one source, filesystem type, and mount point
+      for {{ secure_storage_path }}.
+
+- name: Record the business-data filesystem
+  ansible.builtin.set_fact:
+    secure_storage_mount_source: "{{ secure_storage_findmnt.stdout.split()[0] }}"
+    secure_storage_mount_fstype: "{{ secure_storage_findmnt.stdout.split()[1] }}"
+    secure_storage_mountpoint: "{{ secure_storage_findmnt.stdout.split()[2] }}"
+
+- name: Require an ext4 business-data filesystem
+  ansible.builtin.assert:
+    that:
+      - secure_storage_mount_fstype == 'ext4'
+      - secure_storage_mount_source.startswith('/dev/')
+    fail_msg: >-
+      encryption_at_rest=true currently supports only an ext4 filesystem for
+      {{ secure_storage_path }}; refusing implicit block-device creation or formatting.
+
+- name: Read the dpkg architecture for the pinned fscrypt package
+  ansible.builtin.command:
+    argv: [dpkg, --print-architecture]
+  register: secure_storage_dpkg_architecture
+  changed_when: false
+
+- name: Require a pinned fscrypt deb for this architecture
+  ansible.builtin.assert:
+    that:
+      - secure_storage_dpkg_architecture.stdout in secure_storage_fscrypt_debs
+    fail_msg: >-
+      No SHA256-pinned fscrypt deb is defined for dpkg architecture
+      {{ secure_storage_dpkg_architecture.stdout }}.
+
+- name: Select the pinned fscrypt deb for this architecture
+  ansible.builtin.set_fact:
+    secure_storage_fscrypt_deb: >-
+      {{ secure_storage_fscrypt_debs[secure_storage_dpkg_architecture.stdout] }}
+
+- name: Read the installed fscrypt package version
+  ansible.builtin.command:
+    argv:
+      - dpkg-query
+      - --show
+      - --showformat=${db:Status-Abbrev}|${Version}
+      - "{{ secure_storage_fscrypt_package }}"
+  register: secure_storage_fscrypt_package
+  failed_when: false
+  changed_when: false
+
+- name: Decide whether the pinned fscrypt package must be installed
+  ansible.builtin.set_fact:
+    secure_storage_fscrypt_needs_install: >-
+      {{
+        secure_storage_fscrypt_package.rc != 0 or
+        (secure_storage_fscrypt_package.stdout | split('|') | length) != 2 or
+        not ((secure_storage_fscrypt_package.stdout | split('|'))[0] is match('^ii')) or
+        (secure_storage_fscrypt_package.stdout | split('|'))[1] != secure_storage_fscrypt_version
+      }}
+
+- name: Create the package cache directory
+  ansible.builtin.file:
+    path: "{{ secure_storage_package_cache_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when: secure_storage_fscrypt_needs_install | bool
+
+- name: Download the SHA256-pinned fscrypt package
+  ansible.builtin.get_url:
+    url: "{{ secure_storage_fscrypt_deb.url }}"
+    dest: "{{ secure_storage_package_cache_dir }}/{{ secure_storage_fscrypt_deb.filename }}"
+    checksum: "sha256:{{ secure_storage_fscrypt_deb.sha256 }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: secure_storage_fscrypt_needs_install | bool
+
+- name: Install the SHA256-pinned fscrypt package
+  ansible.builtin.apt:
+    deb: "{{ secure_storage_package_cache_dir }}/{{ secure_storage_fscrypt_deb.filename }}"
+    state: present
+    allow_downgrade: true
+    allow_change_held_packages: true
+    install_recommends: false
+  become: true
+  when: secure_storage_fscrypt_needs_install | bool
+
+- name: Read ext4 filesystem features
+  ansible.builtin.command:
+    argv: [tune2fs, -l, "{{ secure_storage_mount_source }}"]
+  register: secure_storage_ext4_features
+  become: true
+  changed_when: false
+
+- name: Enable the ext4 encryption feature
+  ansible.builtin.command:
+    argv: [tune2fs, -O, encrypt, "{{ secure_storage_mount_source }}"]
+  become: true
+  changed_when: true
+  when: not (secure_storage_ext4_features.stdout is search('(^|\\s)encrypt(\\s|$)'))
+
+- name: Read the global fscrypt configuration
+  ansible.builtin.stat:
+    path: /etc/fscrypt.conf
+  register: secure_storage_fscrypt_config
+
+- name: Initialize root-only global fscrypt configuration
+  ansible.builtin.command:
+    argv: [fscrypt, setup, --quiet]
+  become: true
+  changed_when: true
+  when: not secure_storage_fscrypt_config.stat.exists
+
+- name: Read fscrypt metadata on the containing filesystem
+  ansible.builtin.stat:
+    path: "{{ (secure_storage_mountpoint.rstrip('/')) ~ '/.fscrypt' }}"
+  register: secure_storage_fscrypt_metadata
+
+- name: Initialize root-only fscrypt metadata on the containing filesystem
+  ansible.builtin.command:
+    argv: [fscrypt, setup, "{{ secure_storage_mountpoint }}", --quiet]
+  become: true
+  changed_when: true
+  when: not secure_storage_fscrypt_metadata.stat.exists
+
+- name: Read the current business-data encryption policy
+  ansible.builtin.command:
+    argv: [fscrypt, status, "{{ secure_storage_path }}"]
+  register: secure_storage_initial_status
+  become: true
+  failed_when: false
+  changed_when: false
+
+- name: Refuse an encrypted directory not owned by this deployment
+  ansible.builtin.assert:
+    that:
+      - >-
+        'is encrypted with fscrypt' not in secure_storage_initial_status.stdout or
+        secure_storage_marker.stat.exists
+    fail_msg: >-
+      {{ secure_storage_path }} is already encrypted but lacks the exact
+      {{ deployment_name }} ownership marker. Refusing to adopt unknown keys or policy.
+
+- name: Check that a new encryption target is empty
+  ansible.builtin.find:
+    paths: "{{ secure_storage_path }}"
+    hidden: true
+    recurse: false
+    file_type: any
+  register: secure_storage_plaintext_entries
+  when: "'is encrypted with fscrypt' not in secure_storage_initial_status.stdout"
+
+- name: Refuse in-place encryption of existing plaintext data
+  ansible.builtin.assert:
+    that:
+      - secure_storage_plaintext_entries.matched == 0
+    fail_msg: >-
+      {{ secure_storage_path }} is not encrypted and is not empty. Stop its
+      workloads and follow the documented migration; fscrypt cannot encrypt
+      existing files in place safely.
+  when: "'is encrypted with fscrypt' not in secure_storage_initial_status.stdout"
+
+- name: Record project ownership before creating the fscrypt policy
+  ansible.builtin.copy:
+    content: >-
+      {{ {'deployment_name': deployment_name, 'directory': secure_storage_path} | to_nice_json }}
+    dest: "{{ secure_storage_marker_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+  become: true
+  when: not secure_storage_marker.stat.exists
+
+- name: Encrypt the empty business-data root
+  ansible.builtin.command:
+    argv:
+      - fscrypt
+      - encrypt
+      - "{{ secure_storage_path }}"
+      - --quiet
+      - --source=custom_passphrase
+      - "--name={{ deployment_name }}-{{ inventory_hostname }}-secure"
+    stdin: "{{ secure_storage_passphrase }}"
+    stdin_add_newline: true
+  become: true
+  changed_when: true
+  no_log: true
+  when: "'is encrypted with fscrypt' not in secure_storage_initial_status.stdout"
+
+- name: Unlock existing encrypted business-data storage
+  ansible.builtin.command:
+    argv: [fscrypt, unlock, "{{ secure_storage_path }}", --quiet]
+    stdin: "{{ secure_storage_passphrase }}"
+    stdin_add_newline: true
+  become: true
+  changed_when: true
+  no_log: true
+  when:
+    - "'is encrypted with fscrypt' in secure_storage_initial_status.stdout"
+    - "'Unlocked: Yes' not in secure_storage_initial_status.stdout"
+
+- name: Verify the final business-data encryption policy
+  ansible.builtin.command:
+    argv: [fscrypt, status, "{{ secure_storage_path }}"]
+  register: secure_storage_final_status
+  become: true
+  changed_when: false
+
+- name: Require unlocked fscrypt policy version 2
+  ansible.builtin.assert:
+    that:
+      - "'is encrypted with fscrypt' in secure_storage_final_status.stdout"
+      - "'Unlocked: Yes' in secure_storage_final_status.stdout"
+      - "'policy_version:2' in secure_storage_final_status.stdout"
+    fail_msg: >-
+      {{ secure_storage_path }} does not have the expected unlocked fscrypt v2 policy.
+
+- name: Install the encrypted unlock sentinel
+  ansible.builtin.copy:
+    content: "{{ deployment_name }} encrypted business-data storage is unlocked\n"
+    dest: "{{ secure_storage_sentinel_path }}"
+    owner: root
+    group: root
+    mode: '0400'
+  become: true
