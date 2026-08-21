@@ -28,7 +28,7 @@ tasks:
         ' uv.lock
 
   setup:
-    desc: Install SHA-pinned Ansible project dependencies
+    desc: Install SHA-pinned Ansible deps and Mac host tools (cloudflared)
     preconditions:
       - sh: command -v uv >/dev/null 2>&1
         msg: Install uv before running task setup
@@ -37,3 +37,22 @@ tasks:
       - task: lock-verify
       - uv sync --locked
       - uv run --locked ansible --version
+      - |
+        if command -v cloudflared >/dev/null 2>&1; then
+          echo "cloudflared already present: $(command -v cloudflared)"
+          exit 0
+        fi
+        if [[ "$(uname -s)" != "Darwin" ]]; then
+          echo "Install cloudflared for this OS, then re-run task setup." >&2
+          exit 1
+        fi
+        if ! command -v brew >/dev/null 2>&1; then
+          echo "Install Homebrew, then re-run task setup (needs: brew install cloudflared)." >&2
+          exit 1
+        fi
+        brew install cloudflared
+        command -v cloudflared >/dev/null 2>&1 || {
+          echo "cloudflared install finished but the binary is not on PATH." >&2
+          exit 1
+        }
+        echo "cloudflared installed: $(command -v cloudflared)"

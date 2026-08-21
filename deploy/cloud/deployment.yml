@@ -2,9 +2,4 @@
 # Stable customer/deployment namespace for this Docker Swarm template.
 # Changing it later creates new unit names, local paths, labels, and object
 # prefixes; it does not migrate existing state.
-deployment_name: templ-cluster
-
-# Encrypt business-data bind mounts under /srv/secure on every Swarm node.
-# Set this before placing data there; enabling it later refuses a non-empty
-# plaintext directory rather than attempting an unsafe in-place migration.
-encryption_at_rest: true
+deployment_name: stackific

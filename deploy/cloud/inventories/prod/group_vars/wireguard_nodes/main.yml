@@ -2,10 +2,10 @@
 # Connection settings for deployment / wireguard_nodes only.
 # localhost (controller) must not inherit ansible_host from this file.
 #
-# Steady-state management uses the WireGuard address below, not the public
-# prod_wireguard_endpoint in hosts.yml.
-ansible_host: "{{ prod_wireguard_node_addresses[inventory_hostname] }}"
-wireguard_node_address: "{{ prod_wireguard_node_addresses[inventory_hostname] }}"
+# Steady-state management uses the WireGuard address from hosts.yml
+# (prod_wireguard_address), not the public prod_wireguard_endpoint.
+ansible_host: "{{ prod_wireguard_address }}"
+wireguard_node_address: "{{ prod_wireguard_address }}"
 
 ansible_connection: "{{ prod_connection }}"
 ansible_user: "{{ prod_default_ssh_user }}"

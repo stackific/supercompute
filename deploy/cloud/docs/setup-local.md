@@ -25,7 +25,8 @@ task setup
 
 `task setup` checks that `uv.lock` is current, rejects any dependency artifact
 without a SHA-256 pin, creates `.venv` from that lock, and verifies the installed
-Ansible command. It does not install or change host software.
+Ansible command. On macOS it also installs `cloudflared` via Homebrew when
+missing (needed for production roaming SSH through Cloudflare Access).
 
 ## Local Lima VMs
 
@@ -117,19 +118,6 @@ Ensure keys without bringing the mesh up:
 ```sh
 task vault-wireguard-ensure PROVIDER=local
 ```
-
-## Secure storage (`/srv/secure`)
-
-After the WireGuard mesh is up, configure node-local encryption from
-`deployment.yml`'s `encryption_at_rest` flag:
-
-```sh
-task secure-up PROVIDER=local
-task secure-status PROVIDER=local
-```
-
-See [encrypted-at-rest.md](encrypted-at-rest.md). After a VM reboot, rerun
-`secure-up` to unlock; the passphrase stays in the provider Vault on the Mac.
 
 ## Provider vaults
 

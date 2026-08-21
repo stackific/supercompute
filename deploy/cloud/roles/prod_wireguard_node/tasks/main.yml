@@ -21,17 +21,32 @@
 - name: Require a WireGuard identity for this production server
   ansible.builtin.assert:
     that:
-      - inventory_hostname in prod_wireguard_node_addresses
+      - prod_wireguard_address is defined
+      - prod_wireguard_address is string
+      - prod_wireguard_address | length > 0
+      - prod_wireguard_address != prod_wireguard_controller_address
       - vault_prod_wireguard_private_keys[inventory_hostname] is string
       - vault_prod_wireguard_public_keys[inventory_hostname] is string
       - vault_prod_wireguard_private_keys.macos is string
       - vault_prod_wireguard_public_keys.macos is string
-      - prod_wireguard_endpoint is string
-      - prod_wireguard_endpoint | length > 0
-      - prod_wireguard_endpoint is not match('^REPLACE_WITH_')
+      - >
+        (wireguard_roaming | default(false) | bool)
+        or (
+          prod_wireguard_endpoint is string
+          and prod_wireguard_endpoint | length > 0
+          and prod_wireguard_endpoint is not match('^REPLACE_WITH_')
+        )
+      - >
+        (not (wireguard_roaming | default(false) | bool))
+        or (
+          prod_bootstrap_ssh_host is string
+          and prod_bootstrap_ssh_host | length > 0
+          and prod_bootstrap_ssh_host is not match('^REPLACE_WITH_')
+        )
     fail_msg: >-
-      This server lacks a complete Vault-managed WireGuard identity or a
-      public bootstrap endpoint.
+      This server lacks hosts.yml prod_wireguard_address, a complete
+      Vault-managed WireGuard identity, or the correct bootstrap dial target
+      (prod_wireguard_endpoint for stable VPS, prod_bootstrap_ssh_host for roaming).
   no_log: true
 
 - name: Require WireGuard material for every production server
@@ -79,12 +94,103 @@
   become: true
   no_log: true
 
+- name: Persist IPv4 forwarding drop-in on the static hub
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-scwg-forward.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by prod_wireguard_node — Mac↔roaming via this hub.
+      net.ipv4.ip_forward = 1
+  become: true
+  when:
+    - hostvars['localhost'].prod_wireguard_roaming_nodes | default([]) | length > 0
+    - inventory_hostname == (hostvars['localhost'].prod_wireguard_hub | default(''))
+
+- name: Apply IPv4 forwarding on the static hub now
+  ansible.builtin.command:
+    argv: [sysctl, -w, net.ipv4.ip_forward=1]
+  become: true
+  register: prod_wireguard_hub_sysctl_apply
+  changed_when: >-
+    'net.ipv4.ip_forward = 1' in (prod_wireguard_hub_sysctl_apply.stdout | default(''))
+  failed_when: prod_wireguard_hub_sysctl_apply.rc != 0
+  when:
+    - hostvars['localhost'].prod_wireguard_roaming_nodes | default([]) | length > 0
+    - inventory_hostname == (hostvars['localhost'].prod_wireguard_hub | default(''))
+
 - name: Enable and start this production server's WireGuard interface
   ansible.builtin.systemd_service:
     name: "wg-quick@{{ prod_wireguard_interface }}.service"
     enabled: true
     state: "{{ 'restarted' if prod_wireguard_node_config.changed else 'started' }}"
   become: true
+  when: >-
+    not (
+      (prod_node_mesh_reachable | default(false) | bool)
+      and (prod_wireguard_node_config.changed | default(false) | bool)
+    )
+
+- name: Restart WireGuard without holding the mesh SSH session open
+  ansible.builtin.systemd_service:
+    name: "wg-quick@{{ prod_wireguard_interface }}.service"
+    enabled: true
+    state: restarted
+  become: true
+  async: 45
+  poll: 0
+  ignore_unreachable: true
+  when:
+    - prod_node_mesh_reachable | default(false) | bool
+    - prod_wireguard_node_config.changed | default(false) | bool
+
+- name: Wait for SSH after restarting WireGuard over the mesh path
+  ansible.builtin.wait_for_connection:
+    delay: 3
+    timeout: 90
+  when:
+    - prod_node_mesh_reachable | default(false) | bool
+    - prod_wireguard_node_config.changed | default(false) | bool
+
+- name: Allow WireGuard peer forwarding on the static hub
+  ansible.builtin.iptables:
+    chain: FORWARD
+    in_interface: "{{ prod_wireguard_interface }}"
+    out_interface: "{{ prod_wireguard_interface }}"
+    jump: ACCEPT
+    action: insert
+    state: present
+  become: true
+  when:
+    - hostvars['localhost'].prod_wireguard_roaming_nodes | default([]) | length > 0
+    - inventory_hostname == (hostvars['localhost'].prod_wireguard_hub | default(''))
+
+- name: Require IPv4 forwarding on the static hub after WireGuard is up
+  ansible.builtin.command:
+    argv: [sysctl, -n, net.ipv4.ip_forward]
+  register: prod_wireguard_hub_ip_forward
+  changed_when: false
+  failed_when: (prod_wireguard_hub_ip_forward.stdout | trim) != '1'
+  when:
+    - hostvars['localhost'].prod_wireguard_roaming_nodes | default([]) | length > 0
+    - inventory_hostname == (hostvars['localhost'].prod_wireguard_hub | default(''))
+
+- name: Have roaming nodes initiate WireGuard through the static hub toward the Mac
+  ansible.builtin.command:
+    argv:
+      - ping
+      - -c
+      - "3"
+      - -W
+      - "2"
+      - -I
+      - "{{ prod_wireguard_interface }}"
+      - "{{ prod_wireguard_controller_address }}"
+  when: wireguard_roaming | default(false) | bool
+  register: prod_wireguard_roaming_controller_ping
+  changed_when: false
+  failed_when: false
 
 - name: Show this production server's WireGuard peers without private keys
   ansible.builtin.command:

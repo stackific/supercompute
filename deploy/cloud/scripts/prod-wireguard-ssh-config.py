@@ -109,16 +109,15 @@ def resolve(inventory_slug: str, node: str) -> tuple[str, str, str, str]:
   main = read_mapping(inventory / "group_vars/all/main.yml")
   hosts = read_mapping(inventory / "hosts.yml")
 
-  addresses = main.get("prod_wireguard_node_addresses")
-  if not isinstance(addresses, dict) or node not in addresses:
-    raise ValueError(f"{node} is not in prod_wireguard_node_addresses.")
-
   manager_hosts = wireguard_host_vars(hosts)
   if node not in manager_hosts:
     raise ValueError(f"{node} is not a production WireGuard node in hosts.yml.")
 
   overrides = manager_hosts[node]
-  address = scalar(addresses[node], f"prod_wireguard_node_addresses.{node}")
+  address = scalar(
+    overrides.get("prod_wireguard_address"),
+    f"{node}.prod_wireguard_address",
+  )
   user = scalar(
     overrides.get("ansible_user", main.get("prod_default_ssh_user")),
     "SSH user",

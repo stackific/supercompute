@@ -95,35 +95,48 @@ require_private_file "${known_hosts_path}"
 require_private_file "${vault_path}"
 require_private_file "${vault_password_path}"
 
-[[ -f "${launchd_path}" && ! -L "${launchd_path}" ]] || {
-  echo "Cannot disconnect production WireGuard safely: missing regular file ${launchd_path}." >&2
-  exit 1
-}
-[[ "$(stat -f '%Su:%Sg' "${launchd_path}")" == "${expected_plist_owner}" ]] || {
-  echo "Cannot disconnect production WireGuard safely: ${launchd_path} has the wrong owner." >&2
-  exit 1
-}
-[[ "$(stat -f '%Lp' "${launchd_path}")" == "644" ]] || {
-  echo "Cannot disconnect production WireGuard safely: ${launchd_path} must have mode 0644." >&2
-  exit 1
-}
+launchd_present=false
+if [[ -f "${launchd_path}" && ! -L "${launchd_path}" ]]; then
+  launchd_present=true
+elif ifconfig | awk -v expected="${controller_address}" \
+  '$1 == "inet" && $2 == expected { found = 1 } END { exit !found }'; then
+  echo "LaunchDaemon ${launchd_path} is missing but ${controller_address} is active."
+  echo "Disconnecting via ${config_path} only (common after renaming deployment_name)."
+  echo "Remove any orphaned /Library/LaunchDaemons/com.stackific.*.prod.wireguard.plist manually if present."
+else
+  echo "Production controller already disconnected for label ${launchd_label} (no ${launchd_path}; ${controller_address} is inactive)."
+  exit 0
+fi
 
-plist_label="$(plutil -extract Label raw -o - "${launchd_path}")"
-plist_program="$(plutil -extract ProgramArguments.0 raw -o - "${launchd_path}")"
-plist_action="$(plutil -extract ProgramArguments.1 raw -o - "${launchd_path}")"
-plist_config="$(plutil -extract ProgramArguments.2 raw -o - "${launchd_path}")"
-[[ "${plist_label}" == "${launchd_label}" ]] || {
-  echo "Cannot disconnect production WireGuard safely: the launchd label does not match this project." >&2
-  exit 1
-}
-[[ "$(basename "${plist_program}")" == "wg-quick" && -x "${plist_program}" ]] || {
-  echo "Cannot disconnect production WireGuard safely: launchd does not name an executable wg-quick." >&2
-  exit 1
-}
-[[ "${plist_action}" == "up" && "${plist_config}" == "${config_path}" ]] || {
-  echo "Cannot disconnect production WireGuard safely: launchd does not own ${config_path}." >&2
-  exit 1
-}
+if [[ "${launchd_present}" == "true" ]]; then
+  [[ "$(stat -f '%Su:%Sg' "${launchd_path}")" == "${expected_plist_owner}" ]] || {
+    echo "Cannot disconnect production WireGuard safely: ${launchd_path} has the wrong owner." >&2
+    exit 1
+  }
+  [[ "$(stat -f '%Lp' "${launchd_path}")" == "644" ]] || {
+    echo "Cannot disconnect production WireGuard safely: ${launchd_path} must have mode 0644." >&2
+    exit 1
+  }
+
+  plist_label="$(plutil -extract Label raw -o - "${launchd_path}")"
+  plist_program="$(plutil -extract ProgramArguments.0 raw -o - "${launchd_path}")"
+  plist_action="$(plutil -extract ProgramArguments.1 raw -o - "${launchd_path}")"
+  plist_config="$(plutil -extract ProgramArguments.2 raw -o - "${launchd_path}")"
+  [[ "${plist_label}" == "${launchd_label}" ]] || {
+    echo "Cannot disconnect production WireGuard safely: the launchd label does not match this project." >&2
+    exit 1
+  }
+  [[ "$(basename "${plist_program}")" == "wg-quick" && -x "${plist_program}" ]] || {
+    echo "Cannot disconnect production WireGuard safely: launchd does not name an executable wg-quick." >&2
+    exit 1
+  }
+  [[ "${plist_action}" == "up" && "${plist_config}" == "${config_path}" ]] || {
+    echo "Cannot disconnect production WireGuard safely: launchd does not own ${config_path}." >&2
+    exit 1
+  }
+else
+  plist_program="$(command -v wg-quick)"
+fi
 
 config_address="$(awk '$1 == "Address" && $2 == "=" { split($3, values, "/"); print values[1]; exit }' "${config_path}")"
 [[ "${config_address}" == "${controller_address}" ]] || {
@@ -143,8 +156,10 @@ preserved_paths=(
   "${known_hosts_path}"
   "${vault_path}"
   "${vault_password_path}"
-  "${launchd_path}"
 )
+if [[ "${launchd_present}" == "true" ]]; then
+  preserved_paths+=("${launchd_path}")
+fi
 preserved_hashes=()
 for path in "${preserved_paths[@]}"; do
   preserved_hashes+=("$(shasum -a 256 "${path}" | awk '{print $1}')")
@@ -159,7 +174,8 @@ cleanup() {
 trap cleanup EXIT
 
 launchd_loaded=false
-if sudo launchctl print "system/${launchd_label}" >"${launchd_output}" 2>/dev/null; then
+if [[ "${launchd_present}" == "true" ]] &&
+  sudo launchctl print "system/${launchd_label}" >"${launchd_output}" 2>/dev/null; then
   launchd_loaded=true
   grep -Fq "${plist_program}" "${launchd_output}" || {
     echo "Cannot disconnect production WireGuard safely: the loaded launchd job uses another program." >&2
@@ -202,10 +218,12 @@ interface="$(
 
 original_interface="${interface}"
 if [[ -n "${interface}" ]]; then
-  [[ "${launchd_loaded}" == "true" ]] || {
-    echo "Cannot disconnect production WireGuard safely: ${interface} is active but the project launchd service is not loaded." >&2
-    exit 1
-  }
+  if [[ "${launchd_present}" == "true" ]]; then
+    [[ "${launchd_loaded}" == "true" ]] || {
+      echo "Cannot disconnect production WireGuard safely: ${interface} is active but the project launchd service is not loaded." >&2
+      exit 1
+    }
+  fi
   [[ -f "${runtime_name_path}" ]] || {
     echo "Cannot disconnect production WireGuard safely: ${runtime_name_path} is missing." >&2
     exit 1

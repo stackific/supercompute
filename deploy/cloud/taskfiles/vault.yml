@@ -46,10 +46,3 @@ tasks:
       vars: [PROVIDER]
     cmds:
       - uv run --locked python scripts/vault.py ensure-wireguard
-
-  vault-secure-ensure:
-    desc: Ensure per-node /srv/secure fscrypt passphrases exist in the provider vault
-    requires:
-      vars: [PROVIDER]
-    cmds:
-      - uv run --locked python scripts/vault.py ensure-secure-storage

@@ -1,7 +1,8 @@
 ---
-# Production is provider-neutral: three Ubuntu 26.04 AMD64 servers.
-# Fill hosts.yml public endpoints/fingerprints; keep mesh addresses unique on this Mac
-# (do not reuse Lima local 10.79.0.0/24 or cust-local 10.79.1.0/24).
+# Production is provider-neutral: N Ubuntu 26.04 AMD64 servers.
+# Host count, public endpoints, fingerprints, and mesh IPs live in hosts.yml.
+# Keep mesh addresses unique on this Mac (do not reuse Lima 10.79.0.0/24 or
+# cust-local 10.79.1.0/24).
 project_root: "{{ playbook_dir | dirname }}"
 provider_state_dir: "{{ project_root }}/.state/{{ inventory_slug }}"
 
@@ -18,14 +19,13 @@ provider:
 
 # Bootstrap SSH to the public endpoint (before / outside WireGuard).
 # REQUIRED before first wg-up: set to the Linux user on every VPS (e.g. ops).
-# Stub clones ship REPLACE_WITH_SSH_USER; Ansible SSHes as this exact string.
 # Override per host in hosts.yml if a node differs.
 prod_connection: ssh
-prod_default_ssh_user: REPLACE_WITH_SSH_USER
+prod_default_ssh_user: ops
 prod_default_ssh_port: 22
 prod_known_hosts: "{{ provider_state_dir }}/known_hosts"
 
-# WireGuard mesh (prod slice). Sample CIDR is intentional and disjoint from Lima.
+# WireGuard mesh (prod slice). CIDR must stay disjoint from Lima on this Mac.
 prod_wireguard_interface: scwg0
 prod_wireguard_network_cidr: 10.217.79.0/24
 prod_wireguard_prefix_length: 24
@@ -36,13 +36,9 @@ prod_wireguard_state_dir: "{{ provider_state_dir }}/wireguard"
 prod_wireguard_config_path: "{{ prod_wireguard_state_dir }}/{{ prod_wireguard_interface }}.conf"
 prod_wireguard_launchd_label: "com.stackific.{{ deployment_name }}.{{ inventory_slug }}.wireguard"
 prod_wireguard_launchd_path: "/Library/LaunchDaemons/{{ prod_wireguard_launchd_label }}.plist"
-prod_wireguard_node_addresses:
-  prod-1: 10.217.79.11
-  prod-2: 10.217.79.12
-  prod-3: 10.217.79.13
+
 # Absolute path to the Mac SSH private key from docs/setup-prod.md.
 # Do not use a leading ~ — Ansible does not expand it.
-# Leave unset to use ssh-agent / default identities.
 prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
 
 node_ubuntu_version: "26.04"

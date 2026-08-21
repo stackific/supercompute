@@ -25,9 +25,6 @@
   ansible.builtin.assert:
     that:
       - groups['wireguard_nodes'] | length > 0
-      - groups['wireguard_nodes'] | sort == prod_wireguard_node_addresses.keys() | list | sort
-      - prod_wireguard_node_addresses.values() | list | unique | length == groups['wireguard_nodes'] | length
-      - prod_wireguard_controller_address not in prod_wireguard_node_addresses.values()
       - prod_wireguard_controller_address is string
       - prod_wireguard_network_cidr is string
       - prod_wireguard_prefix_length | int > 0
@@ -35,11 +32,40 @@
       - prod_wireguard_listen_port | int > 0
       - prod_wireguard_listen_port | int < 65536
     fail_msg: >-
-      {{ inventory_slug }} requires every wireguard_nodes host in
-      prod_wireguard_node_addresses with unique mesh IPs and a distinct
-      controller address.
+      {{ inventory_slug }} requires at least one wireguard_nodes host and a
+      valid controller mesh CIDR/listen port.
 
-- name: Require public WireGuard bootstrap endpoints for every production manager
+- name: Require per-host mesh addresses from hosts.yml
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].prod_wireguard_address is defined
+      - hostvars[item].prod_wireguard_address is string
+      - hostvars[item].prod_wireguard_address | length > 0
+      - hostvars[item].prod_wireguard_address != prod_wireguard_controller_address
+    fail_msg: >-
+      {{ item }} must set prod_wireguard_address in
+      inventories/{{ inventory_slug }}/hosts.yml to a unique mesh IP in
+      {{ prod_wireguard_network_cidr }} (not the controller address).
+  loop: "{{ groups['wireguard_nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Require unique mesh addresses across production nodes
+  ansible.builtin.assert:
+    that:
+      - >
+        (
+          groups['wireguard_nodes']
+          | map('extract', hostvars, 'prod_wireguard_address')
+          | list
+          | unique
+          | length
+        ) == (groups['wireguard_nodes'] | length)
+    fail_msg: >-
+      prod_wireguard_address values in hosts.yml must be unique across
+      wireguard_nodes.
+
+- name: Require public WireGuard endpoints for every stable production node
   ansible.builtin.assert:
     that:
       - hostvars[item].prod_wireguard_endpoint is string
@@ -49,6 +75,21 @@
       {{ item }} must set prod_wireguard_endpoint in
       inventories/{{ inventory_slug }}/hosts.yml to its public IPv4 address or DNS name.
   loop: "{{ groups['wireguard_nodes'] }}"
+  when: not (hostvars[item].wireguard_roaming | default(false) | bool)
+
+- name: Require Cloudflare bootstrap hosts for every roaming production node
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].prod_bootstrap_ssh_host is string
+      - hostvars[item].prod_bootstrap_ssh_host | length > 0
+      - hostvars[item].prod_bootstrap_ssh_host is not match('^REPLACE_WITH_')
+      - hostvars[item].prod_wireguard_endpoint is not defined
+        or hostvars[item].prod_wireguard_endpoint | length == 0
+    fail_msg: >-
+      {{ item }} (wireguard_roaming) must set prod_bootstrap_ssh_host and must not
+      set prod_wireguard_endpoint in inventories/{{ inventory_slug }}/hosts.yml.
+  loop: "{{ groups['wireguard_nodes'] }}"
+  when: hostvars[item].wireguard_roaming | default(false) | bool
 
 - name: Require encrypted WireGuard key maps from the production Vault
   ansible.builtin.assert:

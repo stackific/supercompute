@@ -23,6 +23,11 @@ cd deploy/cloud
 task setup
 ```
 
+`task setup` installs the locked Ansible venv and ensures `cloudflared` is on
+PATH (Homebrew on macOS) for production roaming SSH bootstrap.
+
+
+
 ## Prepare the Mac SSH identity (once)
 
 Use an empty passphrase. Back up both key files in your password manager.
@@ -34,6 +39,8 @@ ssh-keygen -t ed25519 -a 100 \
 ssh-add ~/.ssh/<deployment_name>-<provider>
 pbcopy < ~/.ssh/<deployment_name>-<provider>.pub
 ```
+
+
 
 ## Prepare each VPS (provider web console)
 
@@ -106,28 +113,37 @@ prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ 
 ```
 
 - `prod_default_ssh_user` must match the Linux user you created on every VPS
-  (sample `ops`). The stub ships as `REPLACE_WITH_SSH_USER`; Ansible will SSH as
-  that literal string until you change it.
+(sample `ops`). The stub ships as `REPLACE_WITH_SSH_USER`; Ansible will SSH as
+that literal string until you change it.
 - `prod_ssh_private_key_file` should use the form above (Ansible and `wg-ssh`
-  both expand it). A leading `~` is **not** expanded; do not hardcode only a
-  tilde path.
+both expand it). A leading `~` is **not** expanded; do not hardcode only a
+tilde path.
 - Optionally set `provider.image.source` to your provider’s image id.
-- Keep `prod_wireguard_node_addresses` in sync with every hostname in
-  `hosts.yml` (disjoint from Lima `10.79.0.0/24` and `10.79.1.0/24` on this Mac).
+- Mesh IPs are **not** in this file; set `prod_wireguard_address` per host in
+`hosts.yml` (disjoint from Lima `10.79.0.0/24` and `10.79.1.0/24` on this Mac).
 
-### 2. `hosts.yml` (endpoints + host-key fingerprints)
 
-Edit `inventories/<provider>/hosts.yml` for every deployment host:
+
+### 2. `hosts.yml` (endpoints + fingerprints + mesh IPs)
+
+Edit `inventories/<provider>/hosts.yml` for every deployment host. **Add or
+remove hosts only here** — Vault WireGuard keys, known_hosts, and peer configs
+follow this host set on the next `wg-up`.
 
 ```yaml
-prod-1:
+static-1:
   prod_wireguard_endpoint: "203.0.113.11"
   prod_ssh_host_ed25519_sha256: "SHA256:…"
+  prod_wireguard_address: 10.217.79.11
 ```
 
 - `prod_wireguard_endpoint` — public IPv4 or DNS name (not the mesh address)
 - `prod_ssh_host_ed25519_sha256` — complete `SHA256:…` from
-  `/etc/ssh/ssh_host_ed25519_key.pub` on that VM
+`/etc/ssh/ssh_host_ed25519_key.pub` on that VM
+- `prod_wireguard_address` — unique mesh IP in `prod_wireguard_network_cidr`
+  (controller uses `prod_wireguard_controller_address`, usually `.1`)
+
+
 
 ### 3. Prove bootstrap SSH from the Mac
 
@@ -174,19 +190,12 @@ Controller-only disconnect (does not change servers):
 task wg-remove PROVIDER=prod
 ```
 
-## Secure storage (`/srv/secure`)
+## Roaming nodes (dynamic IP)
 
-After the WireGuard mesh is up, configure node-local encryption from
-`deployment.yml`'s `encryption_at_rest` flag:
-
-```sh
-task secure-up PROVIDER=prod
-task secure-status PROVIDER=prod
-```
-
-See [encrypted-at-rest.md](encrypted-at-rest.md). After a server reboot, rerun
-`secure-up` to unlock; passphrases stay in the provider Vault on the Mac (never
-as a guest keyfile).
+To join Ubuntu 26.04 hosts with a changing public IP (inventory names
+`roaming-1`, `roaming-2`, …), follow the Cloudflare Tunnel SSH bootstrap in
+[roaming-nodes.md](roaming-nodes.md). Roaming peers always initiate WireGuard;
+do not port-forward UDP 51830 inbound on the home router.
 
 ## Backup for a fresh computer
 
@@ -196,20 +205,26 @@ mesh from a new Mac. Do **not** rely on git for anything marked gitignored.
 
 ### Must store (secrets)
 
-| Item | Path / form | Why |
-| --- | --- | --- |
-| Operator SSH private key | `~/.ssh/<deployment_name>-<provider>` | Proves you are the operator on every node (`ops` / inventory user) |
-| Operator SSH public key | `~/.ssh/<deployment_name>-<provider>.pub` | Rebuild authorized_keys or verify the key pair |
-| Ansible Vault password | `inventories/<provider>/.vault-pass` | Decrypts WireGuard private keys and `/srv/secure` fscrypt passphrases; **gitignored**—losing this loses the vault contents |
+
+| Item                     | Path / form                               | Why                                                                                                                        |
+| ------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Operator SSH private key | `~/.ssh/<deployment_name>-<provider>`     | Proves you are the operator on every node (`ops` / inventory user)                                                         |
+| Operator SSH public key  | `~/.ssh/<deployment_name>-<provider>.pub` | Rebuild authorized_keys or verify the key pair                                                                             |
+| Ansible Vault password   | `inventories/<provider>/.vault-pass`      | Decrypts WireGuard private keys; **gitignored**—losing this loses the vault contents |
+
+
+
 
 ### Must store or already have in git (recovery inputs)
 
-| Item | Where | Why |
-| --- | --- | --- |
-| Encrypted vault | `inventories/<provider>/group_vars/all/vault.yml` | Holds `vault_prod_wireguard_*` key pairs and `vault_encryption_at_rest_passphrases`. Prefer committing it; also keep a secret-manager copy |
-| Per-node host-key fingerprints | `SHA256:…` from each `/etc/ssh/ssh_host_ed25519_key.pub` | Must match `prod_ssh_host_ed25519_sha256` in `hosts.yml` for `wg-up` / known_hosts |
-| Per-node public endpoints | IPv4 or DNS in `hosts.yml` | WireGuard peer endpoints and bootstrap SSH |
-| Inventory + `deployment.yml` | Git clone | Host names, mesh IPs, SSH user, launchd label namespace |
+
+| Item                           | Where                                                    | Why                                                                                                                                        |
+| ------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Encrypted vault                | `inventories/<provider>/group_vars/all/vault.yml`        | Holds `vault_prod_wireguard_*` key pairs. Prefer committing it; also keep a secret-manager copy |
+| Per-node host-key fingerprints | `SHA256:…` from each `/etc/ssh/ssh_host_ed25519_key.pub` | Must match `prod_ssh_host_ed25519_sha256` in `hosts.yml` for `wg-up` / known_hosts                                                         |
+| Per-node public endpoints      | IPv4 or DNS in `hosts.yml`                               | WireGuard peer endpoints and bootstrap SSH                                                                                                 |
+| Inventory + `deployment.yml`   | Git clone                                                | Host names, mesh IPs, SSH user, launchd label namespace                                                                                    |
+
 
 Also note your **Mac’s current public IPv4** used in the provider firewall for UDP
 51830 (and temporary TCP 22). A new network location needs that firewall rule
@@ -224,25 +239,30 @@ secrets above and clone the repo:
 - `.state/<provider>/wireguard/<interface>.conf` (e.g. `scwg0.conf`)
 - Launchd plist under `/Library/LaunchDaemons/`
 
+
+
 ### Restore on a fresh Mac
 
-1. Install Task, `uv`, and `wireguard-tools`; clone the repo; `cd deploy/cloud`; `task setup`.
+1. Install Task, `uv`, and `wireguard-tools`; clone the repo; `cd deploy/cloud`; `task setup` (also installs `cloudflared` on macOS).
 2. Restore the SSH key pair to `~/.ssh/<deployment_name>-<provider>` (mode `0600` on the private key); `ssh-add` it; set `prod_ssh_private_key_file` if you use that path.
 3. Restore `inventories/<provider>/.vault-pass` (mode `0600`). Confirm `vault.yml` is present (from git or secret manager).
 4. Confirm `hosts.yml` fingerprints and endpoints match what you stored.
 5. Update the provider firewall with this Mac’s public `/32` if it changed.
 6. Run `task wg-up PROVIDER=<provider>` (temporarily allow TCP 22 from the new Mac if the mesh is down and public SSH was closed).
-7. Run `task secure-up PROVIDER=<provider>` when `encryption_at_rest: true` so `/srv/secure` is unlocked again after restore.
-8. Confirm with `task wg-ssh PROVIDER=<provider> NODE=<inventory_hostname>`.
+7. Confirm with `task wg-ssh PROVIDER=<provider> NODE=<inventory_hostname>`.
+
+
 
 ## Sample mesh addresses
 
 Default stub uses:
 
-| Role | Address |
-| --- | --- |
-| Mac controller | `10.217.79.1` |
-| Inventory nodes | `10.217.79.11+` in `prod_wireguard_node_addresses` |
+
+| Role            | Address                                                         |
+| --------------- | --------------------------------------------------------------- |
+| Mac controller  | `10.217.79.1` (`prod_wireguard_controller_address` in main.yml) |
+| Inventory nodes | `prod_wireguard_address` per host in `hosts.yml` (e.g. `.11+`)  |
+
 
 Interface name on servers: `scwg0`. Listen port: `51830`.
 
@@ -256,3 +276,4 @@ ping -c 10 -I scwg0 10.217.79.1
 # 100–200 ms: Usable; feel a bit of lag on interactive work
 # > 200 ms: Cross-ocean / congested path; still OK for automation, poor for “snappy” shells
 ```
+

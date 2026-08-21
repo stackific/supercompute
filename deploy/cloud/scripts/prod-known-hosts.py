@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify production SSH host keys and atomically render stable known-host aliases."""
+"""Sync .state known_hosts aliases from inventories/*/hosts.yml (wg-up)."""
 
 from __future__ import annotations
 
@@ -41,21 +41,25 @@ def parse_args() -> argparse.Namespace:
   return parser.parse_args()
 
 
-def validate_endpoint(endpoint: object, node: str) -> str:
-  if not isinstance(endpoint, str) or not endpoint:
-    raise HostKeyError(f"{node}: prod_wireguard_endpoint must be a non-empty string")
-  if endpoint.startswith("REPLACE_WITH_"):
-    raise HostKeyError(f"{node}: replace prod_wireguard_endpoint placeholder first")
+def validate_dial_target(value: object, node: str, field: str) -> str:
+  if not isinstance(value, str) or not value:
+    raise HostKeyError(f"{node}: {field} must be a non-empty string")
+  if value.startswith("REPLACE_WITH_"):
+    raise HostKeyError(f"{node}: replace {field} placeholder first")
   try:
-    address = ipaddress.ip_address(endpoint)
+    address = ipaddress.ip_address(value)
   except ValueError:
-    labels = endpoint.rstrip(".").split(".")
+    labels = value.rstrip(".").split(".")
     if not labels or any(not DNS_LABEL_PATTERN.fullmatch(label) for label in labels):
-      raise HostKeyError(f"{node}: endpoint must be an IPv4 address or DNS hostname")
-    return endpoint
+      raise HostKeyError(f"{node}: {field} must be an IPv4 address or DNS hostname")
+    return value
   if address.version != 4:
-    raise HostKeyError(f"{node}: endpoint must be an IPv4 address or DNS hostname")
-  return endpoint
+    raise HostKeyError(f"{node}: {field} must be an IPv4 address or DNS hostname")
+  return value
+
+
+def is_roaming(values: dict) -> bool:
+  return values.get("wireguard_roaming") is True
 
 
 def inventory_host_vars(inventory: dict) -> dict[str, dict]:
@@ -95,6 +99,7 @@ def inventory_host_vars(inventory: dict) -> dict[str, dict]:
 
 
 def load_contract(inventory_path: Path) -> list[dict[str, str]]:
+  """Build the known_hosts sync contract from hosts.yml (source of truth)."""
   with inventory_path.open(encoding="utf-8") as source:
     inventory = yaml.safe_load(source)
   if not isinstance(inventory, dict):
@@ -110,7 +115,6 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
   contract: list[dict[str, str]] = []
   for node in nodes:
     values = hosts[node]
-    endpoint = validate_endpoint(values.get("prod_wireguard_endpoint"), node)
     fingerprint = values.get("prod_ssh_host_ed25519_sha256")
     if not isinstance(fingerprint, str) or not FINGERPRINT_PATTERN.fullmatch(fingerprint):
       raise HostKeyError(
@@ -119,11 +123,37 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
       )
     if fingerprint.startswith("SHA256:REPLACE_WITH_"):
       raise HostKeyError(f"{node}: replace prod_ssh_host_ed25519_sha256 placeholder first")
-    contract.append({"node": node, "endpoint": endpoint, "expected": fingerprint})
 
-  endpoints = [item["endpoint"] for item in contract]
-  if len(set(endpoints)) != len(endpoints):
-    raise HostKeyError("Inventory contains duplicate public endpoints")
+    if is_roaming(values):
+      dial = validate_dial_target(
+        values.get("prod_bootstrap_ssh_host"),
+        node,
+        "prod_bootstrap_ssh_host",
+      )
+      kind = "roaming"
+    else:
+      dial = validate_dial_target(
+        values.get("prod_wireguard_endpoint"),
+        node,
+        "prod_wireguard_endpoint",
+      )
+      kind = "public"
+
+    contract.append(
+      {
+        "node": node,
+        "endpoint": dial,
+        "expected": fingerprint,
+        "kind": kind,
+      }
+    )
+
+  public_endpoints = [item["endpoint"] for item in contract if item["kind"] == "public"]
+  if len(set(public_endpoints)) != len(public_endpoints):
+    raise HostKeyError("Inventory contains duplicate public endpoints among stable VPS hosts")
+  roaming_hosts = [item["endpoint"] for item in contract if item["kind"] == "roaming"]
+  if len(set(roaming_hosts)) != len(roaming_hosts):
+    raise HostKeyError("Inventory contains duplicate prod_bootstrap_ssh_host values")
   fingerprints = [item["expected"] for item in contract]
   if len(set(fingerprints)) != len(fingerprints):
     raise HostKeyError("Inventory contains duplicate ED25519 host-key fingerprints")
@@ -134,7 +164,7 @@ def fingerprint_key_blob(encoded_key: str) -> str:
   try:
     key_blob = base64.b64decode(encoded_key, validate=True)
   except (binascii.Error, ValueError) as error:
-    raise HostKeyError("ssh-keyscan returned an invalid ED25519 public-key encoding") from error
+    raise HostKeyError("invalid ED25519 public-key encoding") from error
   digest = base64.b64encode(hashlib.sha256(key_blob).digest()).decode("ascii").rstrip("=")
   return f"SHA256:{digest}"
 
@@ -158,11 +188,96 @@ def parse_scan(scan_output: str, node: str) -> tuple[str, str]:
     types = ", ".join(sorted(wrong_types))
     raise HostKeyError(f"{node}: ssh-keyscan returned wrong key type(s): {types}")
   if not keys:
-    raise HostKeyError(f"{node}: endpoint returned no ED25519 host key")
+    raise HostKeyError(f"{node}: dial target returned no ED25519 host key")
   if len(keys) != 1:
-    raise HostKeyError(f"{node}: endpoint returned multiple distinct ED25519 host keys")
+    raise HostKeyError(f"{node}: dial target returned multiple distinct ED25519 host keys")
   encoded_key, fingerprint = next(iter(keys.items()))
   return encoded_key, fingerprint
+
+
+def parse_host_pubkey_line(output: str, node: str) -> tuple[str, str]:
+  for raw_line in output.splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+      continue
+    fields = line.split()
+    if len(fields) < 2:
+      continue
+    if fields[0] != "ssh-ed25519":
+      continue
+    return fields[1], fingerprint_key_blob(fields[1])
+  raise HostKeyError(
+    f"{node}: bootstrap SSH did not return /etc/ssh/ssh_host_ed25519_key.pub "
+    "(prove `ssh <prod_bootstrap_ssh_host> true` per docs/roaming-nodes.md first)"
+  )
+
+
+def scan_public_node(
+  node: str,
+  endpoint: str,
+  expected: str,
+  timeout: int,
+  temporary_directory: Path,
+) -> tuple[str, str]:
+  scanner = shutil.which("ssh-keyscan")
+  if scanner is None:
+    raise HostKeyError("ssh-keyscan is required on the production controller")
+  scan_path = temporary_directory / f"{node}.scan"
+  result = subprocess.run(
+    [scanner, "-T", str(timeout), "-t", "ed25519", endpoint],
+    check=False,
+    capture_output=True,
+    text=True,
+    timeout=timeout + 2,
+  )
+  scan_path.write_text(result.stdout, encoding="utf-8")
+  scan_path.chmod(0o600)
+  encoded_key, observed = parse_scan(result.stdout, node)
+  if result.returncode != 0:
+    raise HostKeyError(f"{node}: ssh-keyscan failed with exit code {result.returncode}")
+  if observed != expected:
+    raise HostKeyError(f"{node}: ED25519 host-key fingerprint mismatch")
+  return encoded_key, observed
+
+
+def scan_roaming_node(
+  node: str,
+  bootstrap_host: str,
+  expected: str,
+  timeout: int,
+) -> tuple[str, str]:
+  """Fetch the origin host key through the operator SSH config (Cloudflare ProxyCommand)."""
+  result = subprocess.run(
+    [
+      "ssh",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      f"ConnectTimeout={timeout}",
+      "-o",
+      "StrictHostKeyChecking=no",
+      "-o",
+      "UserKnownHostsFile=/dev/null",
+      "-o",
+      "GlobalKnownHostsFile=/dev/null",
+      bootstrap_host,
+      "cat /etc/ssh/ssh_host_ed25519_key.pub",
+    ],
+    check=False,
+    capture_output=True,
+    text=True,
+    timeout=timeout + 15,
+  )
+  if result.returncode != 0:
+    detail = (result.stderr or result.stdout or "").strip() or f"exit {result.returncode}"
+    raise HostKeyError(
+      f"{node}: bootstrap SSH to {bootstrap_host} failed ({detail}). "
+      "Prove SSH via Cloudflare first (docs/roaming-nodes.md), then re-run wg-up."
+    )
+  encoded_key, observed = parse_host_pubkey_line(result.stdout, node)
+  if observed != expected:
+    raise HostKeyError(f"{node}: ED25519 host-key fingerprint mismatch")
+  return encoded_key, observed
 
 
 def scan_contract(
@@ -170,45 +285,28 @@ def scan_contract(
   timeout: int,
   temporary_directory: Path,
 ) -> tuple[list[str], list[str]]:
-  scanner = shutil.which("ssh-keyscan")
-  if scanner is None:
-    raise HostKeyError("ssh-keyscan is required on the production controller")
-
   known_host_lines: list[str] = []
   errors: list[str] = []
   for item in contract:
     node = item["node"]
     endpoint = item["endpoint"]
     expected = item["expected"]
-    scan_path = temporary_directory / f"{node}.scan"
+    kind = item["kind"]
     try:
-      result = subprocess.run(
-        [scanner, "-T", str(timeout), "-t", "ed25519", endpoint],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout + 2,
-      )
-      scan_path.write_text(result.stdout, encoding="utf-8")
-      scan_path.chmod(0o600)
-      encoded_key, observed = parse_scan(result.stdout, node)
-      if result.returncode != 0:
-        raise HostKeyError(f"{node}: ssh-keyscan failed with exit code {result.returncode}")
-      if observed != expected:
-        raise HostKeyError(f"{node}: ED25519 host-key fingerprint mismatch")
+      if kind == "roaming":
+        encoded_key, observed = scan_roaming_node(node, endpoint, expected, timeout)
+      else:
+        encoded_key, observed = scan_public_node(
+          node, endpoint, expected, timeout, temporary_directory
+        )
       known_host_lines.append(f"{node} ssh-ed25519 {encoded_key}\n")
       outcome = "match"
     except (HostKeyError, subprocess.TimeoutExpired) as error:
       observed = "<unavailable>"
-      if scan_path.exists():
-        try:
-          _, observed = parse_scan(scan_path.read_text(encoding="utf-8"), node)
-        except HostKeyError:
-          pass
       errors.append(str(error))
       outcome = "REJECTED"
     print(
-      f"node={node} endpoint={endpoint} expected={expected} "
+      f"node={node} kind={kind} endpoint={endpoint} expected={expected} "
       f"observed={observed} result={outcome}"
     )
   return known_host_lines, errors
@@ -264,16 +362,21 @@ def validate_existing_known_hosts(
       raise HostKeyError("existing known_hosts entries must be stable ED25519 aliases")
     by_alias[fields[0]] = fields[2]
 
+  expected_aliases = {item["node"] for item in contract}
+  if set(by_alias) != expected_aliases:
+    raise HostKeyError(
+      f"{known_hosts_path} aliases {sorted(by_alias)} do not match inventory "
+      f"{sorted(expected_aliases)}"
+    )
+
   for item in contract:
-    encoded = by_alias.get(item["node"])
-    if encoded is None:
-      raise HostKeyError(f"{item['node']}: missing from existing known_hosts")
+    encoded = by_alias[item["node"]]
     observed = fingerprint_key_blob(encoded)
     if observed != item["expected"]:
       raise HostKeyError(f"{item['node']}: existing known_hosts fingerprint mismatch")
     print(
-      f"node={item['node']} endpoint={item['endpoint']} expected={item['expected']} "
-      f"observed={observed} result=reused"
+      f"node={item['node']} kind={item['kind']} endpoint={item['endpoint']} "
+      f"expected={item['expected']} observed={observed} result=reused"
     )
 
 
@@ -285,9 +388,24 @@ def main() -> int:
   try:
     contract = load_contract(args.inventory)
     if args.reuse_existing and args.known_hosts.exists():
-      validate_existing_known_hosts(contract, args.known_hosts)
-      print(f"CHANGED=0 reused verified mode-0600 {args.known_hosts}")
-      return 0
+      try:
+        validate_existing_known_hosts(contract, args.known_hosts)
+        print(f"CHANGED=0 reused verified mode-0600 {args.known_hosts}")
+        return 0
+      except HostKeyError as error:
+        # Inventory add/remove (alias set or line count) → rewrite .state from hosts.yml.
+        message = str(error)
+        stale_alias_set = (
+          "must contain exactly one ED25519 alias" in message
+          or "do not match inventory" in message
+          or "missing from existing known_hosts" in message
+        )
+        if not stale_alias_set:
+          raise
+        print(
+          f"Existing known_hosts is stale for current inventory ({error}); "
+          "rescanning dial targets from hosts.yml."
+        )
     prefix = f"{ROOT.name}-prod-hostkeys-"
     with tempfile.TemporaryDirectory(prefix=prefix) as temporary_name:
       temporary_directory = Path(temporary_name)
