@@ -21,7 +21,7 @@ provider:
 # Stub clones ship REPLACE_WITH_SSH_USER; Ansible SSHes as this exact string.
 # Override per host in hosts.yml if a node differs.
 prod_connection: ssh
-prod_default_ssh_user: ops
+prod_default_ssh_user: REPLACE_WITH_SSH_USER
 prod_default_ssh_port: 22
 prod_known_hosts: "{{ provider_state_dir }}/known_hosts"
 
