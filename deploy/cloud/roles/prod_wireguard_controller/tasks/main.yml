@@ -1,0 +1,218 @@
+---
+- name: Require macOS as the production mesh controller
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == 'Darwin'
+    fail_msg: >-
+      {{ inventory_slug }} WireGuard control runs on the macOS controller. Run this task
+      from the Mac that will operate and access this mesh.
+
+- name: Require WireGuard and SSH tools on the production controller
+  ansible.builtin.command:
+    argv: [which, "{{ item }}"]
+  loop: [wg, wg-quick, ssh, ssh-keygen]
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+- name: Resolve the absolute macOS wg-quick path for the boot-time mesh service
+  ansible.builtin.command:
+    argv: [which, wg-quick]
+  register: prod_wireguard_controller_wg_quick
+  changed_when: false
+
+- name: Require a complete production WireGuard topology
+  ansible.builtin.assert:
+    that:
+      - groups['wireguard_nodes'] | length > 0
+      - groups['wireguard_nodes'] | sort == prod_wireguard_node_addresses.keys() | list | sort
+      - prod_wireguard_node_addresses.values() | list | unique | length == groups['wireguard_nodes'] | length
+      - prod_wireguard_controller_address not in prod_wireguard_node_addresses.values()
+      - prod_wireguard_controller_address is string
+      - prod_wireguard_network_cidr is string
+      - prod_wireguard_prefix_length | int > 0
+      - prod_wireguard_prefix_length | int < 32
+      - prod_wireguard_listen_port | int > 0
+      - prod_wireguard_listen_port | int < 65536
+    fail_msg: >-
+      {{ inventory_slug }} requires every wireguard_nodes host in
+      prod_wireguard_node_addresses with unique mesh IPs and a distinct
+      controller address.
+
+- name: Require public WireGuard bootstrap endpoints for every production manager
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].prod_wireguard_endpoint is string
+      - hostvars[item].prod_wireguard_endpoint | length > 0
+      - hostvars[item].prod_wireguard_endpoint is not match('^REPLACE_WITH_')
+    fail_msg: >-
+      {{ item }} must set prod_wireguard_endpoint in
+      inventories/{{ inventory_slug }}/hosts.yml to its public IPv4 address or DNS name.
+  loop: "{{ groups['wireguard_nodes'] }}"
+
+- name: Require encrypted WireGuard key maps from the production Vault
+  ansible.builtin.assert:
+    that:
+      - vault_prod_wireguard_private_keys is mapping
+      - vault_prod_wireguard_public_keys is mapping
+      - vault_prod_wireguard_private_keys.macos is string
+      - vault_prod_wireguard_public_keys.macos is string
+  no_log: true
+
+- name: Require encrypted WireGuard material for every production server
+  ansible.builtin.assert:
+    that:
+      - vault_prod_wireguard_private_keys[item] is string
+      - vault_prod_wireguard_public_keys[item] is string
+  loop: "{{ groups['wireguard_nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+
+- name: Create private production WireGuard controller state
+  ansible.builtin.file:
+    path: "{{ prod_wireguard_state_dir }}"
+    state: directory
+    mode: '0700'
+
+- name: Require the verified production SSH host-key file
+  ansible.builtin.stat:
+    path: "{{ prod_known_hosts }}"
+  register: prod_wireguard_controller_known_hosts
+
+- name: Refuse unverified or unsafe production SSH host-key state
+  ansible.builtin.assert:
+    that:
+      - prod_wireguard_controller_known_hosts.stat.exists
+      - prod_wireguard_controller_known_hosts.stat.mode == '0600'
+    fail_msg: >-
+      Verify every public server host key out of band, then create the
+      mode-0600 file {{ prod_known_hosts }} with entries under the stable
+      inventory aliases before running task wg-up PROVIDER={{ inventory_slug }}.
+
+- name: Require each stable host alias in the verified host-key file
+  ansible.builtin.command:
+    argv: [ssh-keygen, -F, "{{ item }}", -f, "{{ prod_known_hosts }}"]
+  loop: "{{ groups['wireguard_nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+- name: Render the private macOS production WireGuard configuration from Vault
+  ansible.builtin.template:
+    src: scwg0.conf.j2
+    dest: "{{ prod_wireguard_config_path }}"
+    mode: '0600'
+  register: prod_wireguard_controller_config
+  no_log: true
+
+- name: Install the root-owned macOS boot-time production WireGuard service
+  ansible.builtin.template:
+    src: wireguard-launchd.plist.j2
+    dest: "{{ prod_wireguard_launchd_path }}"
+    owner: root
+    group: wheel
+    mode: '0644'
+  register: prod_wireguard_controller_launchd_plist
+  become: true
+
+- name: Validate the macOS boot-time production WireGuard service definition
+  ansible.builtin.command:
+    argv: [plutil, -lint, "{{ prod_wireguard_launchd_path }}"]
+  changed_when: false
+  become: true
+
+- name: Check whether the macOS boot-time production WireGuard service is loaded
+  ansible.builtin.command:
+    argv: [launchctl, print, "system/{{ prod_wireguard_launchd_label }}"]
+  register: prod_wireguard_controller_launchd_loaded
+  failed_when: false
+  changed_when: false
+  become: true
+
+- name: Unload the macOS boot-time production WireGuard service before updating it
+  ansible.builtin.command:
+    argv:
+      - launchctl
+      - bootout
+      - system
+      - "{{ prod_wireguard_launchd_path }}"
+  when:
+    - prod_wireguard_controller_launchd_loaded.rc == 0
+    - prod_wireguard_controller_launchd_plist.changed
+  become: true
+  changed_when: true
+
+- name: Load the macOS boot-time production WireGuard service when absent or updated
+  ansible.builtin.command:
+    argv:
+      - launchctl
+      - bootstrap
+      - system
+      - "{{ prod_wireguard_launchd_path }}"
+  when: >-
+    prod_wireguard_controller_launchd_loaded.rc != 0 or
+    prod_wireguard_controller_launchd_plist.changed
+  become: true
+  changed_when: true
+
+- name: Wait for the boot-time production WireGuard service to assign the controller mesh address
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: prod_wireguard_controller_launchd_interfaces
+  until: >-
+    'inet ' ~ prod_wireguard_controller_address ~ ' '
+    in prod_wireguard_controller_launchd_interfaces.stdout
+  retries: 10
+  delay: 1
+  changed_when: false
+  when: >-
+    prod_wireguard_controller_launchd_loaded.rc != 0 or
+    prod_wireguard_controller_launchd_plist.changed
+
+- name: Read macOS interfaces before reconciling the production mesh
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: prod_wireguard_controller_interfaces
+  changed_when: false
+
+- name: Record whether the macOS production mesh address is active
+  ansible.builtin.set_fact:
+    prod_wireguard_controller_mesh_active: >-
+      {{ 'inet ' ~ prod_wireguard_controller_address ~ ' '
+         in prod_wireguard_controller_interfaces.stdout }}
+
+- name: Stop the previous macOS production mesh before a configuration update
+  ansible.builtin.command:
+    argv: [wg-quick, down, "{{ prod_wireguard_config_path }}"]
+  become: true
+  when:
+    - prod_wireguard_controller_config.changed
+    - prod_wireguard_controller_mesh_active | bool
+  changed_when: true
+
+- name: Start the macOS production WireGuard mesh when required
+  ansible.builtin.command:
+    argv: [wg-quick, up, "{{ prod_wireguard_config_path }}"]
+  become: true
+  when:
+    - prod_wireguard_controller_config.changed or not (prod_wireguard_controller_mesh_active | bool)
+  changed_when: true
+
+- name: Require the macOS production mesh address after a manual start
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: prod_wireguard_controller_started_interfaces
+  until: >-
+    'inet ' ~ prod_wireguard_controller_address ~ ' '
+    in prod_wireguard_controller_started_interfaces.stdout
+  retries: 10
+  delay: 1
+  changed_when: false
+  when: prod_wireguard_controller_config.changed or not (prod_wireguard_controller_mesh_active | bool)
+
+- name: Show macOS WireGuard peers without private keys
+  ansible.builtin.command:
+    argv: [wg, show]
+  become: true
+  changed_when: false

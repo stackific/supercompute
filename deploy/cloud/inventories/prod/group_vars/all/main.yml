@@ -30,6 +30,7 @@ prod_wireguard_network_cidr: 10.217.79.0/24
 prod_wireguard_prefix_length: 24
 prod_wireguard_controller_address: 10.217.79.1
 prod_wireguard_listen_port: 51830
+prod_wireguard_tools_version: "1.0.20250521-1ubuntu1"
 prod_wireguard_state_dir: "{{ provider_state_dir }}/wireguard"
 prod_wireguard_config_path: "{{ prod_wireguard_state_dir }}/{{ prod_wireguard_interface }}.conf"
 prod_wireguard_launchd_label: "com.stackific.{{ deployment_name }}.{{ inventory_slug }}.wireguard"
@@ -39,9 +40,10 @@ prod_wireguard_node_addresses:
   prod-2: 10.217.79.12
   prod-3: 10.217.79.13
 
-# Optional: path to the Mac SSH private key used for bootstrap and mesh SSH.
-# Leave unset to use ssh-agent / default identities; or set an absolute path:
-# prod_ssh_private_key_file: "/Users/REPLACE_WITH_USER/.ssh/id_ed25519_prod"
+# Absolute path to the Mac SSH private key from docs/setup-prod.md, e.g.
+# "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+# Leave unset to use ssh-agent / default identities.
+# prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
 
 node_ubuntu_version: "26.04"
 node_ubuntu_codename: resolute

@@ -4,20 +4,8 @@ env:
   PROVIDER: "{{.PROVIDER}}"
 
 tasks:
-  wg-require-lima:
-    internal: true
-    requires:
-      vars: [PROVIDER]
-    cmds:
-      - |
-        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
-        if [[ "${platform}" != "lima" ]]; then
-          echo "PROVIDER={{.PROVIDER}} is not a Lima local provider. Production WireGuard is the next slice." >&2
-          exit 2
-        fi
-
   wg-up:
-    desc: Bring up the Lima WireGuard mesh for a local provider
+    desc: Bring up the WireGuard mesh for a provider
     requires:
       vars: [PROVIDER]
     preconditions:
@@ -25,15 +13,31 @@ tasks:
         msg: Install wireguard-tools (wg) before running wg-up
       - sh: command -v uv >/dev/null 2>&1
         msg: Install uv before running wg-up
-      - sh: command -v limactl >/dev/null 2>&1
-        msg: Install Lima before running wg-up
     cmds:
-      - task: wg-require-lima
-      - uv run --locked python scripts/vault.py ensure-wireguard
-      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-up.yml
+      - |
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          lima)
+            command -v limactl >/dev/null 2>&1 || { echo "Install Lima before running wg-up for Lima providers." >&2; exit 1; }
+            uv run --locked python scripts/vault.py ensure-wireguard
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-up.yml
+            ;;
+          vps)
+            uv run --locked python scripts/prod-known-hosts.py \
+              --inventory "inventories/{{.PROVIDER}}/hosts.yml" \
+              --known-hosts ".state/{{.PROVIDER}}/known_hosts" \
+              --reuse-existing
+            uv run --locked python scripts/vault.py ensure-wireguard
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/prod-wireguard-up.yml
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac
 
   wg-status:
-    desc: Show Lima WireGuard mesh status for a local provider
+    desc: Show WireGuard mesh status for a provider
     requires:
       vars: [PROVIDER]
     preconditions:
@@ -42,11 +46,23 @@ tasks:
       - sh: command -v uv >/dev/null 2>&1
         msg: Install uv before running wg-status
     cmds:
-      - task: wg-require-lima
-      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-status.yml
+      - |
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          lima)
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-status.yml
+            ;;
+          vps)
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/prod-wireguard-status.yml
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac
 
   wg-remove:
-    desc: Remove Lima WireGuard lockdown and controller mesh state
+    desc: Remove WireGuard controller/mesh state for a provider
     requires:
       vars: [PROVIDER]
     preconditions:
@@ -54,14 +70,25 @@ tasks:
         msg: Install wireguard-tools (wg) before running wg-remove
       - sh: command -v uv >/dev/null 2>&1
         msg: Install uv before running wg-remove
-      - sh: command -v limactl >/dev/null 2>&1
-        msg: Install Lima before running wg-remove
     cmds:
-      - task: wg-require-lima
-      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-remove.yml
+      - |
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          lima)
+            command -v limactl >/dev/null 2>&1 || { echo "Install Lima before running wg-remove for Lima providers." >&2; exit 1; }
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-remove.yml
+            ;;
+          vps)
+            bash scripts/disconnect-prod-wireguard.sh "{{.PROVIDER}}"
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac
 
   wg-ssh:
-    desc: SSH to a Lima node over WireGuard (NODE=local-1)
+    desc: SSH to a node over WireGuard (NODE=<inventory_hostname>)
     requires:
       vars: [PROVIDER, NODE]
     env:
@@ -72,16 +99,31 @@ tasks:
       - sh: command -v uv >/dev/null 2>&1
         msg: Install uv before running wg-ssh
     cmds:
-      - task: wg-require-lima
       - bash scripts/wg-ssh.sh
 
   wg-syntax:
-    desc: Syntax-check Lima WireGuard playbooks
+    internal: true
+    desc: Syntax-check WireGuard playbooks for a provider
     requires:
       vars: [PROVIDER]
     cmds:
-      - task: wg-require-lima
-      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-up.yml
-      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-status.yml
-      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-remove.yml
-      - bash -n scripts/wg-ssh.sh
+      - |
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          lima)
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-status.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/wireguard-remove.yml
+            bash -n scripts/wg-ssh.sh
+            ;;
+          vps)
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/prod-wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/prod-wireguard-status.yml
+            bash -n scripts/disconnect-prod-wireguard.sh
+            bash -n scripts/wg-ssh.sh
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac

@@ -409,9 +409,18 @@ def ensure_wireguard(provider: str) -> None:
   if not isinstance(platform_document, dict):
     raise VaultError(f"{platform_path} must contain a YAML mapping")
   provider_config = platform_document.get("provider")
-  if not isinstance(provider_config, dict) or provider_config.get("platform") != "lima":
+  if not isinstance(provider_config, dict):
+    raise VaultError(f"{platform_path} must contain a provider mapping")
+  platform = provider_config.get("platform")
+  if platform == "lima":
+    private_key_field = "vault_wireguard_private_keys"
+    public_key_field = "vault_wireguard_public_keys"
+  elif platform == "vps":
+    private_key_field = "vault_prod_wireguard_private_keys"
+    public_key_field = "vault_prod_wireguard_public_keys"
+  else:
     raise VaultError(
-      f"WireGuard key ensure requires a Lima provider; refused for {provider}"
+      f"WireGuard key ensure supports lima and vps providers; refused for {provider}"
     )
 
   if subprocess.run(["which", "wg"], check=False, capture_output=True).returncode != 0:
@@ -426,16 +435,14 @@ def ensure_wireguard(provider: str) -> None:
     raise VaultError("Vault root must be a YAML mapping")
 
   required_names = ["macos", *deployment_host_names(provider)]
-  private_keys = document.get("vault_wireguard_private_keys")
-  public_keys = document.get("vault_wireguard_public_keys")
+  private_keys = document.get(private_key_field)
+  public_keys = document.get(public_key_field)
   if private_keys is None:
     private_keys = {}
   if public_keys is None:
     public_keys = {}
   if not isinstance(private_keys, dict) or not isinstance(public_keys, dict):
-    raise VaultError(
-      "vault_wireguard_private_keys and vault_wireguard_public_keys must be mappings"
-    )
+    raise VaultError(f"{private_key_field} and {public_key_field} must be mappings")
 
   changed = False
   for name in required_names:
@@ -456,8 +463,8 @@ def ensure_wireguard(provider: str) -> None:
     print(f"WireGuard vault keys already present for {provider}")
     return
 
-  document["vault_wireguard_private_keys"] = private_keys
-  document["vault_wireguard_public_keys"] = public_keys
+  document[private_key_field] = private_keys
+  document[public_key_field] = public_keys
   plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
 
   prefix = f"{deployment_name()}-vault-wg-{provider}-"
