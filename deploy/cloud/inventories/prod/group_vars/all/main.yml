@@ -1,0 +1,15 @@
+---
+project_root: "{{ playbook_dir | dirname }}"
+provider:
+  slug: "{{ inventory_dir | ansible.builtin.basename }}"
+  mode: remote
+  platform: vps
+  image:
+    distribution: ubuntu
+    release: "26.04"
+    architecture: amd64
+    source: provider-catalog
+
+node_ubuntu_version: "26.04"
+node_ubuntu_codename: resolute
+node_host_architecture: x86_64

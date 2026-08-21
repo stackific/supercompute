@@ -1,0 +1,12 @@
+---
+- name: Show provider Lima VM status
+  hosts: localhost
+  gather_facts: true
+  any_errors_fatal: true
+  environment:
+    LIMA_HOME: "{{ lima_runtime_home }}"
+    LIMA_SSH_PORT_FORWARDER: "false"
+  roles:
+    - role: lima
+      vars:
+        lima_lifecycle: status

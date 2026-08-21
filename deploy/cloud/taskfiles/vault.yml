@@ -1,0 +1,41 @@
+version: "3"
+
+env:
+  PROVIDER: "{{.PROVIDER}}"
+
+tasks:
+  vault-init:
+    desc: Initialize a new provider vault and generated password
+    requires:
+      vars: [PROVIDER]
+    cmds:
+      - uv run --locked python scripts/vault.py init
+
+  vault-edit:
+    desc: Edit, validate, and sync a provider vault
+    requires:
+      vars: [PROVIDER]
+    cmds:
+      - uv run --locked python scripts/vault.py edit
+
+  vault-reset:
+    desc: Reset a provider vault and rotate its generated password
+    requires:
+      vars:
+        - PROVIDER
+        - CONFIRM
+    env:
+      CONFIRM: "{{.CONFIRM}}"
+    cmds:
+      - uv run --locked python scripts/vault.py reset
+
+  vault-destroy:
+    desc: Delete a provider vault and its generated password
+    requires:
+      vars:
+        - PROVIDER
+        - CONFIRM
+    env:
+      CONFIRM: "{{.CONFIRM}}"
+    cmds:
+      - uv run --locked python scripts/vault.py destroy

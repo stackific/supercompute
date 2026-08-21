@@ -1,0 +1,3 @@
+lima_lifecycle: present
+lima_ownership_message: "stackific owned lima vm"
+lima_minimum_free_bytes_per_node: "{{ (provider.resources.disk_gib | int) * 1073741824 }}"

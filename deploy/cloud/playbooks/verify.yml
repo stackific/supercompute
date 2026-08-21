@@ -1,0 +1,26 @@
+---
+- name: Verify provider contracts on the controller
+  hosts: localhost
+  gather_facts: true
+  any_errors_fatal: true
+  tasks:
+    - name: Require a deployment namespace
+      ansible.builtin.assert:
+        that:
+          - deployment_name is string
+          - deployment_name is match('^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$')
+          - inventory_slug is string
+          - inventory_slug | length > 0
+        fail_msg: "deployment.yml and inventory_slug must identify this provider run."
+
+    - name: Verify Lima membership when the provider is Lima-backed
+      ansible.builtin.include_role:
+        name: lima
+      vars:
+        lima_lifecycle: verify
+      when: provider.platform == 'lima'
+      environment:
+        LIMA_HOME: "{{ lima_runtime_home }}"
+        LIMA_SSH_PORT_FORWARDER: "false"
+
+    # Future provider checks (WireGuard, cluster, storage, …) land here.

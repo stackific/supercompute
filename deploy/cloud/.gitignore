@@ -1,0 +1,5 @@
+.cache/
+.venv/
+inventories/*/.vault-pass*
+__pycache__/
+*.py[cod]

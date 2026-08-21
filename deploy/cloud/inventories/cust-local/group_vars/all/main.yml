@@ -1,0 +1,22 @@
+---
+project_root: "{{ playbook_dir | dirname }}"
+provider:
+  slug: "{{ inventory_dir | ansible.builtin.basename }}"
+  mode: local
+  platform: lima
+  image:
+    distribution: ubuntu
+    release: "26.04"
+    architecture: arm64
+    source: template:ubuntu-26.04
+  resources:
+    cpus: 1
+    memory_gib: 2
+    disk_gib: 5
+
+lima_runtime_home: "{{ lookup('ansible.builtin.env', 'LIMA_HOME') }}"
+lima_home_dir: "{{ lima_runtime_home }}"
+lima_nodes: "{{ groups['deployment'] | default([]) | sort }}"
+node_ubuntu_version: "26.04"
+node_ubuntu_codename: resolute
+node_host_architecture: aarch64

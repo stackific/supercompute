@@ -1,0 +1,48 @@
+version: "3"
+
+env:
+  PROVIDER: "{{.PROVIDER}}"
+
+tasks:
+  lima-up:
+    desc: Create or start inventory Lima VMs for a local provider
+    requires:
+      vars: [PROVIDER]
+    preconditions:
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running lima-up
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running lima-up
+    cmds:
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/lima-up.yml
+
+  lima-status:
+    desc: Show provider Lima VM resource status without creating state
+    requires:
+      vars: [PROVIDER]
+    preconditions:
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running lima-status
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running lima-status
+    env:
+      LIMA_RUNTIME_HOME_MODE: path
+    cmds:
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/lima-status.yml
+
+  lima-destroy:
+    desc: Destroy inventory Lima VMs for a local provider
+    requires:
+      vars:
+        - PROVIDER
+        - CONFIRM
+    env:
+      CONFIRM: "{{.CONFIRM}}"
+      LIMA_RUNTIME_HOME_MODE: path
+    preconditions:
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running lima-destroy
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running lima-destroy
+    cmds:
+      - bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/lima-destroy.yml
