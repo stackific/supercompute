@@ -1,0 +1,10 @@
+[Unit]
+Description=Run geoipupdate for cluster GeoDNS
+Documentation=https://dev.maxmind.com/geoip/updating-databases
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/geoipupdate -f {{ cluster_geoip_conf_path }}
+Nice=10

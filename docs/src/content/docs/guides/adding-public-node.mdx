@@ -1,0 +1,216 @@
+---
+title: Adding a public node
+description: Step-by-step tutorial to add an Ubuntu node with a public IP to your mesh from a Mac.
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide walks through adding a VM/VPS/root server/Droplet with a static IP from your Mac: create the VM, prepare SSH, fill inventory and open firewall rules.
+
+The example uses inventory slug **`dev`** and host name **`static-1`**. The same steps apply to `prod` or any other inventory—replace `PROVIDER=dev` and paths accordingly.
+
+:::note[What this guide does not cover]
+- **Lima guests** (`node_lima_guest`)
+- **Home-lab roaming** (dynamic IP + Cloudflare Tunnel)
+:::
+
+## Before you start
+
+You must be arriving here from [Get started locally](/start-here/get-started) or [Deploy to production](/start-here/deploy-to-production)
+
+Read `deployment_name` from `deployment.yml` (currently `sc`). In examples below, `<deployment_name>` is that value and `<provider>` is your inventory slug (here `dev` for local, `prod` for production, or `anything` you like to call your environment). 
+
+Unsurprisingly, inventory slugs are found in `inventories/{slug}` folder.
+
+## Step 1 — Operator SSH key (once per deployment)
+
+Create an Ed25519 key with an **empty passphrase**. Store both files in your password manager.
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```sh
+ssh-keygen -t ed25519 -a 100 -f ~/.ssh/sc-dev -C "sc dev"
+ssh-add ~/.ssh/sc-dev
+pbcopy < ~/.ssh/sc-dev.pub
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+ssh-keygen -t ed25519 -a 100 \
+  -f ~/.ssh/<deployment_name>-<provider> \
+  -C "<deployment_name> <provider>"
+  
+ssh-add ~/.ssh/<deployment_name>-<provider>
+pbcopy < ~/.ssh/<deployment_name>-<provider>.pub
+```
+
+</TabItem>
+</Tabs>
+
+
+Inventory will reference this key as `~/.ssh/sc-dev` via `prod_ssh_private_key_file` in group vars.
+
+## Step 2 — Create the VM
+
+In your cloud provider console:
+
+1. Create **Ubuntu Server 26.04** **amd64** (`x86_64`).
+2. Attach a **public IPv4** (or a stable DNS name you will put in inventory).
+3. Do **not** rely on this automation to create the server or provider firewall rules—you configure those yourself.
+
+Note the public IP (example `203.0.113.11`).
+
+## Step 3 — Prepare the node (console or provider SSH)
+
+On the new VM, create the inventory SSH user (example `ops`), install the Mac public key, and grant passwordless sudo:
+
+```sh
+sudo adduser --disabled-password --gecos '' ops
+sudo install -d -o ops -g ops -m 0700 /home/ops/.ssh
+sudo tee /home/ops/.ssh/authorized_keys >/dev/null
+```
+
+Paste the public key from the clipboard (from Step 1), press Control+D, then:
+
+```sh
+sudo chown ops:ops /home/ops/.ssh/authorized_keys
+sudo chmod 600 /home/ops/.ssh/authorized_keys
+printf '%s\n' 'ops ALL=(ALL) NOPASSWD:ALL' | \
+  sudo tee /etc/sudoers.d/90-sc-ops >/dev/null
+sudo chmod 440 /etc/sudoers.d/90-sc-ops
+sudo visudo -cf /etc/sudoers.d/90-sc-ops
+sudo -u ops sudo -n true
+```
+
+`visudo -cf` should report `parsed OK`.
+
+## Step 4 — Verify the operator key
+
+On the Mac:
+
+```sh
+ssh-keygen -lf ~/.ssh/sc-dev.pub
+```
+
+On the VM:
+
+```sh
+sudo ssh-keygen -lf /home/ops/.ssh/authorized_keys
+```
+
+The `SHA256:…` lines must match.
+
+## Step 5 — Record the server host key
+
+On the VM:
+
+```sh
+sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+Copy the full `SHA256:…` value into your password manager. You will paste it into inventory as `prod_ssh_host_ed25519_sha256` (this is the **server** host key, not your operator key).
+
+## Step 6 — Provider firewall
+
+On the provider (or host) firewall for this VM:
+
+| Phase | Rule |
+| --- | --- |
+| Bootstrap | Allow inbound **TCP 22** from your Mac’s current public `/32` |
+| Mesh | Allow inbound **UDP 51830** from peers that will dial this hub (if you will add roaming nodes later, open UDP 51830 broadly—not only the Mac `/32`) |
+
+The Mac controller does **not** need inbound UDP 51830 for mesh traffic when a static hub routes roaming peers.
+
+## Step 7 — Fill inventory on the Mac
+
+### `inventories/dev/group_vars/all/main.yml`
+
+Confirm SSH settings (defaults in the tracked `dev` inventory):
+
+```yaml
+prod_default_ssh_user: ops
+prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+```
+
+That expands to `~/.ssh/sc-dev` when `deployment_name` is `sc` and the slug is `dev`.
+
+### `inventories/dev/hosts.yml`
+
+Set placeholders for `static-1` (or add a new `static-N` host):
+
+```yaml
+static-1:
+  prod_wireguard_endpoint: "203.0.113.11"
+  prod_ssh_host_ed25519_sha256: "SHA256:YOUR_FULL_FINGERPRINT_FROM_STEP_5"
+  prod_wireguard_address: 10.217.80.11
+```
+
+- `prod_wireguard_endpoint` — public IPv4 or DNS (not the mesh address).
+- `prod_wireguard_address` — unique IP in your mesh CIDR (`10.217.80.0/24` for `dev`; controller uses `.1`).
+
+To add another public node, duplicate the block as `static-2`, assign the next mesh IP (e.g. `.12`), and run `up` again.
+
+## Step 8 — Prove bootstrap SSH
+
+From the Mac (worktree root):
+
+```sh
+ssh -i ~/.ssh/sc-dev -o IdentitiesOnly=yes ops@203.0.113.11 true
+```
+
+If this fails, fix user, keys, or firewall before continuing.
+
+## Step 9 — Initialize vault (first time only)
+
+```sh
+task vault-init PROVIDER=dev
+```
+
+This creates `inventories/dev/group_vars/all/vault.yml` and `inventories/dev/.vault-pass`. Skip if you already have a vault for this provider.
+
+## Step 10 — Bring up the mesh
+
+```sh
+task up PROVIDER=dev
+```
+
+`up` syncs known_hosts from fingerprints, ensures WireGuard keys in the vault, configures the Mac controller and each node, and verifies mesh SSH.
+
+## Step 11 — Verify
+
+```sh
+task wg-status PROVIDER=dev
+task ssh PROVIDER=dev NODE=static-1
+```
+
+From the VM over the mesh (optional):
+
+```sh
+ping -c 3 -I scwg0 10.217.80.1
+```
+
+(`10.217.80.1` is the Mac controller address for the `dev` inventory.)
+
+## Optional — Cluster stack
+
+After the mesh is healthy:
+
+```sh
+task up PROVIDER=dev
+```
+
+Requires MaxMind credentials in the vault if you use GeoIP update—see `internal/cluster.md`.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `Permission denied` during `up` | `prod_default_ssh_user` matches `ops`; key path is not a bare `~` string in inventory |
+| Host-key errors | `prod_ssh_host_ed25519_sha256` is complete `SHA256:…` from Step 5 |
+| Mesh up but no handshake | UDP **51830** open on the public IP; endpoint is public IP not mesh IP |
+| Wrong inventory | `provider.platform` must be `public` in `group_vars/all/main.yml` |
+
+Full operator reference: `internal/setup-prod.md` and `internal/setup-dev.md` at the repository root.

@@ -1,0 +1,7 @@
+---
+# Stable customer/deployment namespace for this Docker Swarm template.
+# Changing it later creates new unit names, local paths, labels, and object
+# prefixes; it does not migrate existing state.
+# Must match the Ansible Vault ID label on inventories/<provider>/group_vars/all/vault.yml
+# (encrypt header …;AES256;<deployment_name>-<provider>) and deployment_vault.deployment_name.
+deployment_name: sc

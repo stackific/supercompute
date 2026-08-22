@@ -10,7 +10,7 @@
 
 # Hard constraints - coding
 
-- Use `uv`, Deno.
+- Use `uv`
 - Use Ansible for provider and infrastructure lifecycle automation (Task entrypoints invoke Ansible playbooks/roles; do not bypass Ansible with ad-hoc host scripts for those lifecycles).
 - 2 spaces as indentation for code, except for Go. Go must use tabs for indentation
 - Write idiomatic code and create idiomatic folder structure

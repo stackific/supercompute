@@ -1,0 +1,304 @@
+---
+- name: Classify static vs roaming nodes and pick the static hub
+  hosts: localhost
+  gather_facts: true
+  any_errors_fatal: true
+  tasks:
+    - name: Require a public-endpoint provider for production WireGuard
+      ansible.builtin.assert:
+        that:
+          - provider.platform == 'public'
+          - provider.mode == 'remote'
+        fail_msg: >-
+          prod-wireguard-up requires provider.platform=public for
+          PROVIDER={{ inventory_slug }}.
+
+    - name: Reset classified WireGuard node lists
+      ansible.builtin.set_fact:
+        prod_wireguard_static_nodes: []
+        prod_wireguard_roaming_nodes: []
+
+    - name: Classify each WireGuard inventory node
+      ansible.builtin.set_fact:
+        prod_wireguard_static_nodes: >-
+          {{
+            prod_wireguard_static_nodes
+            + ([] if (hostvars[item].wireguard_roaming | default(false) | bool) else [item])
+          }}
+        prod_wireguard_roaming_nodes: >-
+          {{
+            prod_wireguard_roaming_nodes
+            + ([item] if (hostvars[item].wireguard_roaming | default(false) | bool) else [])
+          }}
+      loop: "{{ groups['wireguard_nodes'] | sort }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Record roaming presence and the static hub hostname
+      ansible.builtin.set_fact:
+        prod_wireguard_has_roaming: "{{ prod_wireguard_roaming_nodes | length > 0 }}"
+        prod_wireguard_hub: "{{ prod_wireguard_static_nodes | first | default('') }}"
+
+    - name: Require at least one static public host when roaming nodes are present
+      ansible.builtin.assert:
+        that:
+          - prod_wireguard_hub | length > 0
+        fail_msg: >-
+          Roaming nodes need a static public endpoint hub for Mac↔roaming mesh traffic.
+          Add a non-roaming static-N host before roaming-N.
+      when: prod_wireguard_has_roaming | bool
+
+    - name: Explain Mac↔roaming routing through the static hub
+      ansible.builtin.debug:
+        msg: >-
+          Roaming mesh path uses static hub {{ prod_wireguard_hub }}
+          (no inbound UDP {{ prod_wireguard_listen_port }} required on the Mac).
+          Roaming nodes: {{ prod_wireguard_roaming_nodes | join(', ') }}.
+      when: prod_wireguard_has_roaming | bool
+
+- name: Configure the macOS controller side of the production WireGuard mesh
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  roles:
+    - prod_wireguard_controller
+
+- name: Select the production node transport without assuming public SSH remains open
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Probe mesh SSH access to every production node
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].wireguard_node_address }}"
+        port: "{{ hostvars[item].ansible_port | default(prod_default_ssh_port) }}"
+        timeout: 3
+        connect_timeout: 3
+        state: started
+      loop: "{{ groups['wireguard_nodes'] }}"
+      loop_control:
+        label: "macOS -> {{ item }} through WireGuard"
+      register: prod_wireguard_mesh_ssh_probes
+      failed_when: false
+      changed_when: false
+
+    - name: Index per-host mesh SSH reachability from the probe results
+      ansible.builtin.set_fact:
+        prod_wireguard_mesh_reachable: >-
+          {{
+            prod_wireguard_mesh_reachable | default({})
+            | combine({item.item: (item.state | default('') == 'started')})
+          }}
+      loop: "{{ prod_wireguard_mesh_ssh_probes.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Record whether every production node is already reachable through WireGuard
+      ansible.builtin.set_fact:
+        prod_wireguard_mesh_ssh_ready: >-
+          {{
+            (
+              prod_wireguard_mesh_reachable.values()
+              | select
+              | list
+              | length
+            ) == (groups['wireguard_nodes'] | length)
+          }}
+
+    - name: Explain the selected production node transport
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            prod_wireguard_mesh_ssh_ready | bool
+            | ternary(
+                'All nodes are reachable through WireGuard; reconciling them through mesh SSH.',
+                'One or more nodes are not reachable through WireGuard; bootstrap recovery SSH is required (public endpoint, Lima-local SSH for node_lima_guest, or Cloudflare for non-Lima roaming).'
+              )
+          }}
+
+- name: Require reachable bootstrap SSH only when the production mesh needs recovery
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Wait for direct public SSH access to every stable production node that is off-mesh
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].prod_wireguard_endpoint }}"
+        port: "{{ hostvars[item].ansible_port | default(prod_default_ssh_port) }}"
+        timeout: 30
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['wireguard_nodes'] }}"
+      loop_control:
+        label: "macOS -> {{ item }} public recovery SSH"
+      when:
+        - not (prod_wireguard_mesh_reachable[item] | default(false) | bool)
+        - not (hostvars[item].wireguard_roaming | default(false) | bool)
+
+    - name: Wait for Lima-local SSH to every off-mesh Lima guest
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: >-
+          {{
+            lima_nodes
+            | selectattr('name', 'equalto', item)
+            | map(attribute='ssh_port')
+            | first
+          }}
+        timeout: 30
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['wireguard_nodes'] }}"
+      loop_control:
+        label: "macOS -> {{ item }} Lima SSH"
+      when:
+        - not (prod_wireguard_mesh_reachable[item] | default(false) | bool)
+        - hostvars[item].node_lima_guest | default(false) | bool
+
+- name: Reconcile each production server through WireGuard or bootstrap recovery SSH
+  hosts: wireguard_nodes
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    prod_node_mesh_reachable: >-
+      {{ hostvars['localhost'].prod_wireguard_mesh_reachable[inventory_hostname] | default(false) | bool }}
+    prod_node_lima_guest: "{{ node_lima_guest | default(false) | bool }}"
+    prod_node_lima_ssh_port: >-
+      {{
+        lima_nodes
+        | default([])
+        | selectattr('name', 'equalto', inventory_hostname)
+        | map(attribute='ssh_port')
+        | list
+        | first
+        | default(prod_default_ssh_port)
+      }}
+    ansible_host: >-
+      {{
+        prod_node_mesh_reachable
+        | ternary(
+            wireguard_node_address,
+            (
+              prod_node_lima_guest
+              | ternary(
+                  '127.0.0.1',
+                  (
+                    (wireguard_roaming | default(false) | bool)
+                    | ternary(prod_bootstrap_ssh_host, prod_wireguard_endpoint)
+                  )
+                )
+            )
+          )
+      }}
+    ansible_port: >-
+      {{
+        (
+          (not prod_node_mesh_reachable)
+          and prod_node_lima_guest
+        )
+        | ternary(prod_node_lima_ssh_port, ansible_port | default(prod_default_ssh_port))
+      }}
+    ansible_user: >-
+      {{
+        prod_node_lima_guest
+        | ternary(lima_guest_user, ansible_user | default(prod_default_ssh_user))
+      }}
+    ansible_ssh_private_key_file: >-
+      {{
+        prod_node_lima_guest
+        | ternary(
+            lima_home_dir ~ '/_config/user',
+            prod_ssh_private_key_file | default(ansible_ssh_private_key_file | default(''))
+          )
+      }}
+    ansible_ssh_common_args: >-
+      -F /dev/null -o BatchMode=yes -o ControlMaster=no -o ControlPath=none
+      -o HostKeyAlias={{ inventory_hostname }} -o StrictHostKeyChecking=yes
+      -o UserKnownHostsFile={{ prod_known_hosts }}
+      -o IdentitiesOnly=yes
+      {% if (not prod_node_mesh_reachable)
+            and (wireguard_roaming | default(false) | bool)
+            and (not prod_node_lima_guest) %}
+      -o ProxyCommand="{{ lookup('ansible.builtin.pipe', 'command -v cloudflared') }} access ssh --hostname %h"
+      {% endif %}
+  roles:
+    - prod_wireguard_node
+
+- name: Prove macOS can reach every production node through the mesh
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Wait for WireGuard SSH access to each production node
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].wireguard_node_address }}"
+        port: "{{ hostvars[item].ansible_port | default(prod_default_ssh_port) }}"
+        timeout: "{{ 90 if (hostvars[item].wireguard_roaming | default(false) | bool) else 30 }}"
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['wireguard_nodes'] }}"
+      loop_control:
+        label: "macOS -> {{ item }}"
+      register: prod_wireguard_mesh_ssh_proof
+      failed_when: false
+
+    - name: Fail clearly when Mac cannot reach a node through the mesh
+      ansible.builtin.fail:
+        msg: >-
+          macOS could not open TCP {{ hostvars[item.item].ansible_port | default(prod_default_ssh_port) }}
+          on {{ hostvars[item.item].wireguard_node_address }} ({{ item.item }}) through WireGuard.
+          {% if hostvars[item.item].wireguard_roaming | default(false) | bool %}
+          Mac↔roaming is routed via static hub {{ prod_wireguard_hub | default('(unset)') }}.
+          Confirm hub IP forwarding, static-host UDP {{ prod_wireguard_listen_port }}, and that roaming
+          has an Endpoint to the hub, then re-run up.
+          {% else %}
+          Confirm the public endpoint/firewall and re-run up.
+          {% endif %}
+      when: item.state | default('') != 'started'
+      loop: "{{ prod_wireguard_mesh_ssh_proof.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+- name: Prove every production server can reach every peer through the mesh
+  hosts: wireguard_nodes
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    ansible_host: "{{ wireguard_node_address }}"
+    ansible_user: >-
+      {{
+        (node_lima_guest | default(false) | bool)
+        | ternary(lima_guest_user, ansible_user | default(prod_default_ssh_user))
+      }}
+    ansible_ssh_private_key_file: >-
+      {{
+        (node_lima_guest | default(false) | bool)
+        | ternary(
+            lima_home_dir ~ '/_config/user',
+            prod_ssh_private_key_file | default(ansible_ssh_private_key_file | default(''))
+          )
+      }}
+    ansible_ssh_common_args: >-
+      -F /dev/null -o BatchMode=yes -o ControlMaster=no -o ControlPath=none
+      -o HostKeyAlias={{ inventory_hostname }} -o StrictHostKeyChecking=yes
+      -o UserKnownHostsFile={{ prod_known_hosts }}
+      -o IdentitiesOnly=yes
+  tasks:
+    - name: Wait for WireGuard SSH access to each peer
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].wireguard_node_address }}"
+        port: "{{ hostvars[item].ansible_port | default(prod_default_ssh_port) }}"
+        timeout: 30
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['wireguard_nodes'] | difference([inventory_hostname]) }}"
+      loop_control:
+        label: "{{ inventory_hostname }} -> {{ item }}"
+
+    - name: Show the healthy production WireGuard interface without private keys
+      ansible.builtin.command:
+        argv: [wg, show, "{{ prod_wireguard_interface }}"]
+      become: true
+      changed_when: false

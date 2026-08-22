@@ -1,0 +1,50 @@
+---
+- name: Classify static vs roaming nodes and pick the static hub
+  hosts: localhost
+  gather_facts: true
+  any_errors_fatal: true
+  tasks:
+    - name: Require a public-endpoint provider for production WireGuard teardown
+      ansible.builtin.assert:
+        that:
+          - provider.platform == 'public'
+          - provider.mode == 'remote'
+        fail_msg: >-
+          prod-wireguard-down requires provider.platform=public for
+          PROVIDER={{ inventory_slug }}.
+
+    - name: Reset classified WireGuard node lists
+      ansible.builtin.set_fact:
+        prod_wireguard_static_nodes: []
+        prod_wireguard_roaming_nodes: []
+
+    - name: Classify each WireGuard inventory node
+      ansible.builtin.set_fact:
+        prod_wireguard_static_nodes: >-
+          {{
+            prod_wireguard_static_nodes
+            + ([] if (hostvars[item].wireguard_roaming | default(false) | bool) else [item])
+          }}
+        prod_wireguard_roaming_nodes: >-
+          {{
+            prod_wireguard_roaming_nodes
+            + ([item] if (hostvars[item].wireguard_roaming | default(false) | bool) else [])
+          }}
+      loop: "{{ groups['wireguard_nodes'] | sort }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Record roaming presence and the static hub hostname
+      ansible.builtin.set_fact:
+        prod_wireguard_has_roaming: "{{ prod_wireguard_roaming_nodes | length > 0 }}"
+        prod_wireguard_hub: "{{ prod_wireguard_static_nodes | first | default('') }}"
+
+- name: Tear down WireGuard on every production server through the mesh
+  hosts: wireguard_nodes
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - role: prod_wireguard_node
+      vars:
+        prod_wireguard_lifecycle: absent

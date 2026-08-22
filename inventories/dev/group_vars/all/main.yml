@@ -1,0 +1,53 @@
+---
+# Dev mesh: one static public hub + one Lima roaming guest on Apple Silicon.
+# Mesh CIDR is disjoint from typical prod (10.217.79.0/24).
+project_root: "{{ playbook_dir | dirname }}"
+provider_state_dir: "{{ project_root }}/.state/{{ inventory_slug }}"
+provider:
+  slug: "{{ inventory_dir | ansible.builtin.basename }}"
+  mode: remote
+  platform: public
+  image:
+    distribution: ubuntu
+    release: "26.04"
+    architecture: arm64
+    source: template:ubuntu-26.04
+  resources:
+    cpus: 1
+    memory_gib: 2
+    disk_gib: 5
+
+prod_connection: ssh
+prod_default_ssh_user: ops
+prod_default_ssh_port: 22
+prod_known_hosts: "{{ provider_state_dir }}/known_hosts"
+prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+
+prod_wireguard_interface: scwg0
+prod_wireguard_network_cidr: 10.217.80.0/24
+prod_wireguard_prefix_length: 24
+prod_wireguard_controller_address: 10.217.80.1
+prod_wireguard_listen_port: 51830
+prod_wireguard_tools_version: "1.0.20250521-1ubuntu1"
+prod_wireguard_state_dir: "{{ provider_state_dir }}/wireguard"
+prod_wireguard_config_path: "{{ prod_wireguard_state_dir }}/{{ prod_wireguard_interface }}.conf"
+prod_wireguard_launchd_label: "com.stackific.{{ deployment_name }}.{{ inventory_slug }}.wireguard"
+prod_wireguard_launchd_path: "/Library/LaunchDaemons/{{ prod_wireguard_launchd_label }}.plist"
+
+# Lima guest factory (node_lima_guest hosts only). Mesh itself uses platform public.
+lima_runtime_home: "{{ lookup('ansible.builtin.env', 'LIMA_HOME') }}"
+lima_home_dir: "{{ lima_runtime_home }}"
+lima_state_dir: "{{ provider_state_dir }}/lima"
+lima_version: "2.2.0"
+lima_guest_user: "{{ lookup('ansible.builtin.env', 'USER') }}"
+wireguard_listen_port: "{{ prod_wireguard_listen_port }}"
+lima_nodes:
+  - name: roaming-1
+    wg_address: 10.217.80.21
+    ssh_port: 61221
+    wg_host_port: 51981
+    mac_address: "52:55:55:80:00:21"
+
+node_ubuntu_version: "26.04"
+node_ubuntu_codename: resolute
+node_host_architecture: x86_64

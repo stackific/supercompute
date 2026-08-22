@@ -1,6 +1,0 @@
-.cache/
-.venv/
-.state/
-inventories/*/.vault-pass*
-__pycache__/
-*.py[cod]

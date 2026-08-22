@@ -1,0 +1,258 @@
+---
+- name: Install apt HTTPS prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - debian-keyring
+      - debian-archive-keyring
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Remove packages that conflict with Docker Engine
+  ansible.builtin.apt:
+    name: "{{ cluster_docker_conflict_packages }}"
+    state: absent
+  failed_when: false
+
+- name: Download gVisor archive signing key
+  ansible.builtin.get_url:
+    url: "{{ cluster_gvisor_key_url }}"
+    dest: /tmp/gvisor-archive.key
+    mode: "0644"
+
+- name: Install gVisor keyring
+  ansible.builtin.shell:
+    cmd: >-
+      gpg --dearmor --yes -o {{ cluster_gvisor_keyring_path | quote }}
+      /tmp/gvisor-archive.key
+      && chmod 0644 {{ cluster_gvisor_keyring_path | quote }}
+    creates: "{{ cluster_gvisor_keyring_path }}"
+
+- name: Install gVisor apt source list
+  ansible.builtin.copy:
+    dest: "{{ cluster_gvisor_list_path }}"
+    mode: "0644"
+    content: |
+      {{ cluster_gvisor_repo_line }}
+
+- name: Ensure Docker apt keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install Docker apt signing key
+  ansible.builtin.get_url:
+    url: "{{ cluster_docker_key_url }}"
+    dest: "{{ cluster_docker_keyring_path }}"
+    mode: "0644"
+
+- name: Install Docker apt source (DEB822)
+  ansible.builtin.copy:
+    dest: "{{ cluster_docker_sources_path }}"
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: {{ cluster_docker_suite }}
+      Components: stable
+      Architectures: {{ cluster_deb_architecture }}
+      Signed-By: {{ cluster_docker_keyring_path }}
+
+- name: Build cluster package list for this host
+  ansible.builtin.set_fact:
+    cluster_present_packages: >-
+      {{
+        [cluster_gvisor_package]
+        + cluster_docker_packages
+        + cluster_pdns_base_packages
+        + (
+          cluster_pdns_geoip_packages
+          if (cluster_geoip_enabled | default(false) | bool)
+          else cluster_pdns_bind_packages
+        )
+      }}
+
+- name: Install gVisor, Docker Engine, PowerDNS, and dig
+  ansible.builtin.apt:
+    name: "{{ cluster_present_packages }}"
+    state: present
+    update_cache: true
+
+- name: Enable and start Docker
+  ansible.builtin.systemd:
+    name: "{{ cluster_docker_service }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Create GeoIP database directory
+  ansible.builtin.file:
+    path: "{{ cluster_geoip_db_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Install MaxMind geoipupdate configuration
+  ansible.builtin.template:
+    src: GeoIP.conf.j2
+    dest: "{{ cluster_geoip_conf_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Download or refresh GeoLite2 Country database
+  ansible.builtin.command:
+    argv: [geoipupdate, -f, "{{ cluster_geoip_conf_path }}"]
+  register: cluster_geoip_update
+  changed_when: cluster_geoip_update.rc == 0
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Require GeoLite2 Country database after update
+  ansible.builtin.stat:
+    path: "{{ cluster_geoip_db_path }}"
+  register: cluster_geoip_db
+  failed_when: not cluster_geoip_db.stat.exists
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Install geoipupdate systemd unit
+  ansible.builtin.template:
+    src: geoipupdate.service.j2
+    dest: "/etc/systemd/system/{{ cluster_geoip_systemd_service }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Install geoipupdate systemd timer
+  ansible.builtin.template:
+    src: geoipupdate.timer.j2
+    dest: "/etc/systemd/system/{{ cluster_geoip_systemd_timer }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Enable and start geoipupdate timer
+  ansible.builtin.systemd:
+    name: "{{ cluster_geoip_systemd_timer }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Install PowerDNS GeoIP zone map
+  ansible.builtin.template:
+    src: geoip-zones.yml.j2
+    dest: "{{ cluster_pdns_geoip_zones_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart PowerDNS
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Create BIND zone directory for static PowerDNS
+  ansible.builtin.file:
+    path: "{{ cluster_pdns_bind_zone_dir }}"
+    state: directory
+    owner: root
+    group: pdns
+    mode: "0755"
+  when: not (cluster_geoip_enabled | default(false) | bool)
+
+- name: Install static authoritative zone file
+  ansible.builtin.template:
+    src: pdns-zone.j2
+    dest: "{{ cluster_pdns_bind_zone_path }}"
+    owner: root
+    group: pdns
+    mode: "0644"
+  notify: Restart PowerDNS
+  when: not (cluster_geoip_enabled | default(false) | bool)
+
+- name: Install BIND backend zone list
+  ansible.builtin.template:
+    src: bind.conf.j2
+    dest: "{{ cluster_pdns_bind_named_conf_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart PowerDNS
+  when: not (cluster_geoip_enabled | default(false) | bool)
+
+- name: Remove static BIND zone files when GeoIP GeoDNS is enabled
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ cluster_pdns_bind_named_conf_path }}"
+    - "{{ cluster_pdns_bind_zone_path }}"
+  when: cluster_geoip_enabled | default(false) | bool
+
+- name: Remove GeoIP zone map when static BIND authoritative DNS is used
+  ansible.builtin.file:
+    path: "{{ cluster_pdns_geoip_zones_path }}"
+    state: absent
+  when: not (cluster_geoip_enabled | default(false) | bool)
+
+- name: Install PowerDNS configuration
+  ansible.builtin.template:
+    src: pdns.conf.j2
+    dest: "{{ cluster_pdns_conf_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart PowerDNS
+
+- name: Remove stock PowerDNS bind backend snippet
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/powerdns/pdns.d/bind.conf
+    - /etc/powerdns/pdns.d/pdns.local.gmysql.conf
+  notify: Restart PowerDNS
+
+- name: Enable and start PowerDNS
+  ansible.builtin.systemd:
+    name: "{{ cluster_pdns_service }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers before probes
+  ansible.builtin.meta: flush_handlers
+
+- name: Prove runsc is on PATH
+  ansible.builtin.command:
+    argv: [runsc, --version]
+  changed_when: false
+
+- name: Prove Docker Engine is running
+  ansible.builtin.command:
+    argv: [docker, version]
+  changed_when: false
+
+- name: Prove PowerDNS answers {{ cluster_pdns_zone }} on the mesh
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - +time=2
+      - +tries=1
+      - "@{{ prod_wireguard_address }}"
+      - "{{ cluster_pdns_zone }}"
+      - A
+  register: cluster_pdns_probe
+  changed_when: false
+  failed_when: cluster_pdns_probe.stdout | trim | length == 0

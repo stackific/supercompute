@@ -1,0 +1,31 @@
+# Managed by cluster_node — GeoDNS zone for {{ cluster_pdns_zone }}.
+# Apex A (via service): NA/SA → equal-weight random among roaming mesh IPs;
+# everywhere else → {{ cluster_static_hub_host }}.
+# Parent zone publishes {{ cluster_pdns_ns_hostname }} A → static public IP(s)
+# (DNS-only / grey cloud). This child zone NS points at that hostname.
+domains:
+  - domain: {{ cluster_pdns_zone }}
+    ttl: 60
+    records:
+      {{ cluster_pdns_zone }}:
+        - soa: {{ cluster_pdns_ns_hostname }} hostmaster.{{ cluster_pdns_zone }} {{ ansible_facts['date_time']['epoch'] }} 7200 3600 1209600 60
+        - ns: {{ cluster_pdns_ns_hostname }}
+      # Continent labels (%cn): NA/SA → random roaming mesh IP; fallback → static.
+      na.{{ cluster_pdns_zone }}:
+{% for h in groups['deployment'] | sort if (hostvars[h].wireguard_roaming | default(false) | bool) %}
+        - a:
+            content: {{ hostvars[h].prod_wireguard_address }}
+            weight: 50
+{% endfor %}
+      sa.{{ cluster_pdns_zone }}:
+{% for h in groups['deployment'] | sort if (hostvars[h].wireguard_roaming | default(false) | bool) %}
+        - a:
+            content: {{ hostvars[h].prod_wireguard_address }}
+            weight: 50
+{% endfor %}
+      default.{{ cluster_pdns_zone }}:
+        - a: {{ hostvars[cluster_static_hub_host].prod_wireguard_address }}
+    services:
+      {{ cluster_pdns_zone }}:
+        - "%cn.{{ cluster_pdns_zone }}"
+        - "default.{{ cluster_pdns_zone }}"

@@ -1,0 +1,24 @@
+---
+- name: Require an explicit confirm token before down
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Refuse down without CONFIRM=down-{{ inventory_slug }}
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'CONFIRM') == ('down-' ~ inventory_slug)
+        fail_msg: >-
+          Refusing down. Re-run with
+          CONFIRM=down-{{ inventory_slug }}
+          (surgical undo of cluster software only; WireGuard teardown follows).
+
+- name: Tear down cluster node software on every deployment host
+  hosts: deployment
+  gather_facts: true
+  any_errors_fatal: true
+  serial: 1
+  roles:
+    - role: cluster_node
+      vars:
+        cluster_lifecycle: absent

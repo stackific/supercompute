@@ -1,5 +1,0 @@
----
-# Stable customer/deployment namespace for this Docker Swarm template.
-# Changing it later creates new unit names, local paths, labels, and object
-# prefixes; it does not migrate existing state.
-deployment_name: stackific

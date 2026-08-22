@@ -1,0 +1,75 @@
+---
+title: Get started locally
+description: Install the toolchain and bring up a Supercompute dev mesh on your Mac.
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+Supercompute is a free geo-replicated purpose-built cloud for AI-first workloads that you can self-host on own commodity hardware, inside of your laptop's VM, inside of your NAS. You can achieve high availability even with just _two_ nodes. It was created by [Stackific Inc.](https://stackific.com/).
+
+All you need is a static IP (because users need to reach you) and an external Postgres.
+
+This guide gets you from a fresh clone to a working local **`dev`** instance: one public static hub plus an optional Lima roaming guest on Apple Silicon.
+
+## Quick Start
+
+### Prerequisites
+
+- macOS on Apple Silicon
+- [Task](https://taskfile.dev/installation/)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- [Lima](https://lima-vm.io/docs/installation/) (for the `dev` roaming guest)
+- WireGuard tools (`wg`, `wg-quick`)
+- 1 x VM/droplet/VPS/root server/EC2 instance with static IP
+
+```sh
+brew install go-task/tap/go-task uv wireguard-tools lima
+```
+
+### Step 1 - Install dependencies
+
+From the project root directory:
+
+```sh
+task setup
+```
+
+`task setup` installs the locked Ansible venv. On macOS it also ensures `cloudflared` is on PATH when missing (needed only for non-Lima roaming nodes, not Lima guests).
+
+### Prepare inventory
+
+The default `dev` inventory is for local development on a macOS computer:
+
+- **static-1** — Ubuntu 26.04 public endpoint (`x86_64`)
+- **roaming-1** — Lima guest
+
+Edit `inventories/dev/hosts.yml` and fill placeholders for `static-1` (public IP and SSH host-key fingerprint). Install this public key on the VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/).
+
+### Create the Lima guest
+
+```sh
+task lima-up PROVIDER=dev
+```
+
+### Vault and bring up
+
+```sh
+task vault-init PROVIDER=dev
+task up PROVIDER=dev
+task ssh PROVIDER=dev NODE=static-1
+task ssh PROVIDER=dev NODE=roaming-1
+```
+
+## Next steps
+
+<CardGrid stagger>
+	<Card title="Deploy to production" icon="rocket">
+		Copy `dev` → `prod` with two public nodes and one Cloudflare roaming host: [Deploy to production](/start-here/deploy-to-production/).
+	</Card>
+	<Card title="Adding a public node" icon="add-document">
+		Single public VM walkthrough: [Adding a public node](/guides/adding-public-node/).
+	</Card>
+	<Card title="Operator runbooks" icon="open-book">
+		Index: `internal/README.md` (includes roaming via Cloudflare Tunnel).
+	</Card>
+</CardGrid>

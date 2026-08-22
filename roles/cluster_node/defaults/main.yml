@@ -1,0 +1,108 @@
+---
+# present = cluster-up; absent = cluster-down (surgical undo of present).
+cluster_lifecycle: present
+
+cluster_deb_architecture: >-
+  {{ 'amd64' if ansible_facts['architecture'] == 'x86_64'
+  else ansible_facts['architecture'] }}
+
+# --- gVisor (https://gvisor.dev/docs/user_guide/install/) ---
+cluster_gvisor_key_url: https://gvisor.dev/archive.key
+cluster_gvisor_keyring_path: /usr/share/keyrings/gvisor-archive-keyring.gpg
+cluster_gvisor_list_path: /etc/apt/sources.list.d/gvisor.list
+cluster_gvisor_repo_line: >-
+  deb [arch={{ cluster_deb_architecture }}
+  signed-by={{ cluster_gvisor_keyring_path }}]
+  https://storage.googleapis.com/gvisor/releases release main
+cluster_gvisor_package: runsc
+
+# --- Docker Engine (https://docs.docker.com/engine/install/ubuntu/) ---
+cluster_docker_key_url: https://download.docker.com/linux/ubuntu/gpg
+cluster_docker_keyring_path: /etc/apt/keyrings/docker.asc
+cluster_docker_sources_path: /etc/apt/sources.list.d/docker.sources
+# Ubuntu 26.04 (resolute) is listed by Docker; suite follows the host codename.
+cluster_docker_suite: "{{ ansible_facts['distribution_release'] }}"
+cluster_docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+cluster_docker_service: docker
+# Distro packages that conflict with Docker's official packages.
+cluster_docker_conflict_packages:
+  - docker.io
+  - docker-compose
+  - docker-compose-v2
+  - docker-doc
+  - docker-buildx
+  - podman-docker
+  - containerd
+  - runc
+
+# --- PowerDNS (GeoIP GeoDNS when MaxMind creds exist; static BIND zone otherwise) ---
+cluster_pdns_base_packages:
+  - pdns-server
+  - dnsutils
+cluster_pdns_bind_packages:
+  - pdns-backend-bind
+cluster_pdns_geoip_packages:
+  - pdns-backend-geoip
+  - geoipupdate
+cluster_pdns_packages: >-
+  {{
+    cluster_pdns_base_packages
+    + cluster_pdns_bind_packages
+    + cluster_pdns_geoip_packages
+  }}
+cluster_pdns_service: pdns
+cluster_pdns_conf_path: /etc/powerdns/pdns.conf
+cluster_pdns_geoip_zones_path: /etc/powerdns/geoip-zones.yml
+cluster_pdns_bind_zone_dir: /var/lib/powerdns/zones
+cluster_pdns_bind_zone_path: "{{ cluster_pdns_bind_zone_dir }}/{{ cluster_pdns_zone }}.zone"
+cluster_pdns_bind_named_conf_path: /etc/powerdns/bind.conf
+# Authoritative zone apex (GeoDNS or static A → mesh IP). Not an HTTP origin in this role.
+cluster_public_hostname: test-app.stackific.com
+cluster_pdns_zone: "{{ cluster_public_hostname }}"
+# Parent-zone nameserver hostname (A records live on stackific.com, DNS-only).
+cluster_pdns_ns_hostname: ns1.stackific.com
+# Always serve DNS on the mesh; also on the public VPS IP when present so
+# Cloudflare NS delegation can reach PowerDNS from the internet.
+cluster_pdns_listen_addresses: >-
+  {{
+    [prod_wireguard_address]
+    + (
+      [prod_wireguard_endpoint]
+      if (prod_wireguard_endpoint is defined
+          and (prod_wireguard_endpoint | string | length) > 0)
+      else []
+    )
+  }}
+cluster_pdns_listen_address: "{{ cluster_pdns_listen_addresses | join(',') }}"
+# Public IP(s) published for cluster_pdns_ns_hostname at the parent zone.
+cluster_pdns_ns_address: >-
+  {{
+    hostvars[cluster_static_hub_host].prod_wireguard_endpoint
+    | default(hostvars[cluster_static_hub_host].prod_wireguard_address)
+  }}
+cluster_geoip_db_dir: /usr/share/GeoIP
+cluster_geoip_db_path: /usr/share/GeoIP/GeoLite2-Country.mmdb
+cluster_geoip_conf_path: /etc/GeoIP.conf
+cluster_geoip_edition_ids: GeoLite2-Country
+# From encrypted vault.yml → deployment_vault.secrets (task vault-edit).
+# Account ID may be stored unquoted (YAML int); always stringify for geoipupdate.
+cluster_maxmind_account_id: "{{ deployment_vault.secrets.maxmind_account_id | default('') | string }}"
+cluster_maxmind_license_key: "{{ deployment_vault.secrets.maxmind_license_key | default('') | string }}"
+cluster_geoip_enabled: false
+cluster_geoip_timer_oncalendar: weekly
+cluster_geoip_systemd_service: cluster-geoipupdate.service
+cluster_geoip_systemd_timer: cluster-geoipupdate.timer
+cluster_static_hub_host: static-1
+# Kept for docs/compat; GeoDNS NA/SA uses every deployment host with wireguard_roaming.
+cluster_roaming_hub_host: roaming-1
+
+# Legacy Caddy paths — cluster-down still removes them if a prior cluster-up left them.
+cluster_caddy_package: caddy
+cluster_caddy_service: caddy
+cluster_caddy_config_path: /etc/caddy/Caddyfile
+cluster_caddy_keyring_path: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+cluster_caddy_list_path: /etc/apt/sources.list.d/caddy-stable.list
