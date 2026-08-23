@@ -1,0 +1,283 @@
+---
+- name: Require macOS as the mesh controller
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system == 'Darwin'
+    fail_msg: >-
+      {{ inventory_slug }} WireGuard control runs on the macOS controller. Run this task
+      from the Mac that will operate and access this mesh.
+
+- name: Require WireGuard and SSH tools on the controller
+  ansible.builtin.command:
+    argv: [which, "{{ item }}"]
+  loop: [wg, wg-quick, ssh, ssh-keygen]
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+- name: Resolve the absolute macOS wg-quick path for the boot-time mesh service
+  ansible.builtin.command:
+    argv: [which, wg-quick]
+  register: cloud_wireguard_controller_wg_quick
+  changed_when: false
+
+- name: Require a complete WireGuard topology
+  ansible.builtin.assert:
+    that:
+      - groups['wireguard_nodes'] | length > 0
+      - cloud_wireguard_controller_address is string
+      - cloud_wireguard_network_cidr is string
+      - cloud_wireguard_prefix_length | int > 0
+      - cloud_wireguard_prefix_length | int < 32
+      - cloud_wireguard_listen_port | int > 0
+      - cloud_wireguard_listen_port | int < 65536
+    fail_msg: >-
+      {{ inventory_slug }} requires at least one wireguard_nodes host and a
+      valid controller mesh CIDR/listen port.
+
+- name: Require per-host mesh addresses from hosts.yml
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].cloud_wireguard_address is defined
+      - hostvars[item].cloud_wireguard_address is string
+      - hostvars[item].cloud_wireguard_address | length > 0
+      - hostvars[item].cloud_wireguard_address != cloud_wireguard_controller_address
+    fail_msg: >-
+      {{ item }} must set cloud_wireguard_address in
+      inventories/{{ inventory_slug }}/hosts.yml to a unique mesh IP in
+      {{ cloud_wireguard_network_cidr }} (not the controller address).
+  loop: "{{ groups['wireguard_nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Require unique mesh addresses across servers
+  ansible.builtin.assert:
+    that:
+      - >
+        (
+          groups['wireguard_nodes']
+          | map('extract', hostvars, 'cloud_wireguard_address')
+          | list
+          | unique
+          | length
+        ) == (groups['wireguard_nodes'] | length)
+    fail_msg: >-
+      cloud_wireguard_address values in hosts.yml must be unique across
+      wireguard_nodes.
+
+- name: Require public WireGuard endpoints for every stable server
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].cloud_wireguard_endpoint is string
+      - hostvars[item].cloud_wireguard_endpoint | length > 0
+      - hostvars[item].cloud_wireguard_endpoint is not match('^REPLACE_WITH_')
+    fail_msg: >-
+      {{ item }} must set cloud_wireguard_endpoint in
+      inventories/{{ inventory_slug }}/hosts.yml to its public IPv4 address or DNS name.
+  loop: "{{ groups['wireguard_nodes'] }}"
+  when: not (hostvars[item].wireguard_roaming | default(false) | bool)
+
+- name: Require Cloudflare bootstrap hosts for non-Lima roaming nodes
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].cloud_bootstrap_ssh_host is string
+      - hostvars[item].cloud_bootstrap_ssh_host | length > 0
+      - hostvars[item].cloud_bootstrap_ssh_host is not match('^REPLACE_WITH_')
+      - hostvars[item].cloud_wireguard_endpoint is not defined
+        or hostvars[item].cloud_wireguard_endpoint | length == 0
+    fail_msg: >-
+      {{ item }} (wireguard_roaming, non-Lima) must set cloud_bootstrap_ssh_host and
+      must not set cloud_wireguard_endpoint in inventories/{{ inventory_slug }}/hosts.yml.
+  loop: "{{ groups['wireguard_nodes'] }}"
+  when:
+    - hostvars[item].wireguard_roaming | default(false) | bool
+    - not (hostvars[item].node_lima_guest | default(false) | bool)
+
+- name: Require Lima guests to roam without Cloudflare bootstrap hosts
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].wireguard_roaming | default(false) | bool
+      - hostvars[item].cloud_wireguard_endpoint is not defined
+        or hostvars[item].cloud_wireguard_endpoint | length == 0
+      - hostvars[item].cloud_bootstrap_ssh_host is not defined
+        or hostvars[item].cloud_bootstrap_ssh_host | length == 0
+      - >
+          (
+            lima_nodes | default([])
+            | selectattr('name', 'equalto', item)
+            | list
+            | length
+          ) == 1
+    fail_msg: >-
+      {{ item }} (node_lima_guest) must set wireguard_roaming: true, omit
+      cloud_wireguard_endpoint and cloud_bootstrap_ssh_host, and appear once in
+      lima_nodes (bootstrap uses Lima-local SSH).
+  loop: "{{ groups['wireguard_nodes'] }}"
+  when: hostvars[item].node_lima_guest | default(false) | bool
+
+- name: Require encrypted WireGuard key maps from the Vault
+  ansible.builtin.assert:
+    that:
+      - vault_cloud_wireguard_private_keys is mapping
+      - vault_cloud_wireguard_public_keys is mapping
+      - vault_cloud_wireguard_private_keys.macos is string
+      - vault_cloud_wireguard_public_keys.macos is string
+  no_log: true
+
+- name: Require encrypted WireGuard material for every server
+  ansible.builtin.assert:
+    that:
+      - vault_cloud_wireguard_private_keys[item] is string
+      - vault_cloud_wireguard_public_keys[item] is string
+  loop: "{{ groups['wireguard_nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+
+- name: Create private WireGuard controller state
+  ansible.builtin.file:
+    path: "{{ cloud_wireguard_state_dir }}"
+    state: directory
+    mode: '0700'
+
+- name: Require the verified SSH host-key file
+  ansible.builtin.stat:
+    path: "{{ cloud_known_hosts }}"
+  register: cloud_wireguard_controller_known_hosts
+
+- name: Refuse unverified or unsafe SSH host-key state
+  ansible.builtin.assert:
+    that:
+      - cloud_wireguard_controller_known_hosts.stat.exists
+      - cloud_wireguard_controller_known_hosts.stat.mode == '0600'
+    fail_msg: >-
+      Verify every public server host key out of band, then create the
+      mode-0600 file {{ cloud_known_hosts }} with entries under the stable
+      inventory aliases before running task up PROVIDER={{ inventory_slug }}.
+
+- name: Require each stable host alias in the verified host-key file
+  ansible.builtin.command:
+    argv: [ssh-keygen, -F, "{{ item }}", -f, "{{ cloud_known_hosts }}"]
+  loop: "{{ groups['wireguard_nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+- name: Render the private macOS WireGuard configuration from Vault
+  ansible.builtin.template:
+    src: scwg0.conf.j2
+    dest: "{{ cloud_wireguard_config_path }}"
+    mode: '0600'
+  register: cloud_wireguard_controller_config
+  no_log: true
+
+- name: Install the root-owned macOS boot-time WireGuard service
+  ansible.builtin.template:
+    src: wireguard-launchd.plist.j2
+    dest: "{{ cloud_wireguard_launchd_path }}"
+    owner: root
+    group: wheel
+    mode: '0644'
+  register: cloud_wireguard_controller_launchd_plist
+  become: true
+
+- name: Validate the macOS boot-time WireGuard service definition
+  ansible.builtin.command:
+    argv: [plutil, -lint, "{{ cloud_wireguard_launchd_path }}"]
+  changed_when: false
+  become: true
+
+- name: Check whether the macOS boot-time WireGuard service is loaded
+  ansible.builtin.command:
+    argv: [launchctl, print, "system/{{ cloud_wireguard_launchd_label }}"]
+  register: cloud_wireguard_controller_launchd_loaded
+  failed_when: false
+  changed_when: false
+  become: true
+
+- name: Unload the macOS boot-time WireGuard service before updating it
+  ansible.builtin.command:
+    argv:
+      - launchctl
+      - bootout
+      - system
+      - "{{ cloud_wireguard_launchd_path }}"
+  when:
+    - cloud_wireguard_controller_launchd_loaded.rc == 0
+    - cloud_wireguard_controller_launchd_plist.changed
+  become: true
+  changed_when: true
+
+- name: Load the macOS boot-time WireGuard service when absent or updated
+  ansible.builtin.command:
+    argv:
+      - launchctl
+      - bootstrap
+      - system
+      - "{{ cloud_wireguard_launchd_path }}"
+  when: >-
+    cloud_wireguard_controller_launchd_loaded.rc != 0 or
+    cloud_wireguard_controller_launchd_plist.changed
+  become: true
+  changed_when: true
+
+- name: Wait for the boot-time WireGuard service to assign the controller mesh address
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: cloud_wireguard_controller_launchd_interfaces
+  until: >-
+    'inet ' ~ cloud_wireguard_controller_address ~ ' '
+    in cloud_wireguard_controller_launchd_interfaces.stdout
+  retries: 10
+  delay: 1
+  changed_when: false
+  when: >-
+    cloud_wireguard_controller_launchd_loaded.rc != 0 or
+    cloud_wireguard_controller_launchd_plist.changed
+
+- name: Read macOS interfaces before reconciling the mesh
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: cloud_wireguard_controller_interfaces
+  changed_when: false
+
+- name: Record whether the macOS mesh address is active
+  ansible.builtin.set_fact:
+    cloud_wireguard_controller_mesh_active: >-
+      {{ 'inet ' ~ cloud_wireguard_controller_address ~ ' '
+         in cloud_wireguard_controller_interfaces.stdout }}
+
+- name: Stop the previous macOS mesh before a configuration update
+  ansible.builtin.command:
+    argv: [wg-quick, down, "{{ cloud_wireguard_config_path }}"]
+  become: true
+  when:
+    - cloud_wireguard_controller_config.changed
+    - cloud_wireguard_controller_mesh_active | bool
+  changed_when: true
+
+- name: Start the macOS WireGuard mesh when required
+  ansible.builtin.command:
+    argv: [wg-quick, up, "{{ cloud_wireguard_config_path }}"]
+  become: true
+  when:
+    - cloud_wireguard_controller_config.changed or not (cloud_wireguard_controller_mesh_active | bool)
+  changed_when: true
+
+- name: Require the macOS mesh address after a manual start
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: cloud_wireguard_controller_started_interfaces
+  until: >-
+    'inet ' ~ cloud_wireguard_controller_address ~ ' '
+    in cloud_wireguard_controller_started_interfaces.stdout
+  retries: 10
+  delay: 1
+  changed_when: false
+  when: cloud_wireguard_controller_config.changed or not (cloud_wireguard_controller_mesh_active | bool)
+
+- name: Show macOS WireGuard peers without private keys
+  ansible.builtin.command:
+    argv: [wg, show]
+  become: true
+  changed_when: false

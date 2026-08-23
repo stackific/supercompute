@@ -1,0 +1,73 @@
+version: "3"
+
+tasks:
+  lima-up:
+    desc: Create or start dev node_lima_guest VMs
+    preconditions:
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running lima-up
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running lima-up
+      - sh: command -v ssh-keyscan >/dev/null 2>&1
+        msg: Install OpenSSH (ssh-keyscan) before running lima-up
+    cmds:
+      - bash scripts/ansible-playbook.sh dev playbooks/lima-up.yml
+      - uv run --locked python scripts/lima-host-fingerprints.py --provider dev --force
+
+  lima-host-fingerprints:
+    desc: Capture dev node_lima_guest SSH host ED25519 fingerprints into hosts.yml
+    preconditions:
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before capturing Lima host fingerprints
+      - sh: command -v ssh-keyscan >/dev/null 2>&1
+        msg: Install OpenSSH (ssh-keyscan) before capturing Lima host fingerprints
+    cmds:
+      - uv run --locked python scripts/lima-host-fingerprints.py --provider dev
+
+  lima-status:
+    desc: Show dev Lima guest resource status without creating state
+    preconditions:
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running lima-status
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running lima-status
+    env:
+      LIMA_RUNTIME_HOME_MODE: path
+    cmds:
+      - bash scripts/ansible-playbook.sh dev playbooks/lima-status.yml
+
+  lima-destroy:
+    desc: Destroy dev node_lima_guest VMs
+    requires:
+      vars:
+        - CONFIRM
+    env:
+      CONFIRM: "{{.CONFIRM}}"
+      LIMA_RUNTIME_HOME_MODE: path
+    preconditions:
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running lima-destroy
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running lima-destroy
+    cmds:
+      - bash scripts/ansible-playbook.sh dev playbooks/lima-destroy.yml
+
+  dev-reset:
+    desc: Reset dev Lima, controller WireGuard, runtime state, and Vault
+    requires:
+      vars:
+        - CONFIRM
+    preconditions:
+      - sh: test "{{.CONFIRM}}" = "reset-dev"
+        msg: Set CONFIRM=reset-dev to reset dev
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running dev-reset
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running dev-reset
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running dev-reset
+    cmds:
+      - CONFIRM=reset-dev bash scripts/ansible-playbook.sh dev --ask-become-pass playbooks/dev-reset-controller.yml
+      - CONFIRM=destroy-lima-dev LIMA_RUNTIME_HOME_MODE=path bash scripts/ansible-playbook.sh dev playbooks/lima-destroy.yml
+      - PROVIDER=dev CONFIRM=destroy-vault-dev uv run --locked python scripts/vault.py destroy
+      - CONFIRM=reset-dev bash scripts/ansible-playbook.sh dev playbooks/dev-reset.yml

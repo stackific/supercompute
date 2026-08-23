@@ -1,0 +1,96 @@
+---
+- name: Verify provider contracts on the controller
+  hosts: localhost
+  gather_facts: true
+  any_errors_fatal: true
+  tasks:
+    - name: Require a deployment namespace
+      ansible.builtin.assert:
+        that:
+          - cloud_name is string
+          - cloud_name is match('^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$')
+          - inventory_slug is string
+          - inventory_slug | length > 0
+        fail_msg: "cloud.yml and inventory_slug must identify this provider run."
+
+    - name: Refuse retired provider.platform values
+      ansible.builtin.assert:
+        that:
+          - provider.platform != 'lima'
+          - provider.platform != 'vps'
+        fail_msg: >-
+          provider.platform={{ provider.platform }} is refused. Use
+          provider.platform=public (Lima guests use node_lima_guest under that
+          platform).
+
+    - name: Verify Lima guest membership when lima_nodes are declared
+      when:
+        - provider.platform == 'public'
+        - lima_nodes is defined
+        - lima_nodes | length > 0
+      environment:
+        LIMA_HOME: "{{ lima_runtime_home }}"
+        LIMA_SSH_PORT_FORWARDER: "false"
+      block:
+        - name: Run Lima verify lifecycle
+          ansible.builtin.include_role:
+            name: lima
+          vars:
+            lima_lifecycle: verify
+
+    - name: Check whether WireGuard controller state exists
+      ansible.builtin.stat:
+        path: "{{ cloud_wireguard_config_path }}"
+      register: verify_cloud_wireguard_config
+      when:
+        - provider.platform == 'public'
+        - cloud_wireguard_config_path is defined
+
+    - name: Require known_hosts aliases when mesh state exists
+      when:
+        - provider.platform == 'public'
+        - verify_cloud_wireguard_config.stat.exists | default(false)
+      block:
+        - name: Require the verified known_hosts file
+          ansible.builtin.stat:
+            path: "{{ cloud_known_hosts }}"
+          register: verify_cloud_known_hosts
+
+        - name: Assert known_hosts is present and private
+          ansible.builtin.assert:
+            that:
+              - verify_cloud_known_hosts.stat.exists
+              - verify_cloud_known_hosts.stat.mode == '0600'
+            fail_msg: "Missing mode-0600 {{ cloud_known_hosts }}; run task up PROVIDER={{ inventory_slug }}."
+
+        - name: Require each inventory host alias in known_hosts
+          ansible.builtin.command:
+            argv: [ssh-keygen, -F, "{{ item }}", -f, "{{ cloud_known_hosts }}"]
+          loop: "{{ groups['wireguard_nodes'] }}"
+          loop_control:
+            label: "{{ item }}"
+          changed_when: false
+
+        - name: Require the controller mesh address
+          ansible.builtin.command:
+            argv: [ifconfig]
+          register: verify_cloud_interfaces
+          changed_when: false
+
+        - name: Assert the controller mesh address is active
+          ansible.builtin.assert:
+            that:
+              - "'inet ' ~ cloud_wireguard_controller_address ~ ' ' in verify_cloud_interfaces.stdout"
+            fail_msg: >-
+              {{ cloud_wireguard_controller_address }} is not active; run task up
+              PROVIDER={{ inventory_slug }} or restore the launchd mesh.
+
+    - name: Report when WireGuard verify is skipped
+      ansible.builtin.debug:
+        msg: >-
+          WireGuard config is absent under
+          {{ cloud_wireguard_config_path | default('(undefined)') }}; skipped mesh verify.
+          Fill inventory placeholders, then run task up PROVIDER={{ inventory_slug }}.
+      when:
+        - provider.platform == 'public'
+        - not (verify_cloud_wireguard_config.stat.exists | default(false))

@@ -1,0 +1,118 @@
+---
+- name: Install apt HTTPS prerequisites
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - debian-keyring
+      - debian-archive-keyring
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Remove packages that conflict with Docker Engine
+  ansible.builtin.apt:
+    name: "{{ cluster_docker_conflict_packages }}"
+    state: absent
+  failed_when: false
+
+- name: Download gVisor archive signing key
+  ansible.builtin.get_url:
+    url: "{{ cluster_gvisor_key_url }}"
+    dest: /tmp/gvisor-archive.key
+    mode: "0644"
+
+- name: Install gVisor keyring
+  ansible.builtin.shell:
+    cmd: >-
+      gpg --dearmor --yes -o {{ cluster_gvisor_keyring_path | quote }}
+      /tmp/gvisor-archive.key
+      && chmod 0644 {{ cluster_gvisor_keyring_path | quote }}
+    creates: "{{ cluster_gvisor_keyring_path }}"
+
+- name: Install gVisor apt source list
+  ansible.builtin.copy:
+    dest: "{{ cluster_gvisor_list_path }}"
+    mode: "0644"
+    content: |
+      {{ cluster_gvisor_repo_line }}
+
+- name: Ensure Docker apt keyrings directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install Docker apt signing key
+  ansible.builtin.get_url:
+    url: "{{ cluster_docker_key_url }}"
+    dest: "{{ cluster_docker_keyring_path }}"
+    mode: "0644"
+
+- name: Install Docker apt source (DEB822)
+  ansible.builtin.copy:
+    dest: "{{ cluster_docker_sources_path }}"
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: {{ cluster_docker_suite }}
+      Components: stable
+      Architectures: {{ cluster_deb_architecture }}
+      Signed-By: {{ cluster_docker_keyring_path }}
+
+- name: Build cluster package list for this host
+  ansible.builtin.set_fact:
+    cluster_present_packages: >-
+      {{
+        [cluster_gvisor_package]
+        + cluster_docker_packages
+        + cluster_pdns_packages
+      }}
+
+- name: Install gVisor, Docker Engine, PowerDNS, and dig
+  ansible.builtin.apt:
+    name: "{{ cluster_present_packages }}"
+    state: present
+    update_cache: true
+
+- name: Enable and start Docker
+  ansible.builtin.systemd:
+    name: "{{ cluster_docker_service }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Enable and start PowerDNS
+  ansible.builtin.systemd:
+    name: "{{ cluster_pdns_service }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Install Caddy without activating its systemd service
+  ansible.builtin.apt:
+    name: caddy
+    state: present
+    policy_rc_d: 101
+
+- name: Keep Caddy disabled and stopped
+  ansible.builtin.systemd:
+    name: caddy
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Prove runsc is on PATH
+  ansible.builtin.command:
+    argv: [runsc, --version]
+  changed_when: false
+
+- name: Prove Docker Engine is running
+  ansible.builtin.command:
+    argv: [docker, version]
+  changed_when: false

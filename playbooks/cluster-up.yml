@@ -1,0 +1,10 @@
+---
+- name: Bring cluster node software up on every deployment host
+  hosts: deployment
+  gather_facts: true
+  any_errors_fatal: true
+  serial: 1
+  roles:
+    - role: cluster_node
+      vars:
+        cluster_lifecycle: present

@@ -1,0 +1,52 @@
+- name: Remove Caddy package before the cluster stack
+  ansible.builtin.apt:
+    name: caddy
+    state: absent
+    purge: true
+
+- name: Stop and disable Docker
+  ansible.builtin.systemd:
+    name: "{{ cluster_docker_service }}"
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Stop and disable PowerDNS
+  ansible.builtin.systemd:
+    name: "{{ cluster_pdns_service }}"
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Remove cluster-managed packages
+  ansible.builtin.apt:
+    name: >-
+      {{
+        [cluster_gvisor_package]
+        + cluster_docker_packages
+        + cluster_pdns_packages
+      }}
+    state: absent
+    purge: true
+    autoremove: true
+
+- name: Remove gVisor apt source and keyring
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ cluster_gvisor_list_path }}"
+    - "{{ cluster_gvisor_keyring_path }}"
+
+- name: Remove Docker apt source and keyring
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ cluster_docker_sources_path }}"
+    - "{{ cluster_docker_keyring_path }}"
+
+- name: Refresh apt cache after removing third-party sources
+  ansible.builtin.apt:
+    update_cache: true
+  changed_when: false

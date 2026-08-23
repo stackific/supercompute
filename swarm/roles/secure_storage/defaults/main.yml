@@ -1,9 +1,0 @@
----
-secure_storage_path: /srv/secure
-secure_storage_marker_path: "/etc/{{ deployment_name }}-secure-storage.json"
-secure_storage_sentinel_path: "{{ secure_storage_path }}/.{{ deployment_name }}-unlocked"
-secure_storage_docker_drop_in_dir: /etc/systemd/system/docker.service.d
-secure_storage_docker_drop_in_path: >-
-  {{ secure_storage_docker_drop_in_dir }}/{{ deployment_name }}-secure-storage.conf
-secure_storage_passphrase: >-
-  {{ (vault_encryption_at_rest_passphrases | default({})).get(inventory_hostname, '') }}

@@ -1,0 +1,95 @@
+version: "3"
+
+env:
+  PROVIDER: "{{.PROVIDER}}"
+
+tasks:
+  up:
+    desc: Bring up the WireGuard mesh and cluster software for a provider
+    requires:
+      vars: [PROVIDER]
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running up
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running up
+    cmds:
+      - |
+        started_at="$(date +%s)"
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          public)
+            uv run --locked python scripts/cloud-known-hosts.py \
+              --inventory "inventories/{{.PROVIDER}}/hosts.yml" \
+              --known-hosts ".state/{{.PROVIDER}}/known_hosts" \
+              --reuse-existing
+            uv run --locked python scripts/vault.py ensure-wireguard
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/cloud-wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cluster-up.yml
+            ;;
+          lima)
+            echo "provider.platform=lima is refused; use provider.platform=public with node_lima_guest hosts under PROVIDER=dev." >&2
+            exit 2
+            ;;
+          vps)
+            echo "provider.platform=vps is refused; rename to provider.platform=public." >&2
+            exit 2
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac
+        finished_at="$(date +%s)"
+        elapsed_seconds=$((finished_at - started_at))
+        elapsed_minutes=$((elapsed_seconds / 60))
+        elapsed_remainder_seconds=$((elapsed_seconds % 60))
+        printf 'task up PROVIDER=%s completed in %dm %02ds\n' \
+          "{{.PROVIDER}}" "${elapsed_minutes}" "${elapsed_remainder_seconds}"
+
+  down:
+    internal: true
+    desc: Tear down cluster software, node WireGuard, and the Mac controller mesh
+    requires:
+      vars:
+        - PROVIDER
+        - CONFIRM
+    env:
+      CONFIRM: "{{.CONFIRM}}"
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running down
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running down
+      - sh: test "{{.CONFIRM}}" = "down-{{.PROVIDER}}"
+        msg: >-
+          Set CONFIRM=down-{{.PROVIDER}} to run down
+    cmds:
+      - |
+        started_at="$(date +%s)"
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          public)
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cluster-down.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cloud-wireguard-down.yml
+            bash scripts/disconnect-cloud-wireguard.sh "{{.PROVIDER}}"
+            ;;
+          lima)
+            echo "provider.platform=lima is refused; use provider.platform=public." >&2
+            exit 2
+            ;;
+          vps)
+            echo "provider.platform=vps is refused; rename to provider.platform=public." >&2
+            exit 2
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac
+        finished_at="$(date +%s)"
+        elapsed_seconds=$((finished_at - started_at))
+        elapsed_minutes=$((elapsed_seconds / 60))
+        elapsed_remainder_seconds=$((elapsed_seconds % 60))
+        printf 'task down PROVIDER=%s completed in %dm %02ds\n' \
+          "{{.PROVIDER}}" "${elapsed_minutes}" "${elapsed_remainder_seconds}"

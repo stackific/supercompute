@@ -1,0 +1,32 @@
+---
+- name: Show macOS WireGuard status
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Refuse non-Lima providers for this WireGuard slice
+      ansible.builtin.assert:
+        that:
+          - provider.platform == 'lima'
+          - provider.mode == 'local'
+        fail_msg: >-
+          WireGuard wg-status for PROVIDER={{ inventory_slug }} requires a Lima
+          local provider. Public-endpoint WireGuard is the next slice.
+  tasks:
+    - name: Show macOS WireGuard peers
+      ansible.builtin.command:
+        argv: [wg, show]
+      become: true
+      changed_when: false
+
+- name: Show VM WireGuard status
+  hosts: wireguard_nodes
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Show VM WireGuard peer state
+      ansible.builtin.command:
+        argv: [wg, show, wg0]
+      become: true
+      changed_when: false

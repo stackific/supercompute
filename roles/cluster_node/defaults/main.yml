@@ -1,0 +1,55 @@
+---
+# present = cluster-up; absent = cluster-down (surgical undo of present).
+cluster_lifecycle: present
+
+# Lima guests are the only supported ARM deployment target. Their kernel reports
+# aarch64, while the Debian repositories use arm64 as the package architecture.
+cluster_deb_architecture: >-
+  {{
+    'arm64'
+    if (node_lima_guest | default(false) | bool)
+    else (
+      'amd64'
+      if ansible_facts['architecture'] == 'x86_64'
+      else ansible_facts['architecture']
+    )
+  }}
+
+# --- gVisor (https://gvisor.dev/docs/user_guide/install/) ---
+cluster_gvisor_key_url: https://gvisor.dev/archive.key
+cluster_gvisor_keyring_path: /usr/share/keyrings/gvisor-archive-keyring.gpg
+cluster_gvisor_list_path: /etc/apt/sources.list.d/gvisor.list
+cluster_gvisor_repo_line: >-
+  deb [arch={{ cluster_deb_architecture }}
+  signed-by={{ cluster_gvisor_keyring_path }}]
+  https://storage.googleapis.com/gvisor/releases release main
+cluster_gvisor_package: runsc
+
+# --- Docker Engine (https://docs.docker.com/engine/install/ubuntu/) ---
+cluster_docker_key_url: https://download.docker.com/linux/ubuntu/gpg
+cluster_docker_keyring_path: /etc/apt/keyrings/docker.asc
+cluster_docker_sources_path: /etc/apt/sources.list.d/docker.sources
+# Ubuntu 26.04 (resolute) is listed by Docker; suite follows the host codename.
+cluster_docker_suite: "{{ ansible_facts['distribution_release'] }}"
+cluster_docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+cluster_docker_service: docker
+# Distro packages that conflict with Docker's official packages.
+cluster_docker_conflict_packages:
+  - docker.io
+  - docker-compose
+  - docker-compose-v2
+  - docker-doc
+  - docker-buildx
+  - podman-docker
+  - containerd
+  - runc
+
+# --- PowerDNS ---
+cluster_pdns_packages:
+  - pdns-server
+  - dnsutils
+cluster_pdns_service: pdns

@@ -1,0 +1,109 @@
+version: "3"
+
+env:
+  PROVIDER: "{{.PROVIDER}}"
+
+tasks:
+  wg-status:
+    desc: Show WireGuard mesh status for a provider
+    requires:
+      vars: [PROVIDER]
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running wg-status
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running wg-status
+    cmds:
+      - |
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          public)
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/cloud-wireguard-status.yml
+            ;;
+          lima)
+            echo "provider.platform=lima is refused; use provider.platform=public." >&2
+            exit 2
+            ;;
+          vps)
+            echo "provider.platform=vps is refused; rename to provider.platform=public." >&2
+            exit 2
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac
+
+  wg-remove:
+    desc: Disconnect the Mac WireGuard controller only (leave nodes and cluster state)
+    requires:
+      vars: [PROVIDER]
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running wg-remove
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running wg-remove
+    cmds:
+      - |
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          public)
+            bash scripts/disconnect-cloud-wireguard.sh "{{.PROVIDER}}"
+            ;;
+          lima)
+            echo "provider.platform=lima is refused; use provider.platform=public." >&2
+            exit 2
+            ;;
+          vps)
+            echo "provider.platform=vps is refused; rename to provider.platform=public." >&2
+            exit 2
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac
+
+  ssh:
+    desc: SSH to a node over WireGuard (NODE=<inventory_hostname>)
+    requires:
+      vars: [PROVIDER, NODE]
+    env:
+      NODE: "{{.NODE}}"
+    preconditions:
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running ssh
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running ssh
+    cmds:
+      - bash scripts/wg-ssh.sh
+
+  wg-syntax:
+    internal: true
+    desc: Syntax-check WireGuard playbooks for a provider
+    requires:
+      vars: [PROVIDER]
+    cmds:
+      - |
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        case "${platform}" in
+          public)
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-down.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-status.yml
+            bash -n scripts/disconnect-cloud-wireguard.sh
+            bash -n scripts/wg-ssh.sh
+            ;;
+          lima)
+            echo "provider.platform=lima is refused; use provider.platform=public." >&2
+            exit 2
+            ;;
+          vps)
+            echo "provider.platform=vps is refused; rename to provider.platform=public." >&2
+            exit 2
+            ;;
+          *)
+            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            exit 2
+            ;;
+        esac
