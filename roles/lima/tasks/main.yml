@@ -349,26 +349,6 @@
         - lima_project_instance_states[item.name] == 'Stopped'
       changed_when: true
 
-    - name: Check whether controller WireGuard state already exists
-      ansible.builtin.stat:
-        path: "{{ prod_wireguard_config_path }}"
-      register: lima_existing_controller_wireguard_config
-
-    - name: Wait for each pre-existing Lima WireGuard UDP forward
-      ansible.builtin.command:
-        argv: [lsof, -nP, -a, -c, limactl, "-iUDP:{{ item.wg_host_port }}"]
-      register: lima_wireguard_udp_forward
-      until: lima_wireguard_udp_forward.rc == 0
-      retries: 60
-      delay: 1
-      changed_when: false
-      loop: "{{ lima_nodes }}"
-      loop_control:
-        label: "{{ item.name }}:{{ item.wg_host_port }}"
-      when:
-        - item.name in lima_project_instance_names
-        - lima_existing_controller_wireguard_config.stat.exists | default(false)
-
     - name: Reinspect Lima after the owner action
       ansible.builtin.command:
         argv:
@@ -413,15 +393,17 @@
         label: "{{ item.name }}"
       when: item.name in lima_missing_instance_names
 
-    - name: Require Ubuntu 26.04 Resolute ARM64 inside every new guest
+    - name: Require Ubuntu 26.04 Resolute inside every new guest
       ansible.builtin.assert:
         that:
           - >-
             item.stdout | trim ==
-            'ubuntu|' ~ node_ubuntu_version ~ '|' ~ node_ubuntu_codename ~ '|' ~ node_host_architecture
+            'ubuntu|' ~ node_ubuntu_version ~ '|' ~ node_ubuntu_codename ~ '|'
+            ~ hostvars[item.item.name].node_host_architecture
         fail_msg: >-
           {{ item.item.name }} is not Ubuntu {{ node_ubuntu_version }}
-          ({{ node_ubuntu_codename }}) {{ node_host_architecture }}.
+          ({{ node_ubuntu_codename }})
+          {{ hostvars[item.item.name].node_host_architecture }}.
       loop: "{{ lima_guest_os_contract.results | default([]) }}"
       when: not (item.skipped | default(false))
 

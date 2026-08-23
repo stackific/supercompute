@@ -15,15 +15,16 @@ tasks:
         msg: Install uv before running up
     cmds:
       - |
+        started_at="$(date +%s)"
         platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
         case "${platform}" in
           public)
-            uv run --locked python scripts/prod-known-hosts.py \
+            uv run --locked python scripts/cloud-known-hosts.py \
               --inventory "inventories/{{.PROVIDER}}/hosts.yml" \
               --known-hosts ".state/{{.PROVIDER}}/known_hosts" \
               --reuse-existing
             uv run --locked python scripts/vault.py ensure-wireguard
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/prod-wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/cloud-wireguard-up.yml
             bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cluster-up.yml
             ;;
           lima)
@@ -39,8 +40,15 @@ tasks:
             exit 2
             ;;
         esac
+        finished_at="$(date +%s)"
+        elapsed_seconds=$((finished_at - started_at))
+        elapsed_minutes=$((elapsed_seconds / 60))
+        elapsed_remainder_seconds=$((elapsed_seconds % 60))
+        printf 'task up PROVIDER=%s completed in %dm %02ds\n' \
+          "{{.PROVIDER}}" "${elapsed_minutes}" "${elapsed_remainder_seconds}"
 
   down:
+    internal: true
     desc: Tear down cluster software, node WireGuard, and the Mac controller mesh
     requires:
       vars:
@@ -58,12 +66,13 @@ tasks:
           Set CONFIRM=down-{{.PROVIDER}} to run down
     cmds:
       - |
+        started_at="$(date +%s)"
         platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
         case "${platform}" in
           public)
             bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cluster-down.yml
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/prod-wireguard-down.yml
-            bash scripts/disconnect-prod-wireguard.sh "{{.PROVIDER}}"
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cloud-wireguard-down.yml
+            bash scripts/disconnect-cloud-wireguard.sh "{{.PROVIDER}}"
             ;;
           lima)
             echo "provider.platform=lima is refused; use provider.platform=public." >&2
@@ -78,3 +87,9 @@ tasks:
             exit 2
             ;;
         esac
+        finished_at="$(date +%s)"
+        elapsed_seconds=$((finished_at - started_at))
+        elapsed_minutes=$((elapsed_seconds / 60))
+        elapsed_remainder_seconds=$((elapsed_seconds % 60))
+        printf 'task down PROVIDER=%s completed in %dm %02ds\n' \
+          "{{.PROVIDER}}" "${elapsed_minutes}" "${elapsed_remainder_seconds}"

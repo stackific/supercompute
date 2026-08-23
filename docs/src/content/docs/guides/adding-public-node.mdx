@@ -18,7 +18,7 @@ The example uses inventory slug **`dev`** and host name **`static-1`**. The same
 
 You must be arriving here from [Get started locally](/start-here/get-started) or [Deploy to production](/start-here/deploy-to-production)
 
-Read `deployment_name` from `deployment.yml` (currently `sc`). In examples below, `<deployment_name>` is that value and `<provider>` is your inventory slug (here `dev` for local, `prod` for production, or `anything` you like to call your environment). 
+Read `cloud_name` from `cloud.yml` (currently `sc`). In examples below, `<cloud_name>` is that value and `<provider>` is your inventory slug (here `dev` for local, `prod` for production, or `anything` you like to call your environment). 
 
 Unsurprisingly, inventory slugs are found in `inventories/{slug}` folder.
 
@@ -40,18 +40,18 @@ pbcopy < ~/.ssh/sc-dev.pub
 
 ```sh
 ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/<deployment_name>-<provider> \
-  -C "<deployment_name> <provider>"
+  -f ~/.ssh/<cloud_name>-<provider> \
+  -C "<cloud_name> <provider>"
   
-ssh-add ~/.ssh/<deployment_name>-<provider>
-pbcopy < ~/.ssh/<deployment_name>-<provider>.pub
+ssh-add ~/.ssh/<cloud_name>-<provider>
+pbcopy < ~/.ssh/<cloud_name>-<provider>.pub
 ```
 
 </TabItem>
 </Tabs>
 
 
-Inventory will reference this key as `~/.ssh/sc-dev` via `prod_ssh_private_key_file` in group vars.
+Inventory will reference this key as `~/.ssh/sc-dev` via `cloud_ssh_private_key_file` in group vars.
 
 ## Step 2 — Create the VM
 
@@ -111,7 +111,7 @@ On the VM:
 sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-Copy the full `SHA256:…` value into your password manager. You will paste it into inventory as `prod_ssh_host_ed25519_sha256` (this is the **server** host key, not your operator key).
+Copy the full `SHA256:…` value into your password manager. You will paste it into inventory as `cloud_ssh_host_ed25519_sha256` (this is the **server** host key, not your operator key).
 
 ## Step 6 — Provider firewall
 
@@ -120,7 +120,7 @@ On the provider (or host) firewall for this VM:
 | Phase | Rule |
 | --- | --- |
 | Bootstrap | Allow inbound **TCP 22** from your Mac’s current public `/32` |
-| Mesh | Allow inbound **UDP 51830** from peers that will dial this hub (if you will add roaming nodes later, open UDP 51830 broadly—not only the Mac `/32`) |
+| Post-bootstrap | Allow inbound **UDP 51830** from peers that will dial this hub (if you will add roaming nodes later, open UDP 51830 broadly—not only the Mac `/32`) |
 
 The Mac controller does **not** need inbound UDP 51830 for mesh traffic when a static hub routes roaming peers.
 
@@ -131,11 +131,11 @@ The Mac controller does **not** need inbound UDP 51830 for mesh traffic when a s
 Confirm SSH settings (defaults in the tracked `dev` inventory):
 
 ```yaml
-prod_default_ssh_user: ops
-prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+cloud_default_ssh_user: ops
+cloud_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ cloud_name }}-{{ inventory_slug }}"
 ```
 
-That expands to `~/.ssh/sc-dev` when `deployment_name` is `sc` and the slug is `dev`.
+That expands to `~/.ssh/sc-dev` when `cloud_name` is `sc` and the slug is `dev`.
 
 ### `inventories/dev/hosts.yml`
 
@@ -143,13 +143,13 @@ Set placeholders for `static-1` (or add a new `static-N` host):
 
 ```yaml
 static-1:
-  prod_wireguard_endpoint: "203.0.113.11"
-  prod_ssh_host_ed25519_sha256: "SHA256:YOUR_FULL_FINGERPRINT_FROM_STEP_5"
-  prod_wireguard_address: 10.217.80.11
+  cloud_wireguard_endpoint: "203.0.113.11"
+  cloud_ssh_host_ed25519_sha256: "SHA256:YOUR_FULL_FINGERPRINT_FROM_STEP_5"
+  cloud_wireguard_address: 10.217.80.11
 ```
 
-- `prod_wireguard_endpoint` — public IPv4 or DNS (not the mesh address).
-- `prod_wireguard_address` — unique IP in your mesh CIDR (`10.217.80.0/24` for `dev`; controller uses `.1`).
+- `cloud_wireguard_endpoint` — public IPv4 or DNS (not the mesh address).
+- `cloud_wireguard_address` — unique IP in your mesh CIDR (`10.217.80.0/24` for `dev`; controller uses `.1`).
 
 To add another public node, duplicate the block as `static-2`, assign the next mesh IP (e.g. `.12`), and run `up` again.
 
@@ -202,14 +202,15 @@ After the mesh is healthy:
 task up PROVIDER=dev
 ```
 
-Requires MaxMind credentials in the vault if you use GeoIP update—see `internal/cluster.md`.
+The cluster role installs runtime packages only; it does not create DNS zones or
+application records. See `internal/cluster.md`.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| `Permission denied` during `up` | `prod_default_ssh_user` matches `ops`; key path is not a bare `~` string in inventory |
-| Host-key errors | `prod_ssh_host_ed25519_sha256` is complete `SHA256:…` from Step 5 |
+| `Permission denied` during `up` | `cloud_default_ssh_user` matches `ops`; key path is not a bare `~` string in inventory |
+| Host-key errors | `cloud_ssh_host_ed25519_sha256` is complete `SHA256:…` from Step 5 |
 | Mesh up but no handshake | UDP **51830** open on the public IP; endpoint is public IP not mesh IP |
 | Wrong inventory | `provider.platform` must be `public` in `group_vars/all/main.yml` |
 

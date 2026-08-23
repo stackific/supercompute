@@ -7,11 +7,11 @@
     - name: Require a deployment namespace
       ansible.builtin.assert:
         that:
-          - deployment_name is string
-          - deployment_name is match('^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$')
+          - cloud_name is string
+          - cloud_name is match('^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$')
           - inventory_slug is string
           - inventory_slug | length > 0
-        fail_msg: "deployment.yml and inventory_slug must identify this provider run."
+        fail_msg: "cloud.yml and inventory_slug must identify this provider run."
 
     - name: Refuse retired provider.platform values
       ansible.builtin.assert:
@@ -38,59 +38,59 @@
           vars:
             lima_lifecycle: verify
 
-    - name: Check whether production WireGuard controller state exists
+    - name: Check whether WireGuard controller state exists
       ansible.builtin.stat:
-        path: "{{ prod_wireguard_config_path }}"
-      register: verify_prod_wireguard_config
+        path: "{{ cloud_wireguard_config_path }}"
+      register: verify_cloud_wireguard_config
       when:
         - provider.platform == 'public'
-        - prod_wireguard_config_path is defined
+        - cloud_wireguard_config_path is defined
 
-    - name: Require production known_hosts aliases when mesh state exists
+    - name: Require known_hosts aliases when mesh state exists
       when:
         - provider.platform == 'public'
-        - verify_prod_wireguard_config.stat.exists | default(false)
+        - verify_cloud_wireguard_config.stat.exists | default(false)
       block:
-        - name: Require the verified production known_hosts file
+        - name: Require the verified known_hosts file
           ansible.builtin.stat:
-            path: "{{ prod_known_hosts }}"
-          register: verify_prod_known_hosts
+            path: "{{ cloud_known_hosts }}"
+          register: verify_cloud_known_hosts
 
-        - name: Assert production known_hosts is present and private
+        - name: Assert known_hosts is present and private
           ansible.builtin.assert:
             that:
-              - verify_prod_known_hosts.stat.exists
-              - verify_prod_known_hosts.stat.mode == '0600'
-            fail_msg: "Missing mode-0600 {{ prod_known_hosts }}; run task up PROVIDER={{ inventory_slug }}."
+              - verify_cloud_known_hosts.stat.exists
+              - verify_cloud_known_hosts.stat.mode == '0600'
+            fail_msg: "Missing mode-0600 {{ cloud_known_hosts }}; run task up PROVIDER={{ inventory_slug }}."
 
         - name: Require each inventory host alias in known_hosts
           ansible.builtin.command:
-            argv: [ssh-keygen, -F, "{{ item }}", -f, "{{ prod_known_hosts }}"]
+            argv: [ssh-keygen, -F, "{{ item }}", -f, "{{ cloud_known_hosts }}"]
           loop: "{{ groups['wireguard_nodes'] }}"
           loop_control:
             label: "{{ item }}"
           changed_when: false
 
-        - name: Require the production controller mesh address
+        - name: Require the controller mesh address
           ansible.builtin.command:
             argv: [ifconfig]
-          register: verify_prod_interfaces
+          register: verify_cloud_interfaces
           changed_when: false
 
-        - name: Assert the production controller mesh address is active
+        - name: Assert the controller mesh address is active
           ansible.builtin.assert:
             that:
-              - "'inet ' ~ prod_wireguard_controller_address ~ ' ' in verify_prod_interfaces.stdout"
+              - "'inet ' ~ cloud_wireguard_controller_address ~ ' ' in verify_cloud_interfaces.stdout"
             fail_msg: >-
-              {{ prod_wireguard_controller_address }} is not active; run task up
+              {{ cloud_wireguard_controller_address }} is not active; run task up
               PROVIDER={{ inventory_slug }} or restore the launchd mesh.
 
-    - name: Report when production WireGuard verify is skipped
+    - name: Report when WireGuard verify is skipped
       ansible.builtin.debug:
         msg: >-
-          Production WireGuard config is absent under
-          {{ prod_wireguard_config_path | default('(undefined)') }}; skipped mesh verify.
+          WireGuard config is absent under
+          {{ cloud_wireguard_config_path | default('(undefined)') }}; skipped mesh verify.
           Fill inventory placeholders, then run task up PROVIDER={{ inventory_slug }}.
       when:
         - provider.platform == 'public'
-        - not (verify_prod_wireguard_config.stat.exists | default(false))
+        - not (verify_cloud_wireguard_config.stat.exists | default(false))

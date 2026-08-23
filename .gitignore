@@ -6,3 +6,4 @@ inventories/*/.vault-pass*
 inventories/prod/
 __pycache__/
 *.py[cod]
+.DS_Store

@@ -8,7 +8,7 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 | --- | --- |
 | [overview.md](overview.md) | What Supercompute is and how the automation fits together |
 | [get-started.md](get-started.md) | Fast path from clone to a working `dev` mesh |
-| [prerequisites.md](prerequisites.md) | Host tools, `deployment_name`, SSH identity |
+| [prerequisites.md](prerequisites.md) | Host tools, `cloud_name`, SSH identity |
 
 ## Runbooks
 
@@ -26,7 +26,7 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 | [wireguard.md](wireguard.md) | Mesh model, static hub, roaming, Mac controller |
 | [lima.md](lima.md) | Lima guests, fingerprints, runtime home |
 | [vault.md](vault.md) | Ansible Vault lifecycle and WireGuard keys |
-| [cluster.md](cluster.md) | gVisor, Docker Engine, GeoDNS PowerDNS |
+| [cluster.md](cluster.md) | gVisor, Docker Engine, Caddy, PowerDNS |
 
 ## Reference
 
@@ -41,7 +41,7 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 
 ## Conventions
 
-- **Worktree root** — directory containing `Taskfile.yml`, `deployment.yml`, `inventories/`, and `internal/`.
+- **Worktree root** — directory containing `Taskfile.yml`, `cloud.yml`, `inventories/`, and `internal/`.
 - **`PROVIDER`** — inventory slug (`dev`, `prod`, …).
-- **`deployment_name`** — from `deployment.yml` (currently `sc`).
+- **`cloud_name`** — from `cloud.yml` (currently `sc`).
 - **`provider.platform: public`** — required; `vps` and `lima` are refused.

@@ -19,22 +19,22 @@ class VaultError(RuntimeError):
   pass
 
 
-def deployment_name() -> str:
-  path = ROOT / "deployment.yml"
+def cloud_name() -> str:
+  path = ROOT / "cloud.yml"
   try:
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
   except FileNotFoundError as error:
-    raise VaultError(f"Deployment configuration does not exist: {path}") from error
+    raise VaultError(f"Cloud configuration does not exist: {path}") from error
   except yaml.YAMLError as error:
-    raise VaultError(f"Deployment configuration is not valid YAML: {error}") from error
+    raise VaultError(f"Cloud configuration is not valid YAML: {error}") from error
 
   if not isinstance(document, dict):
-    raise VaultError("deployment.yml must contain a YAML mapping")
-  name = document.get("deployment_name")
+    raise VaultError("cloud.yml must contain a YAML mapping")
+  name = document.get("cloud_name")
   if not isinstance(name, str) or not name.strip():
-    raise VaultError("deployment.yml must contain a non-empty deployment_name")
+    raise VaultError("cloud.yml must contain a non-empty cloud_name")
   if Path(name).name != name or name in {".", ".."}:
-    raise VaultError("deployment_name must be a single path-safe name")
+    raise VaultError("cloud_name must be a single path-safe name")
   return name
 
 
@@ -92,6 +92,33 @@ def run_ansible_vault(*arguments: str, capture_output: bool = False) -> str:
   return result.stdout if result.stdout else ""
 
 
+def normalize_vault_document(document: dict) -> bool:
+  """Upgrade legacy deployment_vault / vault_prod_wireguard_* keys in place."""
+  changed = False
+
+  legacy_vault = document.pop("deployment_vault", None)
+  if legacy_vault is not None and "cloud_vault" not in document:
+    document["cloud_vault"] = legacy_vault
+    changed = True
+
+  vault = document.get("cloud_vault")
+  if isinstance(vault, dict) and "deployment_name" in vault:
+    vault["cloud_name"] = vault.pop("deployment_name")
+    changed = True
+
+  legacy_private = document.pop("vault_prod_wireguard_private_keys", None)
+  if legacy_private is not None and "vault_cloud_wireguard_private_keys" not in document:
+    document["vault_cloud_wireguard_private_keys"] = legacy_private
+    changed = True
+
+  legacy_public = document.pop("vault_prod_wireguard_public_keys", None)
+  if legacy_public is not None and "vault_cloud_wireguard_public_keys" not in document:
+    document["vault_cloud_wireguard_public_keys"] = legacy_public
+    changed = True
+
+  return changed
+
+
 def validate_document(content: str, provider: str) -> None:
   try:
     document = yaml.safe_load(content)
@@ -101,24 +128,26 @@ def validate_document(content: str, provider: str) -> None:
   if not isinstance(document, dict):
     raise VaultError("Vault root must be a YAML mapping")
 
-  vault = document.get("deployment_vault")
+  normalize_vault_document(document)
+
+  vault = document.get("cloud_vault")
   if not isinstance(vault, dict):
-    raise VaultError("Vault must contain a deployment_vault mapping")
-  if vault.get("deployment_name") != deployment_name():
+    raise VaultError("Vault must contain a cloud_vault mapping")
+  if vault.get("cloud_name") != cloud_name():
     raise VaultError(
-      f"deployment_vault.deployment_name must be {deployment_name()}"
+      f"cloud_vault.cloud_name must be {cloud_name()}"
     )
   if vault.get("provider") != provider:
-    raise VaultError(f"deployment_vault.provider must be {provider}")
+    raise VaultError(f"cloud_vault.provider must be {provider}")
   if not isinstance(vault.get("secrets"), dict):
-    raise VaultError("deployment_vault.secrets must be a mapping")
+    raise VaultError("cloud_vault.secrets must be a mapping")
 
 
 def empty_document(provider: str) -> str:
   return yaml.safe_dump(
     {
-      "deployment_vault": {
-        "deployment_name": deployment_name(),
+      "cloud_vault": {
+        "cloud_name": cloud_name(),
         "provider": provider,
         "secrets": {},
       }
@@ -163,7 +192,7 @@ def read_password(path: Path) -> str:
 
 def temporary_password_file(password: str):
   directory = tempfile.TemporaryDirectory(
-    prefix=f"{deployment_name()}-vault-password-"
+    prefix=f"{cloud_name()}-vault-password-"
   )
   path = Path(directory.name) / "password"
   path.write_text(f"{password}\n", encoding="utf-8")
@@ -172,7 +201,7 @@ def temporary_password_file(password: str):
 
 
 def vault_label(provider: str) -> str:
-  return f"{deployment_name()}-{provider}"
+  return f"{cloud_name()}-{provider}"
 
 
 def vault_id(provider: str, password_file: Path) -> str:
@@ -232,7 +261,7 @@ def encrypt_and_replace(
 
 def create_empty_vault(provider: str, password: str) -> None:
   destination = vault_path(provider)
-  prefix = f"{deployment_name()}-vault-init-"
+  prefix = f"{cloud_name()}-vault-init-"
   with tempfile.TemporaryDirectory(prefix=prefix) as directory_name:
     directory = Path(directory_name)
     plaintext = directory / "vault.yml"
@@ -279,7 +308,7 @@ def edit(provider: str) -> None:
   read_password(password_file)
   content = decrypt(encrypted_vault, provider, password_file)
 
-  prefix = f"{deployment_name()}-vault-{provider}-"
+  prefix = f"{cloud_name()}-vault-{provider}-"
   with tempfile.TemporaryDirectory(prefix=prefix) as name:
     plaintext = Path(name) / "vault.yml"
     plaintext.write_text(content, encoding="utf-8")
@@ -413,8 +442,8 @@ def ensure_wireguard(provider: str) -> None:
     raise VaultError(f"{platform_path} must contain a provider mapping")
   platform = provider_config.get("platform")
   if platform == "public":
-    private_key_field = "vault_prod_wireguard_private_keys"
-    public_key_field = "vault_prod_wireguard_public_keys"
+    private_key_field = "vault_cloud_wireguard_private_keys"
+    public_key_field = "vault_cloud_wireguard_public_keys"
   elif platform in {"lima", "vps"}:
     raise VaultError(
       f"provider.platform={platform} is refused; use provider.platform=public "
@@ -437,6 +466,7 @@ def ensure_wireguard(provider: str) -> None:
   if not isinstance(document, dict):
     raise VaultError("Vault root must be a YAML mapping")
 
+  migrate_changed = normalize_vault_document(document)
   required_names = ["macos", *deployment_host_names(provider)]
   private_keys = document.get(private_key_field)
   public_keys = document.get(public_key_field)
@@ -462,7 +492,7 @@ def ensure_wireguard(provider: str) -> None:
     public_keys[name] = generated_public
     changed = True
 
-  if not changed:
+  if not changed and not migrate_changed:
     print(f"WireGuard vault keys already present for {provider}")
     return
 
@@ -470,7 +500,7 @@ def ensure_wireguard(provider: str) -> None:
   document[public_key_field] = public_keys
   plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
 
-  prefix = f"{deployment_name()}-vault-wg-{provider}-"
+  prefix = f"{cloud_name()}-vault-wg-{provider}-"
   with tempfile.TemporaryDirectory(prefix=prefix) as name:
     plaintext = Path(name) / "vault.yml"
     plaintext.write_text(plaintext_body, encoding="utf-8")
@@ -485,11 +515,45 @@ def ensure_wireguard(provider: str) -> None:
   print(f"WireGuard vault keys ensured: {encrypted_vault.relative_to(ROOT)}")
 
 
+def migrate(provider: str) -> None:
+  password_file = password_path(provider)
+  encrypted_vault = vault_path(provider)
+  read_password(password_file)
+  content = run_ansible_vault(
+    "view",
+    "--vault-id",
+    vault_id(provider, password_file),
+    str(encrypted_vault),
+    capture_output=True,
+  )
+  document = yaml.safe_load(content)
+  if not isinstance(document, dict):
+    raise VaultError("Vault root must be a YAML mapping")
+  if not normalize_vault_document(document):
+    validate_document(content, provider)
+    print(f"Vault already uses cloud naming: {encrypted_vault.relative_to(ROOT)}")
+    return
+
+  plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
+  prefix = f"{cloud_name()}-vault-migrate-{provider}-"
+  with tempfile.TemporaryDirectory(prefix=prefix) as name:
+    plaintext = Path(name) / "vault.yml"
+    plaintext.write_text(plaintext_body, encoding="utf-8")
+    plaintext.chmod(0o600)
+    encrypt_and_replace(
+      plaintext,
+      encrypted_vault,
+      provider,
+      password_file,
+    )
+  print(f"Vault migrated to cloud naming: {encrypted_vault.relative_to(ROOT)}")
+
+
 def parse_arguments() -> argparse.Namespace:
-  parser = argparse.ArgumentParser(description="Manage deployment provider vaults")
+  parser = argparse.ArgumentParser(description="Manage provider vaults")
   parser.add_argument(
     "action",
-    choices=("init", "edit", "reset", "destroy", "ensure-wireguard"),
+    choices=("init", "edit", "reset", "destroy", "ensure-wireguard", "migrate"),
   )
   return parser.parse_args()
 
@@ -506,6 +570,8 @@ def main() -> int:
       reset(provider)
     elif arguments.action == "ensure-wireguard":
       ensure_wireguard(provider)
+    elif arguments.action == "migrate":
+      migrate(provider)
     else:
       destroy(provider)
   except VaultError as error:

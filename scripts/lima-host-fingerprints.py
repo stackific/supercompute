@@ -21,7 +21,7 @@ import yaml
 
 FINGERPRINT_PATTERN = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
 HOST_KEY_LINE = re.compile(
-  r"^(\s*prod_ssh_host_ed25519_sha256:\s*)(?P<q>[\"']?)(?P<value>[^\"'#\n]+)(?P=q)(\s*(?:#.*)?)?$"
+  r"^(\s*cloud_ssh_host_ed25519_sha256:\s*)(?P<q>[\"']?)(?P<value>[^\"'#\n]+)(?P=q)(\s*(?:#.*)?)?$"
 )
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -220,25 +220,25 @@ def load_lima_guest_targets(
     values = hosts[node]
     if values.get("wireguard_roaming") is not True:
       raise FingerprintError(f"{node}: node_lima_guest requires wireguard_roaming: true")
-    if values.get("prod_bootstrap_ssh_host"):
+    if values.get("cloud_bootstrap_ssh_host"):
       raise FingerprintError(
-        f"{node}: node_lima_guest must omit prod_bootstrap_ssh_host "
+        f"{node}: node_lima_guest must omit cloud_bootstrap_ssh_host "
         "(bootstrap uses Lima-local SSH)"
       )
-    if values.get("prod_wireguard_endpoint"):
-      raise FingerprintError(f"{node}: node_lima_guest must omit prod_wireguard_endpoint")
+    if values.get("cloud_wireguard_endpoint"):
+      raise FingerprintError(f"{node}: node_lima_guest must omit cloud_wireguard_endpoint")
     if node not in ports:
       raise FingerprintError(f"{node}: node_lima_guest requires a matching lima_nodes entry")
-    if "prod_ssh_host_ed25519_sha256" not in values:
+    if "cloud_ssh_host_ed25519_sha256" not in values:
       raise FingerprintError(
-        f"{node}: hosts.yml must declare prod_ssh_host_ed25519_sha256 "
+        f"{node}: hosts.yml must declare cloud_ssh_host_ed25519_sha256 "
         "(placeholder OK before lima-up)"
       )
     targets.append(
       {
         "node": node,
         "port": ports[node],
-        "current": values.get("prod_ssh_host_ed25519_sha256"),
+        "current": values.get("cloud_ssh_host_ed25519_sha256"),
       }
     )
 
@@ -278,7 +278,7 @@ def replace_host_fingerprint(text: str, node: str, fingerprint: str) -> str:
     if not still_in_host:
       if not replaced:
         raise FingerprintError(
-          f"{node}: could not find prod_ssh_host_ed25519_sha256 under the host block"
+          f"{node}: could not find cloud_ssh_host_ed25519_sha256 under the host block"
         )
       in_host = False
       host_indent = None
@@ -299,7 +299,7 @@ def replace_host_fingerprint(text: str, node: str, fingerprint: str) -> str:
     raise FingerprintError(f"{node}: host block not found in hosts.yml")
   if not replaced:
     raise FingerprintError(
-      f"{node}: could not find prod_ssh_host_ed25519_sha256 under the host block"
+      f"{node}: could not find cloud_ssh_host_ed25519_sha256 under the host block"
     )
   return "".join(output)
 

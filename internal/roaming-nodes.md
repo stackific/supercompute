@@ -3,13 +3,13 @@
 This guide is the operator runbook for adding Ubuntu **26.04** amd64 machines
 with a **changing public IP** (typically home lab VMs) to a **public-endpoint**
 WireGuard mesh (usually operator `prod`). Stable static hosts also run Ubuntu
-**26.04**, with fixed `prod_wireguard_endpoint` values.
+**26.04**, with fixed `cloud_wireguard_endpoint` values.
 
 **Lima guests (`node_lima_guest: true`, e.g. `dev` `roaming-1`) do not use this
 guide.** They still dial the public hub WireGuard `Endpoint`, but bootstrap
 Ansible uses **Lima-local SSH** (not Cloudflare). Fingerprints for those guests
 are auto-filled by `lima-up` / `lima-host-fingerprints` — see
-[setup-dev.md](setup-dev.md). Do not set `prod_bootstrap_ssh_host` on Lima
+[setup-dev.md](setup-dev.md). Do not set `cloud_bootstrap_ssh_host` on Lima
 guests.
 
 Inventory hostnames: stable public hosts as `static-1`, `static-2`, …; roaming as
@@ -26,9 +26,9 @@ WireGuard mesh is down. Cloudflare does **not** carry `scwg0` UDP; after join,
 day-2 mesh SSH uses WireGuard addresses.
 
 `up` syncs `.state` (known_hosts + mesh configs) from `hosts.yml`. For
-non-Lima `wireguard_roaming: true` it uses `prod_bootstrap_ssh_host` (not a
+non-Lima `wireguard_roaming: true` it uses `cloud_bootstrap_ssh_host` (not a
 public WG endpoint). Prepare the tunnel and prove SSH first, then fill inventory.
-Mesh address lives on each host as `prod_wireguard_address`.
+Mesh address lives on each host as `cloud_wireguard_address`.
 
 ## 0. What you are building
 
@@ -43,7 +43,7 @@ Mesh address lives on each host as `prod_wireguard_address`.
 
 1. Prod mesh already works: `task ssh PROVIDER=prod NODE=static-1` succeeds.
 2. Operator SSH key and vault as in [setup-prod.md](setup-prod.md).
-3. Domain zone on Cloudflare (same account as the tunnel), e.g. `stackific.com`.
+3. Domain zone on Cloudflare (same account as the tunnel), e.g. `example.com`.
 4. On the roaming Ubuntu VM: `cloudflared` already installed and the tunnel
    **connected** (you already have this running).
 
@@ -69,7 +69,7 @@ cloudflared tunnel info <TUNNEL_NAME_OR_ID>
 
 ## 3. Point a hostname at the tunnel (SSH published application)
 
-Goal: public hostname such as `roaming-1.stackific.com` routes through your
+Goal: public hostname such as `roaming-1.example.com` routes through your
 existing tunnel to **SSH on the same machine** as `cloudflared`.
 
 **Prefer the dashboard (§3.1).** Skip §3.4 unless you deliberately run the
@@ -86,7 +86,7 @@ tunnel from a YAML file on the VM.
 | Field | Value | Notes |
 | --- | --- | --- |
 | Subdomain | e.g. `ubu26-nas` or `roaming-1` | Becomes `<subdomain>.<domain>` |
-| Domain | your Cloudflare zone | e.g. `stackific.com` |
+| Domain | your Cloudflare zone | e.g. `example.com` |
 | Path | leave empty | |
 | Type / protocol | **SSH** | Not HTTP/HTTPS |
 | Service / URL | `localhost:22` | **Not** bare `22`. Means sshd on this host |
@@ -106,7 +106,7 @@ hostname exists. If missing, add the CNAME (proxied / orange cloud is fine for
 this SSH-over-Access path), or from a machine with tunnel credentials:
 
 ```sh
-cloudflared tunnel route dns <TUNNEL_NAME> roaming-1.stackific.com
+cloudflared tunnel route dns <TUNNEL_NAME> roaming-1.example.com
 ```
 
 If you changed a local config file on the VM (§3.4), restart the agent:
@@ -118,7 +118,7 @@ sudo systemctl restart cloudflared
 ### 3.3 (Recommended) Cloudflare Access application
 
 1. Zero Trust → **Access** → **Applications** → **Add self-hosted**.
-2. Application domain: the same hostname (e.g. `roaming-1.stackific.com`).
+2. Application domain: the same hostname (e.g. `roaming-1.example.com`).
 3. Policy: allow your email / IdP group (add a [service token](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/) later if Ansible must be non-interactive).
 4. Save.
 
@@ -131,7 +131,7 @@ in the Cloudflare dashboard. Dashboard-managed tunnels do not need this file.
 That file’s `ingress:` list is “when someone hits this public hostname, forward
 to this local service.” For SSH bootstrap you want one rule that says:
 
-- public name: `roaming-1.stackific.com`
+- public name: `roaming-1.example.com`
 - local target: SSH on this machine (`ssh://localhost:22`)
 
 Cloudflare also requires a final catch-all rule so unmatched hostnames get a
@@ -140,7 +140,7 @@ Cloudflare also requires a final catch-all rule so unmatched hostnames get a
 ```yaml
 # Fragment only — keep your existing tunnel: and credentials-file: lines.
 ingress:
-  - hostname: roaming-1.stackific.com
+  - hostname: roaming-1.example.com
     service: ssh://localhost:22
   - service: http_status:404   # must be last
 ```
@@ -162,9 +162,9 @@ command -v cloudflared
 Add to `~/.ssh/config` (adjust user and key to match [setup-prod.md](setup-prod.md)):
 
 ```sshconfig
-Host roaming-1.stackific.com
+Host roaming-1.example.com
   User ops
-  IdentityFile ~/.ssh/<deployment_name>-prod
+  IdentityFile ~/.ssh/<cloud_name>-prod
   IdentitiesOnly yes
   ProxyCommand cloudflared access ssh --hostname %h
 ```
@@ -172,18 +172,18 @@ Host roaming-1.stackific.com
 Example with a real hostname:
 
 ```sshconfig
-Host ubu26-nas.stackific.com
+Host ubu26-nas.example.com
   User ops
   IdentityFile ~/.ssh/sc-prod
   IdentitiesOnly yes
   ProxyCommand cloudflared access ssh --hostname %h
 ```
 
-Also add `ubu26-desk.stackific.com` the same way when that roaming host exists.
+Also add `ubu26-desk.example.com` the same way when that roaming host exists.
 ## 5. Prove SSH before inventory
 
 ```sh
-ssh roaming-1.stackific.com true
+ssh roaming-1.example.com true
 ```
 
 The first connection may open a browser for Access login. Fix Access policy or
@@ -193,7 +193,7 @@ login after Access).
 Record the SSH **host** key fingerprint (for inventory):
 
 ```sh
-ssh roaming-1.stackific.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+ssh roaming-1.example.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
 ```
 
 Store the full `SHA256:…` line.
@@ -215,19 +215,19 @@ In `inventories/prod/hosts.yml`:
 ```yaml
 roaming-1:
   wireguard_roaming: true
-  prod_bootstrap_ssh_host: "roaming-1.stackific.com"
-  prod_ssh_host_ed25519_sha256: "SHA256:…"
-  prod_wireguard_address: 10.217.79.21   # free address in 10.217.79.0/24
-  # no prod_wireguard_endpoint — roaming never publishes a WG dial-in address
+  cloud_bootstrap_ssh_host: "roaming-1.example.com"
+  cloud_ssh_host_ed25519_sha256: "SHA256:…"
+  cloud_wireguard_address: 10.217.79.21   # free address in 10.217.79.0/24
+  # no cloud_wireguard_endpoint — roaming never publishes a WG dial-in address
   # OS defaults match prod (Ubuntu 26.04 amd64); override only if a host differs
 ```
 
-`prod_bootstrap_ssh_host` must be the Cloudflare hostname from §3 (the same
+`cloud_bootstrap_ssh_host` must be the Cloudflare hostname from §3 (the same
 name as in `~/.ssh/config`).
 
 Add or remove `roaming-N` only in `hosts.yml`; peer configs, Vault keys,
-hub `AllowedIPs`, GeoDNS NA/SA answers, and mesh prove all follow every host
-with `wireguard_roaming: true`. No template hardcoding of `roaming-1` /
+hub `AllowedIPs`, and mesh verification all follow every host with
+`wireguard_roaming: true`. No template hardcoding of `roaming-1` /
 `roaming-2` — a third roaming node is the same inventory pattern plus
 `up` / `up`.
 
@@ -246,7 +246,7 @@ inbound UDP **51830** on the home router.
 | roaming ↔ that static hub | direct (roaming dials `Endpoint`) |
 
 Hub selection: first non-roaming host in the static set (`static-1` by sort
-order) → `prod_wireguard_hub`. On `up`, Ansible:
+order) → `cloud_wireguard_hub`. On `up`, Ansible:
 
 1. Enables hub `net.ipv4.ip_forward` (sysctl drop-in + live apply) and a
    FORWARD accept on the WG interface (`wg-quick` PostUp re-adds iptables on
@@ -262,7 +262,7 @@ order) → `prod_wireguard_hub`. On `up`, Ansible:
    syncconf).
 5. Proves mesh SSH for **every** peer pair, including spoke↔spoke.
 
-**Ansible note:** SSH to `prod_bootstrap_ssh_host` must use the Cloudflare
+**Ansible note:** SSH to `cloud_bootstrap_ssh_host` must use the Cloudflare
 `ProxyCommand` (`cloudflared access ssh`). Plain SSH without `cloudflared` fails.
 
 ## 7. Provider firewall on each static public host
@@ -282,18 +282,17 @@ from Cloudflare bootstrap to roaming.
 3. `task up PROVIDER=prod`
    - Configures static hosts + Mac with roaming peer (**no** Endpoint on stables).
    - Reaches roaming via mesh if already up, else via
-     `prod_bootstrap_ssh_host` (Cloudflare Tunnel SSH).
+     `cloud_bootstrap_ssh_host` (Cloudflare Tunnel SSH).
    - On roaming: WireGuard with `Endpoint` + `PersistentKeepalive = 25` toward
      each static hub; hub peer `AllowedIPs` include Mac + other roaming `/32`s.
    - Syncs live peers with `wg syncconf` (see §6).
    - Mesh prove must include `roaming-N` ↔ `roaming-M` via the hub.
 4. Spot-check: from Mac `task ssh PROVIDER=prod NODE=roaming-1` (and
    `NODE=roaming-2` if present).
-5. Optional cluster stack / GeoDNS: `task up PROVIDER=prod` (see
-   [setup-prod.md](setup-prod.md) — gVisor, Docker Engine, PowerDNS; NA/SA
-   answers randomly among all `wireguard_roaming` mesh IPs).
+5. Optional cluster stack: `task up PROVIDER=prod` (see
+   [setup-prod.md](setup-prod.md) — gVisor, Docker Engine, Caddy, and PowerDNS).
 6. Add another roaming VM: new hostname + inventory + vault keys, then
-   `up` (and `up` if you want GeoDNS weight / node packages).
+   `up` (and `task up PROVIDER=prod` if you want node packages).
 
 ## 9. Day-2 operations
 

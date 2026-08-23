@@ -8,25 +8,17 @@
 | --- | --- |
 | **gVisor** | `runsc` from gvisor.dev apt repo |
 | **Docker Engine** | `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin` from Docker’s Ubuntu repo |
-| **PowerDNS** | `pdns-server`, `pdns-backend-geoip` |
-| **GeoIP** (optional) | `geoipupdate`, MaxMind `GeoLite2-Country`, systemd timer — only when vault has both `maxmind_account_id` and `maxmind_license_key` |
+| **PowerDNS** | `pdns-server`, `dnsutils` |
+| **Caddy** | `caddy` package only; its systemd service remains disabled and stopped |
 
-Caddy was removed from the active install path; `down` still cleans legacy Caddy files if present.
+## DNS boundary
 
-## GeoDNS defaults
+`cluster_node` installs and starts PowerDNS but deliberately does not create DNS
+zones, configure an application hostname, or perform DNS lookups. DNS
+delegation remains an external operator responsibility.
 
-From `roles/cluster_node/defaults/main.yml`:
-
-| Setting | Default |
-| --- | --- |
-| Public zone apex | `test-app.stackific.com` |
-| NS hostname | `ns1.stackific.com` (parent zone on `stackific.com`, **DNS-only / grey cloud**) |
-| Static hub host | `static-1` |
-| PowerDNS listen | Mesh IP + static public IP when `prod_wireguard_endpoint` is set |
-
-PowerDNS serves on the mesh for internal use and on the static VPS public IP so Cloudflare NS delegation can reach authoritative DNS.
-
-**HTTP is not served by this role** — mesh-only application binding is an operator concern. Parent zone must delegate with **NS records**, not orange-cloud CNAME chains that break GeoDNS.
+Set the externally managed nameserver hostname in `cloud.yml` with
+`cloud_nameserver_hostname`; its default is `ns.example.com`.
 
 ## Architecture mapping
 
@@ -47,23 +39,9 @@ task down PROVIDER=<slug> CONFIRM=down-<slug>
 ## Prerequisites
 
 1. Working inventory and Lima guests (when used).
-2. Vault secrets for MaxMind only when continent GeoDNS is required (both `maxmind_account_id` and `maxmind_license_key` in `deployment_vault.secrets`).
-3. Parent-zone DNS: NS for delegated zone → `ns1.stackific.com`; A records for `ns1` at parent (DNS-only).
-4. Firewall: UDP/TCP **53** on the static hub public IP if external DNS resolution is required.
-
-## Verification hints
-
-From a mesh-connected host or Mac:
-
-```sh
-task ssh PROVIDER=dev NODE=static-1
-dig @10.217.80.11 test-app.stackific.com   # example mesh IP
-```
-
-Exact addresses depend on inventory.
+2. Any required external DNS delegation and firewall rules, managed outside this role.
 
 ## Related
 
-- [setup-prod.md](setup-prod.md) — production DNS and firewall sections
-- [vault.md](vault.md) — MaxMind credentials
+- [setup-prod.md](setup-prod.md) — production firewall guidance
 - [ansible.md](ansible.md) — `cluster_node` role

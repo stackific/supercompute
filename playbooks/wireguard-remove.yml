@@ -14,6 +14,6 @@
           - provider.mode == 'local'
         fail_msg: >-
           WireGuard wg-remove for PROVIDER={{ inventory_slug }} requires a Lima
-          local provider. Production WireGuard is the next slice.
+          local provider. Public-endpoint WireGuard is the next slice.
   roles:
     - wireguard_remove

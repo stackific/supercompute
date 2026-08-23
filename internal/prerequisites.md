@@ -20,14 +20,14 @@ task setup
 
 ## Deployment namespace
 
-`deployment.yml` at the worktree root defines `deployment_name` (currently `sc`). This name prefixes:
+`cloud.yml` at the worktree root defines `cloud_name` (currently `sc`). This name prefixes:
 
-- SSH key path: `~/.ssh/<deployment_name>-<provider>`
-- Lima runtime home: `~/.lima/.<deployment_name>-<provider>`
+- SSH key path: `~/.ssh/<cloud_name>-<provider>`
+- Lima runtime home: `~/.lima/.<cloud_name>-<provider>`
 - WireGuard LaunchDaemon label on macOS
-- Vault ID label: `<deployment_name>-<provider>`
+- Vault ID label: `<cloud_name>-<provider>`
 
-Changing `deployment_name` after go-live creates new paths and labels; it does not migrate existing state.
+Changing `cloud_name` after go-live creates new paths and labels; it does not migrate existing state.
 
 ## Operator SSH identity
 
@@ -35,12 +35,12 @@ Create once per deployment (empty passphrase; store in password manager):
 
 ```sh
 ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/<deployment_name>-<provider> \
-  -C "<deployment_name> <provider>"
-ssh-add ~/.ssh/<deployment_name>-<provider>
+  -f ~/.ssh/<cloud_name>-<provider> \
+  -C "<cloud_name> <provider>"
+ssh-add ~/.ssh/<cloud_name>-<provider>
 ```
 
-Inventory references this key via `prod_ssh_private_key_file` in `group_vars/all/main.yml`.
+Inventory references this key via `cloud_ssh_private_key_file` in `group_vars/all/main.yml`.
 
 ## Node OS
 
@@ -65,4 +65,3 @@ Not installed by this repo but required for full stack operation:
 - **Public IP** on the static hub
 - **External Postgres** for application workloads
 - **Cloudflare** zone and tunnel for non-Lima roaming
-- **MaxMind** account (optional) for continent GeoDNS when both `maxmind_account_id` and `maxmind_license_key` are in vault

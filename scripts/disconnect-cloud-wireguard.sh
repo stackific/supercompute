@@ -22,29 +22,29 @@ provider_platform="$("${python_runtime}" "${project_dir}/scripts/provider_platfo
   exit 2
 }
 
-deployment_name="$("${python_runtime}" "${project_dir}/scripts/deployment_name.py")"
-launchd_label="com.stackific.${deployment_name}.${requested_provider}.wireguard"
+cloud_name="$("${python_runtime}" "${project_dir}/scripts/cloud_name.py")"
+launchd_label="com.stackific.${cloud_name}.${requested_provider}.wireguard"
 launchd_path="/Library/LaunchDaemons/${launchd_label}.plist"
 
-if [[ "${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_MODE:-0}" == "1" ]]; then
-  [[ -n "${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_PROJECT_DIR:-}" ]] || {
-    echo "DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_PROJECT_DIR is required in test mode." >&2
+if [[ "${DEPLOY_CLOUD_WG_DISCONNECT_TEST_MODE:-0}" == "1" ]]; then
+  [[ -n "${DEPLOY_CLOUD_WG_DISCONNECT_TEST_PROJECT_DIR:-}" ]] || {
+    echo "DEPLOY_CLOUD_WG_DISCONNECT_TEST_PROJECT_DIR is required in test mode." >&2
     exit 2
   }
-  [[ -n "${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_RUNTIME_DIR:-}" ]] || {
-    echo "DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_RUNTIME_DIR is required in test mode." >&2
+  [[ -n "${DEPLOY_CLOUD_WG_DISCONNECT_TEST_RUNTIME_DIR:-}" ]] || {
+    echo "DEPLOY_CLOUD_WG_DISCONNECT_TEST_RUNTIME_DIR is required in test mode." >&2
     exit 2
   }
-  [[ -n "${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_LAUNCHD_PATH:-}" ]] || {
-    echo "DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_LAUNCHD_PATH is required in test mode." >&2
+  [[ -n "${DEPLOY_CLOUD_WG_DISCONNECT_TEST_LAUNCHD_PATH:-}" ]] || {
+    echo "DEPLOY_CLOUD_WG_DISCONNECT_TEST_LAUNCHD_PATH is required in test mode." >&2
     exit 2
   }
-  project_dir="${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_PROJECT_DIR}"
-  runtime_dir="${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_RUNTIME_DIR}"
-  launchd_path="${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_LAUNCHD_PATH}"
+  project_dir="${DEPLOY_CLOUD_WG_DISCONNECT_TEST_PROJECT_DIR}"
+  runtime_dir="${DEPLOY_CLOUD_WG_DISCONNECT_TEST_RUNTIME_DIR}"
+  launchd_path="${DEPLOY_CLOUD_WG_DISCONNECT_TEST_LAUNCHD_PATH}"
   expected_plist_owner="$(id -un):$(id -gn)"
-elif [[ -n "${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_PROJECT_DIR:-}${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_RUNTIME_DIR:-}${DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_LAUNCHD_PATH:-}" ]]; then
-  echo "Production disconnect test overrides require DEPLOY_CLOUD_PROD_WG_DISCONNECT_TEST_MODE=1." >&2
+elif [[ -n "${DEPLOY_CLOUD_WG_DISCONNECT_TEST_PROJECT_DIR:-}${DEPLOY_CLOUD_WG_DISCONNECT_TEST_RUNTIME_DIR:-}${DEPLOY_CLOUD_WG_DISCONNECT_TEST_LAUNCHD_PATH:-}" ]]; then
+  echo "Production disconnect test overrides require DEPLOY_CLOUD_WG_DISCONNECT_TEST_MODE=1." >&2
   exit 2
 fi
 
@@ -56,8 +56,8 @@ import yaml
 root = Path("${project_dir}")
 provider = "${requested_provider}"
 main = yaml.safe_load((root / "inventories" / provider / "group_vars/all/main.yml").read_text())
-address = main["prod_wireguard_controller_address"]
-iface = main["prod_wireguard_interface"]
+address = main["cloud_wireguard_controller_address"]
+iface = main["cloud_wireguard_interface"]
 state = root / ".state" / provider
 print(address, iface, state / "wireguard" / f"{iface}.conf", state / "known_hosts")
 PY
@@ -101,7 +101,7 @@ if [[ -f "${launchd_path}" && ! -L "${launchd_path}" ]]; then
 elif ifconfig | awk -v expected="${controller_address}" \
   '$1 == "inet" && $2 == expected { found = 1 } END { exit !found }'; then
   echo "LaunchDaemon ${launchd_path} is missing but ${controller_address} is active."
-  echo "Disconnecting via ${config_path} only (common after renaming deployment_name)."
+  echo "Disconnecting via ${config_path} only (common after renaming cloud_name)."
   echo "Remove any orphaned /Library/LaunchDaemons/com.stackific.*.prod.wireguard.plist manually if present."
 else
   echo "Production controller already disconnected for label ${launchd_label} (no ${launchd_path}; ${controller_address} is inactive)."

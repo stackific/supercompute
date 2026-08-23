@@ -1,3 +1,0 @@
----
-- name: Apply production WireGuard node lifecycle
-  ansible.builtin.include_tasks: "{{ prod_wireguard_lifecycle | default('present') }}.yml"

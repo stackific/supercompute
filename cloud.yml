@@ -1,0 +1,10 @@
+---
+# Stable customer cloud namespace for this installation.
+# Changing it later creates new unit names, local paths, labels, and object
+# prefixes; it does not migrate existing state.
+# Must match the Ansible Vault ID label on inventories/<provider>/group_vars/all/vault.yml
+# (encrypt header …;AES256;<cloud_name>-<provider>) and cloud_vault.cloud_name.
+cloud_name: sc
+
+# Nameserver hostname for DNS delegation managed outside this automation.
+cloud_nameserver_hostname: ns1.stackific.com

@@ -1,5 +1,0 @@
----
-- name: Restart PowerDNS
-  ansible.builtin.systemd:
-    name: "{{ cluster_pdns_service }}"
-    state: restarted

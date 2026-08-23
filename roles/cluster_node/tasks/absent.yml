@@ -1,10 +1,8 @@
----
-- name: Stop and disable Caddy if a prior cluster-up left it
-  ansible.builtin.systemd:
-    name: "{{ cluster_caddy_service }}"
-    enabled: false
-    state: stopped
-  failed_when: false
+- name: Remove Caddy package before the cluster stack
+  ansible.builtin.apt:
+    name: caddy
+    state: absent
+    purge: true
 
 - name: Stop and disable Docker
   ansible.builtin.systemd:
@@ -20,32 +18,11 @@
     state: stopped
   failed_when: false
 
-- name: Stop and disable geoipupdate timer
-  ansible.builtin.systemd:
-    name: "{{ cluster_geoip_systemd_timer }}"
-    enabled: false
-    state: stopped
-  failed_when: false
-
-- name: Remove geoipupdate systemd units
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "/etc/systemd/system/{{ cluster_geoip_systemd_timer }}"
-    - "/etc/systemd/system/{{ cluster_geoip_systemd_service }}"
-  register: cluster_geoip_units_removed
-
-- name: Reload systemd after removing geoipupdate units
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: cluster_geoip_units_removed is changed
-
 - name: Remove cluster-managed packages
   ansible.builtin.apt:
     name: >-
       {{
-        [cluster_gvisor_package, cluster_caddy_package]
+        [cluster_gvisor_package]
         + cluster_docker_packages
         + cluster_pdns_packages
       }}
@@ -68,35 +45,6 @@
   loop:
     - "{{ cluster_docker_sources_path }}"
     - "{{ cluster_docker_keyring_path }}"
-
-- name: Remove Caddy apt source, keyring, and config if left from a prior install
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "{{ cluster_caddy_list_path }}"
-    - "{{ cluster_caddy_keyring_path }}"
-    - "{{ cluster_caddy_config_path }}"
-
-- name: Remove PowerDNS config and zone data written by cluster-up
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - "{{ cluster_pdns_conf_path }}"
-    - "{{ cluster_pdns_geoip_zones_path }}"
-    - "{{ cluster_pdns_bind_named_conf_path }}"
-    - "{{ cluster_pdns_bind_zone_path }}"
-
-- name: Remove MaxMind geoipupdate config written by cluster-up
-  ansible.builtin.file:
-    path: "{{ cluster_geoip_conf_path }}"
-    state: absent
-
-- name: Remove GeoLite2 Country database downloaded by cluster-up
-  ansible.builtin.file:
-    path: "{{ cluster_geoip_db_path }}"
-    state: absent
 
 - name: Refresh apt cache after removing third-party sources
   ansible.builtin.apt:

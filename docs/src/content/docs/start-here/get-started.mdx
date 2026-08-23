@@ -5,7 +5,7 @@ description: Install the toolchain and bring up a Supercompute dev mesh on your 
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-Supercompute is a free geo-replicated purpose-built cloud for AI-first workloads that you can self-host on own commodity hardware, inside of your laptop's VM, inside of your NAS. You can achieve high availability even with just _two_ nodes. It was created by [Stackific Inc.](https://stackific.com/).
+Supercompute is a free geo-replicated purpose-built cloud for AI-first workloads that you can self-host on own commodity hardware, inside of your laptop's VM, inside of your NAS. You can achieve high availability even with just _two_ nodes. It was created by Stackific Inc.
 
 All you need is a static IP (because users need to reach you) and an external Postgres.
 
@@ -48,7 +48,7 @@ Edit `inventories/dev/hosts.yml` and fill placeholders for `static-1` (public IP
 ### Create the Lima guest
 
 ```sh
-task lima-up PROVIDER=dev
+task lima-up
 ```
 
 ### Vault and bring up
@@ -58,6 +58,26 @@ task vault-init PROVIDER=dev
 task up PROVIDER=dev
 task ssh PROVIDER=dev NODE=static-1
 task ssh PROVIDER=dev NODE=roaming-1
+```
+
+### Reset local dev
+
+To discard the local Lima guest, controller WireGuard state, `.state/dev`, and
+the dev vault, run:
+
+```sh
+task dev-reset CONFIRM=reset-dev
+```
+
+This is destructive and prompts for the macOS become password. It does not
+change the remote `static-1` server or delete the dedicated Lima runtime home.
+Because it deletes `inventories/dev/group_vars/all/vault.yml` and
+`inventories/dev/.vault-pass`, recreate the vault before bringing dev back up:
+
+```sh
+task vault-init PROVIDER=dev
+task lima-up
+task up PROVIDER=dev
 ```
 
 ## Next steps

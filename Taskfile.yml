@@ -21,8 +21,16 @@ includes:
 
 tasks:
   default:
-    desc: List available tasks
+    desc: List available tasks and task-specific parameters
     silent: true
     cmds:
       - task --list
-
+      - |
+        printf '%s\n' \
+          '' \
+          'Task-specific parameters (provider-scoped tasks require PROVIDER=<slug>):' \
+          '  dev-reset      CONFIRM=reset-dev' \
+          '  lima-destroy   CONFIRM=destroy-lima-dev' \
+          '  ssh            NODE=<inventory_hostname>' \
+          '  vault-reset    CONFIRM=reset-vault-<slug>' \
+          '  vault-destroy  CONFIRM=destroy-vault-<slug>'

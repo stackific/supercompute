@@ -6,8 +6,8 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 
 | Playbook | Purpose |
 | --- | --- |
-| `playbooks/prod-wireguard-up.yml` | Classify static/roaming nodes; hub selection; controller + nodes |
-| `playbooks/prod-wireguard-status.yml` | Mesh status |
+| `playbooks/cloud-wireguard-up.yml` | Classify static/roaming nodes; hub selection; controller + nodes |
+| `playbooks/cloud-wireguard-status.yml` | Mesh status |
 | `playbooks/lima-up.yml` | Create/start `node_lima_guest` VMs |
 | `playbooks/lima-status.yml` | Lima resource status |
 | `playbooks/lima-destroy.yml` | Destroy Lima guests |
@@ -20,27 +20,28 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 
 | Role | Purpose |
 | --- | --- |
-| `prod_wireguard_controller` | macOS controller `scwg0`, LaunchDaemon |
-| `prod_wireguard_node` | Ubuntu nodes: WireGuard, hub forwarding, syncconf |
+| `cloud_wireguard_controller` | macOS controller `scwg0`, LaunchDaemon |
+| `cloud_wireguard_node` | Ubuntu nodes: WireGuard, hub forwarding, syncconf |
 | `lima` | Lima guest lifecycle |
-| `cluster_node` | gVisor, Docker CE, PowerDNS GeoIP, geoipupdate |
+| `cluster_node` | gVisor, Docker CE, Caddy, PowerDNS |
 | `wireguard_verify` | Post-up verification |
 
-## `prod-wireguard-up` flow (summary)
+## `cloud-wireguard-up` flow (summary)
 
-1. **localhost** — Assert `provider.platform: public`; classify static vs roaming; pick `prod_wireguard_hub` (first static host).
-2. **localhost** — `prod_wireguard_controller` role.
+1. **localhost** — Assert `provider.platform: public`; classify static vs roaming; pick `cloud_wireguard_hub` (first static host).
+2. **localhost** — `cloud_wireguard_controller` role.
 3. **localhost** — Probe mesh SSH; choose bootstrap vs mesh transport per node.
-4. **wireguard_nodes** — `prod_wireguard_node` with bootstrap SSH (public, Cloudflare, or Lima-local).
+4. **wireguard_nodes** — `cloud_wireguard_node` with bootstrap SSH (public, Cloudflare, or Lima-local).
 
 ## `cluster_node` role
 
 Controlled by `cluster_lifecycle`:
 
-- **`present`** — Install packages, configure PowerDNS listen addresses, GeoIP timer, Docker, gVisor.
+- **`present`** — Install gVisor, Docker, PowerDNS, and the disabled Caddy service.
 - **`absent`** — Remove cluster software; leave WireGuard intact.
 
-Defaults in `roles/cluster_node/defaults/main.yml` (zone apex, NS hostname, hub host).
+The externally managed nameserver hostname is `cloud_nameserver_hostname` in
+`cloud.yml`.
 
 ## Inventory groups used
 

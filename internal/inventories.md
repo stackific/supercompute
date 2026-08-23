@@ -33,21 +33,21 @@ provider:
 - **`platform: vps`** — refused (rename to `public`).
 - **`platform: lima`** — refused (use `node_lima_guest` under `public`).
 
-`provider.mode: remote` is required for `prod-wireguard-up`.
+`provider.mode: remote` is required for `cloud-wireguard-up`.
 
 ## Per-host variables (`hosts.yml`)
 
 | Variable | Static public | Roaming (non-Lima) | Lima guest |
 | --- | --- | --- | --- |
-| `prod_wireguard_address` | Mesh IP | Mesh IP | Mesh IP |
-| `prod_wireguard_endpoint` | Public IPv4 | — | — |
-| `prod_ssh_host_ed25519_sha256` | Manual | Manual | Auto via `lima-up` |
+| `cloud_wireguard_address` | Mesh IP | Mesh IP | Mesh IP |
+| `cloud_wireguard_endpoint` | Public IPv4 | — | — |
+| `cloud_ssh_host_ed25519_sha256` | Manual | Manual | Auto via `lima-up` |
 | `wireguard_roaming` | — | `true` | `true` |
 | `node_lima_guest` | — | — | `true` |
 | `node_host_architecture` | `x86_64` | `x86_64` | `aarch64` |
-| `prod_bootstrap_ssh_host` | — | Cloudflare hostname | — |
+| `cloud_bootstrap_ssh_host` | — | Cloudflare hostname | — |
 
-Lima guests **must not** set `prod_bootstrap_ssh_host` or `prod_wireguard_endpoint`.
+Lima guests **must not** set `cloud_bootstrap_ssh_host` or `cloud_wireguard_endpoint`.
 
 ## Mesh CIDR
 
@@ -58,7 +58,7 @@ Set in `group_vars/all/main.yml`:
 | `dev` | `10.217.80.0/24` |
 | `prod` | `10.217.79.0/24` (operator choice) |
 
-Controller address is usually `.1` (`prod_wireguard_controller_address`).
+Controller address is usually `.1` (`cloud_wireguard_controller_address`).
 
 ## Lima node list
 

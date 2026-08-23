@@ -23,18 +23,18 @@ task setup
 1. Create Ubuntu 26.04 `x86_64` on a provider with a public IP.
 2. Follow host prep in [setup-prod.md](setup-prod.md) (SSH user, operator key, sudo).
 3. Fill `inventories/dev/hosts.yml` placeholders for `static-1`:
-   - `prod_wireguard_endpoint`
-   - `prod_ssh_host_ed25519_sha256`
+   - `cloud_wireguard_endpoint`
+   - `cloud_ssh_host_ed25519_sha256`
 4. Open UDP **51830** on the static host for roaming egress.
 
 ## 4. Lima roaming guest
 
 ```sh
-task lima-up PROVIDER=dev
-task lima-status PROVIDER=dev
+task lima-up
+task lima-status
 ```
 
-`lima-up` auto-fills `prod_ssh_host_ed25519_sha256` for `node_lima_guest` hosts.
+`lima-up` auto-fills `cloud_ssh_host_ed25519_sha256` for `node_lima_guest` hosts.
 
 ## 5. Vault and mesh
 
@@ -46,13 +46,28 @@ task ssh PROVIDER=dev NODE=static-1
 task ssh PROVIDER=dev NODE=roaming-1
 ```
 
+## Reset dev
+
+For a destructive local reset, including the dev vault and password:
+
+```sh
+task dev-reset CONFIRM=reset-dev
+task vault-init PROVIDER=dev
+task lima-up
+task up PROVIDER=dev
+```
+
+`dev-reset` does not change the remote static host or delete the dedicated
+Lima runtime home.
+
 ## 6. Optional cluster stack
 
 ```sh
 task up PROVIDER=dev
 ```
 
-Installs gVisor, Docker Engine, and GeoDNS PowerDNS on deployment nodes. Requires MaxMind secrets in vault — see [cluster.md](cluster.md).
+Installs gVisor, Docker Engine, Caddy, and PowerDNS on deployment nodes. See
+[cluster.md](cluster.md).
 
 ## Next steps
 

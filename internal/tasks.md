@@ -1,6 +1,7 @@
 # Task reference
 
 All tasks run from the **worktree root**. Most require `PROVIDER=<inventory_slug>`.
+Lima tasks and `dev-reset` are dev-only and do not accept `PROVIDER`.
 
 List everything:
 
@@ -30,10 +31,11 @@ Only affects hosts with `node_lima_guest: true`.
 
 | Task | Description |
 | --- | --- |
-| `task lima-up PROVIDER=<slug>` | Create/start guests; auto-fill fingerprints |
-| `task lima-host-fingerprints PROVIDER=<slug>` | Capture ED25519 fingerprints into `hosts.yml` |
-| `task lima-status PROVIDER=<slug>` | Resource table without creating state |
-| `task lima-destroy PROVIDER=<slug> CONFIRM=destroy-lima-<slug>` | Destroy guests and disks |
+| `task lima-up` | Create/start dev guests; auto-fill fingerprints |
+| `task lima-host-fingerprints` | Capture dev guest ED25519 fingerprints into `hosts.yml` |
+| `task lima-status` | Dev resource table without creating state |
+| `task lima-destroy CONFIRM=destroy-lima-dev` | Destroy dev guests and disks |
+| `task dev-reset CONFIRM=reset-dev` | Disconnect dev controller WireGuard, destroy Lima guests, delete `.state/dev`, and delete the dev vault/password |
 
 ## Lifecycle (`taskfiles/cluster.yml`)
 
@@ -58,8 +60,17 @@ Requires `provider.platform: public`. Refuses `vps` and `lima`.
 
 ```sh
 task setup
-task lima-up PROVIDER=dev
+task lima-up
 task vault-init PROVIDER=dev
+task up PROVIDER=dev
+```
+
+**Reset dev:**
+
+```sh
+task dev-reset CONFIRM=reset-dev
+task vault-init PROVIDER=dev
+task lima-up
 task up PROVIDER=dev
 ```
 

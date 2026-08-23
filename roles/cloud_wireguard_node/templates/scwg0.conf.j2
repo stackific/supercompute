@@ -1,10 +1,10 @@
 [Interface]
-PrivateKey = {{ vault_prod_wireguard_private_keys[inventory_hostname] }}
-Address = {{ prod_wireguard_address }}/{{ prod_wireguard_prefix_length }}
-ListenPort = {{ prod_wireguard_listen_port }}
+PrivateKey = {{ vault_cloud_wireguard_private_keys[inventory_hostname] }}
+Address = {{ cloud_wireguard_address }}/{{ cloud_wireguard_prefix_length }}
+ListenPort = {{ cloud_wireguard_listen_port }}
 SaveConfig = false
-{% set hub = hostvars['localhost'].prod_wireguard_hub | default('') %}
-{% set roaming_nodes = hostvars['localhost'].prod_wireguard_roaming_nodes | default([]) %}
+{% set hub = hostvars['localhost'].cloud_wireguard_hub | default('') %}
+{% set roaming_nodes = hostvars['localhost'].cloud_wireguard_roaming_nodes | default([]) %}
 {% set use_hub = roaming_nodes | length > 0 %}
 {% set self_roaming = wireguard_roaming | default(false) | bool %}
 {% if use_hub and inventory_hostname == hub %}
@@ -17,8 +17,8 @@ PostDown = iptables -D FORWARD -i %i -o %i -j ACCEPT 2>/dev/null || true
 [Peer]
 # macOS controller. Its current endpoint is learned from the authenticated
 # keepalive it sends, so a controller with a dynamic public address works.
-PublicKey = {{ vault_prod_wireguard_public_keys.macos }}
-AllowedIPs = {{ prod_wireguard_controller_address }}/32
+PublicKey = {{ vault_cloud_wireguard_public_keys.macos }}
+AllowedIPs = {{ cloud_wireguard_controller_address }}/32
 {% endif %}
 {% for peer in groups['wireguard_nodes'] | sort if peer != inventory_hostname %}
 {% set peer_roaming = hostvars[peer].wireguard_roaming | default(false) | bool %}
@@ -27,30 +27,30 @@ AllowedIPs = {{ prod_wireguard_controller_address }}/32
 {% elif self_roaming %}
 {% set ns = namespace(other_roaming_ips=[]) %}
 {% for r in roaming_nodes if r != inventory_hostname %}
-{% if hostvars[r].prod_wireguard_address is defined
-   and (hostvars[r].prod_wireguard_address | string | length) > 0 %}
-{% set _ = ns.other_roaming_ips.append(hostvars[r].prod_wireguard_address ~ '/32') %}
+{% if hostvars[r].cloud_wireguard_address is defined
+   and (hostvars[r].cloud_wireguard_address | string | length) > 0 %}
+{% set _ = ns.other_roaming_ips.append(hostvars[r].cloud_wireguard_address ~ '/32') %}
 {% endif %}
 {% endfor %}
-{% set allowed = [hostvars[peer].prod_wireguard_address ~ '/32'] + (
-  ([prod_wireguard_controller_address ~ '/32'] + ns.other_roaming_ips)
+{% set allowed = [hostvars[peer].cloud_wireguard_address ~ '/32'] + (
+  ([cloud_wireguard_controller_address ~ '/32'] + ns.other_roaming_ips)
   if (use_hub and peer == hub) else []
 ) %}
 
 [Peer]
 # {{ peer }}{{ ' (static hub; Mac + other roaming via hub)' if (use_hub and peer == hub) else '' }}
-PublicKey = {{ vault_prod_wireguard_public_keys[peer] }}
+PublicKey = {{ vault_cloud_wireguard_public_keys[peer] }}
 AllowedIPs = {{ allowed | join(', ') }}
-Endpoint = {{ hostvars[peer].prod_wireguard_endpoint }}:{{ prod_wireguard_listen_port }}
+Endpoint = {{ hostvars[peer].cloud_wireguard_endpoint }}:{{ cloud_wireguard_listen_port }}
 PersistentKeepalive = 25
 {% else %}
 
 [Peer]
 # {{ peer }}{{ ' (roaming; initiates)' if peer_roaming else '' }}
-PublicKey = {{ vault_prod_wireguard_public_keys[peer] }}
-AllowedIPs = {{ hostvars[peer].prod_wireguard_address }}/32
+PublicKey = {{ vault_cloud_wireguard_public_keys[peer] }}
+AllowedIPs = {{ hostvars[peer].cloud_wireguard_address }}/32
 {% if not peer_roaming %}
-Endpoint = {{ hostvars[peer].prod_wireguard_endpoint }}:{{ prod_wireguard_listen_port }}
+Endpoint = {{ hostvars[peer].cloud_wireguard_endpoint }}:{{ cloud_wireguard_listen_port }}
 PersistentKeepalive = 25
 {% endif %}
 {% endif %}

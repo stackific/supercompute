@@ -3,7 +3,7 @@
 Worktree root paths (high level):
 
 ```text
-deployment.yml          # deployment_name namespace
+cloud.yml          # cloud_name namespace
 Taskfile.yml            # includes taskfiles/*.yml
 taskfiles/              # setup, vault, lima, wireguard, cluster
 inventories/
@@ -38,7 +38,7 @@ Created by automation; not committed.
 | `wireguard/` | Generated `scwg0.conf` and keys synced from vault |
 | `lima/` | Lima instance definitions for `node_lima_guest` hosts |
 
-Lima **runtime** VMs live under `~/.lima/.<deployment_name>-<provider>/` (see [lima.md](lima.md)).
+Lima **runtime** VMs live under `~/.lima/.<cloud_name>-<provider>/` (see [lima.md](lima.md)).
 
 ## `docs/`
 

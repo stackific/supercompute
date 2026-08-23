@@ -10,7 +10,7 @@ requested_provider="$1"
 shift
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-deployment_vars="${project_dir}/deployment.yml"
+cloud_vars="${project_dir}/cloud.yml"
 python_runtime="${project_dir}/.venv/bin/python"
 provider_dir="${project_dir}/inventories/${requested_provider}"
 
@@ -19,8 +19,8 @@ provider_dir="${project_dir}/inventories/${requested_provider}"
   exit 2
 }
 
-if [[ ! -f "${deployment_vars}" ]]; then
-  echo "Deployment configuration does not exist: ${deployment_vars}" >&2
+if [[ ! -f "${cloud_vars}" ]]; then
+  echo "Cloud configuration does not exist: ${cloud_vars}" >&2
   exit 1
 fi
 
@@ -60,8 +60,8 @@ fi
 vault_args=()
 provider_vault_file="${provider_dir}/group_vars/all/vault.yml"
 provider_vault_password_file="${provider_dir}/.vault-pass"
-deployment_name="$("${python_runtime}" "${project_dir}/scripts/deployment_name.py")"
-provider_vault_id="${deployment_name}-${requested_provider}"
+cloud_name="$("${python_runtime}" "${project_dir}/scripts/cloud_name.py")"
+provider_vault_id="${cloud_name}-${requested_provider}"
 
 if [[ -e "${provider_vault_file}" || -e "${provider_vault_password_file}" ]]; then
   if [[ ! -f "${provider_vault_file}" || ! -f "${provider_vault_password_file}" ]]; then
@@ -71,10 +71,14 @@ if [[ -e "${provider_vault_file}" || -e "${provider_vault_password_file}" ]]; th
   vault_args=(--vault-id "${provider_vault_id}@${provider_vault_password_file}")
 fi
 
+if [[ -f "${provider_vault_file}" && -f "${provider_vault_password_file}" ]]; then
+  PROVIDER="${requested_provider}" uv run --locked python scripts/vault.py migrate >/dev/null
+fi
+
 cd "${project_dir}"
 exec uv run --locked ansible-playbook \
   -i "${provider_dir}" \
-  --extra-vars "@${deployment_vars}" \
+  --extra-vars "@${cloud_vars}" \
   --extra-vars "inventory_slug=${requested_provider}" \
   "${vault_args[@]}" \
   "$@"

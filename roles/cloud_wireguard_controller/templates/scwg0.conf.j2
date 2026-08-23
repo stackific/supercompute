@@ -1,0 +1,24 @@
+[Interface]
+PrivateKey = {{ vault_cloud_wireguard_private_keys.macos }}
+Address = {{ cloud_wireguard_controller_address }}/{{ cloud_wireguard_prefix_length }}
+ListenPort = {{ cloud_wireguard_listen_port }}
+SaveConfig = false
+{% set hub = hostvars['localhost'].cloud_wireguard_hub | default('') %}
+{% set roaming_nodes = hostvars['localhost'].cloud_wireguard_roaming_nodes | default([]) %}
+{% set use_hub = roaming_nodes | length > 0 %}
+{% for node in groups['wireguard_nodes'] | sort %}
+{% set roaming = hostvars[node].wireguard_roaming | default(false) | bool %}
+{% if not (use_hub and roaming) %}
+{% set allowed = [hostvars[node].cloud_wireguard_address ~ '/32'] + (
+  (roaming_nodes | map('extract', hostvars, 'cloud_wireguard_address') | map('regex_replace', '^(.+)$', '\\1/32') | list)
+  if (use_hub and node == hub) else []
+) %}
+
+[Peer]
+# {{ node }}{{ ' (static hub; carries roaming)' if (use_hub and node == hub) else '' }}
+PublicKey = {{ vault_cloud_wireguard_public_keys[node] }}
+AllowedIPs = {{ allowed | join(', ') }}
+Endpoint = {{ hostvars[node].cloud_wireguard_endpoint }}:{{ cloud_wireguard_listen_port }}
+PersistentKeepalive = 25
+{% endif %}
+{% endfor %}

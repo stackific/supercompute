@@ -13,16 +13,16 @@ Python helpers use **`uv run --locked`** from the worktree root. Shell scripts a
 | Script | Role |
 | --- | --- |
 | `scripts/provider_platform.py` | Prints `provider.platform`; refuses `vps` / `lima` |
-| `scripts/deployment_name.py` | Prints `deployment_name` from `deployment.yml` |
+| `scripts/cloud_name.py` | Prints `cloud_name` from `cloud.yml` |
 
 ## WireGuard / SSH
 
 | Script | Role |
 | --- | --- |
-| `scripts/prod-known-hosts.py` | Sync `.state/<provider>/known_hosts` from `hosts.yml` fingerprints |
-| `scripts/prod-wireguard-ssh-config.py` | Generate SSH config snippets for mesh/bootstrap |
+| `scripts/cloud-known-hosts.py` | Sync `.state/<provider>/known_hosts` from `hosts.yml` fingerprints |
+| `scripts/cloud-wireguard-ssh-config.py` | Generate SSH config snippets for mesh/bootstrap |
 | `scripts/wg-ssh.sh` | `task ssh` entrypoint |
-| `scripts/disconnect-prod-wireguard.sh` | `task wg-remove` for public meshes |
+| `scripts/disconnect-cloud-wireguard.sh` | `task wg-remove` for public meshes |
 | `scripts/wireguard_ssh_target.py` | Resolve SSH target for a node |
 | `scripts/select-wireguard-interface.py` | Pick WireGuard interface name |
 
@@ -33,7 +33,7 @@ Python helpers use **`uv run --locked`** from the worktree root. Shell scripts a
 | `scripts/lima-runtime-home.sh` | Resolve `LIMA_HOME` for a provider |
 | `scripts/lima_nodes.py` | Map inventory hosts to Lima node definitions |
 | `scripts/lima_instances.py` | Lima instance metadata |
-| `scripts/lima-host-fingerprints.py` | Scan guests; write `prod_ssh_host_ed25519_sha256` to `hosts.yml` (`--force` after recreate) |
+| `scripts/lima-host-fingerprints.py` | Scan guests; write `cloud_ssh_host_ed25519_sha256` to `hosts.yml` (`--force` after recreate) |
 
 ## Vault
 

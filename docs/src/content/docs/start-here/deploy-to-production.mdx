@@ -51,8 +51,8 @@ Edit `inventories/prod/group_vars/all/main.yml`.
 2. Switch the mesh CIDR so it does **not** overlap `dev` (`10.217.80.0/24`):
 
 ```yaml
-prod_wireguard_network_cidr: 10.217.79.0/24
-prod_wireguard_controller_address: 10.217.79.1
+cloud_wireguard_network_cidr: 10.217.79.0/24
+cloud_wireguard_controller_address: 10.217.79.1
 ```
 
 3. Keep `provider.platform: public` and `provider.mode: remote`.
@@ -79,8 +79,8 @@ provider:
 Leave SSH defaults as-is; they already expand to `~/.ssh/sc-prod` when `PROVIDER=prod`:
 
 ```yaml
-prod_default_ssh_user: ops
-prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+cloud_default_ssh_user: ops
+cloud_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ cloud_name }}-{{ inventory_slug }}"
 ```
 
 `node_host_architecture: x86_64` stays the inventory default (all three hosts are amd64).
@@ -100,18 +100,18 @@ all:
     deployment:
       hosts:
         static-1:
-          prod_wireguard_endpoint: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4"
-          prod_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1"
-          prod_wireguard_address: 10.217.79.11
+          cloud_wireguard_endpoint: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4"
+          cloud_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1"
+          cloud_wireguard_address: 10.217.79.11
         static-2:
-          prod_wireguard_endpoint: "REPLACE_WITH_STATIC_2_PUBLIC_IPV4"
-          prod_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_2"
-          prod_wireguard_address: 10.217.79.12
+          cloud_wireguard_endpoint: "REPLACE_WITH_STATIC_2_PUBLIC_IPV4"
+          cloud_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_2"
+          cloud_wireguard_address: 10.217.79.12
         roaming-1:
           wireguard_roaming: true
-          prod_bootstrap_ssh_host: "roaming-1.example.com"
-          prod_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_ROAMING_1"
-          prod_wireguard_address: 10.217.79.21
+          cloud_bootstrap_ssh_host: "roaming-1.example.com"
+          cloud_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_ROAMING_1"
+          cloud_wireguard_address: 10.217.79.21
     wireguard_nodes:
       children:
         deployment: {}
@@ -121,13 +121,13 @@ Important differences from `dev`:
 
 | Field | static hosts | roaming-1 |
 | --- | --- | --- |
-| `prod_wireguard_endpoint` | Public IPv4 | **omit** |
+| `cloud_wireguard_endpoint` | Public IPv4 | **omit** |
 | `wireguard_roaming` | omit / false | `true` |
 | `node_lima_guest` | omit | **omit** (no Lima) |
 | `node_host_architecture` | default `x86_64` | default `x86_64` |
-| `prod_bootstrap_ssh_host` | omit | Cloudflare published hostname |
+| `cloud_bootstrap_ssh_host` | omit | Cloudflare published hostname |
 
-Do **not** set `prod_wireguard_endpoint` on `roaming-1`. Do **not** set `node_lima_guest: true`.
+Do **not** set `cloud_wireguard_endpoint` on `roaming-1`. Do **not** set `node_lima_guest: true`.
 
 ## Step 5 — Prepare the two public VMs
 
@@ -136,7 +136,7 @@ For **static-1** and **static-2**, follow [Adding a public node](/guides/adding-
 1. Ubuntu 26.04 amd64 + public IP.
 2. Create `ops`, install `~/.ssh/sc-prod.pub`, passwordless sudo.
 3. Record each host’s `SHA256:…` from `/etc/ssh/ssh_host_ed25519_key.pub`.
-4. Fill `prod_wireguard_endpoint` and `prod_ssh_host_ed25519_sha256` in `hosts.yml`.
+4. Fill `cloud_wireguard_endpoint` and `cloud_ssh_host_ed25519_sha256` in `hosts.yml`.
 5. Firewall: TCP **22** from your Mac `/32` during bootstrap; UDP **51830** wide enough for roaming egress (not only the Mac `/32`).
 
 Prove SSH:
@@ -172,7 +172,7 @@ ssh roaming-1.example.com true
 ssh roaming-1.example.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
 ```
 
-Paste the fingerprint into `roaming-1.prod_ssh_host_ed25519_sha256` and set `prod_bootstrap_ssh_host` to the same hostname.
+Paste the fingerprint into `roaming-1.cloud_ssh_host_ed25519_sha256` and set `cloud_bootstrap_ssh_host` to the same hostname.
 
 Full tunnel / Access detail: `internal/roaming-nodes.md` in the repository.
 
@@ -187,7 +187,7 @@ task ssh PROVIDER=prod NODE=static-2
 task ssh PROVIDER=prod NODE=roaming-1
 ```
 
-`up` uses public SSH for static hosts and Cloudflare (`prod_bootstrap_ssh_host`) for `roaming-1`. After the mesh is up, day-2 SSH goes over WireGuard. Roaming always **initiates** to the static hub; Mac↔roaming and spoke↔spoke go through **static-1** as hub.
+`up` uses public SSH for static hosts and Cloudflare (`cloud_bootstrap_ssh_host`) for `roaming-1`. After the mesh is up, day-2 SSH goes over WireGuard. Roaming always **initiates** to the static hub; Mac↔roaming and spoke↔spoke go through **static-1** as hub.
 
 ## Step 8 — Optional cluster stack
 

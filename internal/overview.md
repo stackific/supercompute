@@ -1,8 +1,8 @@
 # Overview
 
-Supercompute is a purpose-built cloud for AI-first workloads that you can self-host on commodity hardware—including a VM on your laptop. High availability is achievable with as few as two nodes. It is developed by [Stackific Inc.](https://stackific.com/).
+Supercompute is a purpose-built cloud for AI-first workloads that you can self-host on commodity hardware—including a VM on your laptop. High availability is achievable with as few as two nodes. It is developed by Stackific Inc.
 
-This worktree automates **provider infrastructure**: WireGuard meshes, optional Lima roaming guests on macOS, Ansible Vault, and an optional **cluster stack** (gVisor, Docker Engine, GeoDNS PowerDNS with MaxMind geoipupdate) on deployment nodes.
+This worktree automates **provider infrastructure**: WireGuard meshes, optional Lima roaming guests on macOS, Ansible Vault, and an optional **cluster stack** (gVisor, Docker Engine, Caddy, and PowerDNS) on deployment nodes.
 
 ## What this automation does
 
@@ -13,7 +13,7 @@ This worktree automates **provider infrastructure**: WireGuard meshes, optional 
 | **Bootstrap SSH** | Public endpoint, Lima-local SSH, or Cloudflare Tunnel (non-Lima roaming) |
 | **Vault** | Encrypted secrets per provider; WireGuard key material |
 | **Lima** | Factory for `node_lima_guest` Ubuntu guests on Apple Silicon |
-| **Cluster** | Optional runtime and GeoDNS on `deployment` group hosts |
+| **Cluster** | Optional runtime software on `deployment` group hosts |
 
 The project does **not** provision VPS instances, Cloudflare tunnels, or parent-zone DNS records. Operators create those outside this repo and fill inventory.
 
@@ -50,7 +50,6 @@ Operators supply:
 
 - At least one **public IP** for the static hub (UDP 51830 open for roaming egress).
 - **External Postgres** for application data (not installed by this automation).
-- **MaxMind** credentials in vault (optional) for continent GeoDNS; PowerDNS still runs without them.
 - **Cloudflare** account and tunnel for non-Lima roaming bootstrap.
 
 ## Related docs

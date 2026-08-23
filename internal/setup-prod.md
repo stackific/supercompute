@@ -7,9 +7,9 @@ firewall rules. Node names, mesh addresses, and endpoints come from inventory
 only. `inventories/prod/` is operator-local (gitignored); restore it from your
 backup when needed.
 
-Read `deployment_name` from `deployment.yml` and use inventory slug `prod` (or
+Read `cloud_name` from `cloud.yml` and use inventory slug `prod` (or
 whatever `inventories/<slug>/` directory you are configuring). Below,
-`<deployment_name>` and `<provider>` mean those values (for example
+`<cloud_name>` and `<provider>` mean those values (for example
 `sc` and `prod`).
 
 ## Prerequisites
@@ -37,10 +37,10 @@ Use an empty passphrase. Back up both key files in your password manager.
 
 ```sh
 ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/<deployment_name>-<provider> \
-  -C "<deployment_name> <provider>"
-ssh-add ~/.ssh/<deployment_name>-<provider>
-pbcopy < ~/.ssh/<deployment_name>-<provider>.pub
+  -f ~/.ssh/<cloud_name>-<provider> \
+  -C "<cloud_name> <provider>"
+ssh-add ~/.ssh/<cloud_name>-<provider>
+pbcopy < ~/.ssh/<cloud_name>-<provider>.pub
 ```
 
 
@@ -49,7 +49,7 @@ pbcopy < ~/.ssh/<deployment_name>-<provider>.pub
 
 Create Ubuntu Server 26.04 AMD64 instances. On each VM, create the inventory SSH
 user (sample `ops`), install the Mac public key, and grant passwordless sudo.
-Use the **same** username you will set as `prod_default_ssh_user` in the next
+Use the **same** username you will set as `cloud_default_ssh_user` in the next
 section (sample `ops`).
 
 ```sh
@@ -64,9 +64,9 @@ Paste the public key from the clipboard, press Control+D, then:
 sudo chown ops:ops /home/ops/.ssh/authorized_keys
 sudo chmod 600 /home/ops/.ssh/authorized_keys
 printf '%s\n' 'ops ALL=(ALL) NOPASSWD:ALL' | \
-  sudo tee /etc/sudoers.d/90-<deployment_name>-ops >/dev/null
-sudo chmod 440 /etc/sudoers.d/90-<deployment_name>-ops
-sudo visudo -cf /etc/sudoers.d/90-<deployment_name>-ops
+  sudo tee /etc/sudoers.d/90-<cloud_name>-ops >/dev/null
+sudo chmod 440 /etc/sudoers.d/90-<cloud_name>-ops
+sudo visudo -cf /etc/sudoers.d/90-<cloud_name>-ops
 sudo -u ops sudo -n true
 ```
 
@@ -77,7 +77,7 @@ sudo -u ops sudo -n true
 On the Mac:
 
 ```sh
-ssh-keygen -lf ~/.ssh/<deployment_name>-<provider>.pub
+ssh-keygen -lf ~/.ssh/<cloud_name>-<provider>.pub
 ```
 
 On the VM:
@@ -97,14 +97,14 @@ sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
 Store the full `SHA256:…` value in your password manager. Put the same value in
-`inventories/<provider>/hosts.yml` as `prod_ssh_host_ed25519_sha256` for that
+`inventories/<provider>/hosts.yml` as `cloud_ssh_host_ed25519_sha256` for that
 host. This is the **server** host key, not the operator key from
 `authorized_keys`.
 
 ## Fill the production inventory (required before up)
 
 Set the SSH user and key path before the first `up`. A wrong
-`prod_default_ssh_user` causes SSH failures such as
+`cloud_default_ssh_user` causes SSH failures such as
 `wronguser@…: Permission denied`.
 
 ### 1. `group_vars/all/main.yml` (SSH user + private key)
@@ -112,18 +112,18 @@ Set the SSH user and key path before the first `up`. A wrong
 Edit `inventories/<provider>/group_vars/all/main.yml` and set at least:
 
 ```yaml
-prod_default_ssh_user: ops
-prod_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ deployment_name }}-{{ inventory_slug }}"
+cloud_default_ssh_user: ops
+cloud_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ cloud_name }}-{{ inventory_slug }}"
 ```
 
-- `prod_default_ssh_user` must match the Linux user you created on every static host
+- `cloud_default_ssh_user` must match the Linux user you created on every static host
 (sample `ops`).
-- `prod_ssh_private_key_file` should use the form above (Ansible and `ssh`
+- `cloud_ssh_private_key_file` should use the form above (Ansible and `ssh`
 both expand it). A leading `~` is **not** expanded; do not hardcode only a
 tilde path.
 - Optionally replace `provider.image.source` (`REPLACE_WITH_PROVIDER_IMAGE_ID`)
 with your provider’s image id when you use provider image automation.
-- Mesh IPs are **not** in this file; set `prod_wireguard_address` per host in
+- Mesh IPs are **not** in this file; set `cloud_wireguard_address` per host in
 `hosts.yml` (choose a CIDR that does not overlap other meshes on this Mac).
 
 
@@ -136,16 +136,16 @@ follow this host set on the next `up`.
 
 ```yaml
 static-1:
-  prod_wireguard_endpoint: "203.0.113.11"
-  prod_ssh_host_ed25519_sha256: "SHA256:…"
-  prod_wireguard_address: 10.217.79.11
+  cloud_wireguard_endpoint: "203.0.113.11"
+  cloud_ssh_host_ed25519_sha256: "SHA256:…"
+  cloud_wireguard_address: "REPLACE_WITH_MESH_IP"
 ```
 
-- `prod_wireguard_endpoint` — public IPv4 or DNS name (not the mesh address)
-- `prod_ssh_host_ed25519_sha256` — complete `SHA256:…` from
+- `cloud_wireguard_endpoint` — public IPv4 or DNS name (not the mesh address)
+- `cloud_ssh_host_ed25519_sha256` — complete `SHA256:…` from
 `/etc/ssh/ssh_host_ed25519_key.pub` on that VM
-- `prod_wireguard_address` — unique mesh IP in `prod_wireguard_network_cidr`
-  (controller uses `prod_wireguard_controller_address`, usually `.1`)
+- `cloud_wireguard_address` — unique mesh IP in `cloud_wireguard_network_cidr`
+  (controller uses `cloud_wireguard_controller_address`, usually `.1`)
 
 
 
@@ -154,7 +154,7 @@ static-1:
 Before `up`, confirm the inventory user and key work (replace host and paths):
 
 ```sh
-ssh -i ~/.ssh/<deployment_name>-<provider> -o IdentitiesOnly=yes \
+ssh -i ~/.ssh/<cloud_name>-<provider> -o IdentitiesOnly=yes \
   ops@203.0.113.11 true
 ```
 
@@ -174,10 +174,10 @@ will not stay in a fixed peer `/32` list. See
 During initial bootstrap or recovery, also allow inbound TCP **22** from the
 controller `/32`; remove that rule after every stable node answers `ssh`.
 Allow TCP **80** and **443** when you deliberately publish HTTP(S) for other
-workloads. For `test-app.stackific.com` GeoDNS, allow inbound UDP/TCP **53** on
-`static-1` so public resolvers can reach PowerDNS (answers are WireGuard A
-records). Leave all other unsolicited inbound traffic denied. Confirm the
-provider firewall is stateful. The Mac does not need inbound UDP **51830**
+workloads. If you manage public authoritative DNS outside this repository,
+open UDP/TCP **53** only where that separate DNS design requires it. Leave all
+other unsolicited inbound traffic denied. Confirm the provider firewall is
+stateful. The Mac does not need inbound UDP **51830**
 (roaming and the Mac reach each other through the static hub).
 
 ## Initialize vault and bring up the mesh
@@ -208,52 +208,25 @@ Controller-only disconnect (does not change servers):
 task wg-remove PROVIDER=prod
 ```
 
-## Cluster services (gVisor, Docker Engine, GeoDNS)
+## Cluster services (gVisor, Docker Engine, PowerDNS)
 
 After the mesh is up, install per-node cluster software with:
 
 ```sh
-task vault-edit PROVIDER=prod
-# under deployment_vault.secrets set:
-#   maxmind_account_id: "..."
-#   maxmind_license_key: "..."
 task up PROVIDER=prod
 ```
 
 `up` installs **gVisor** (`runsc`), **Docker Engine** (`docker-ce`,
 `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin` from Docker’s apt
-repo), and **PowerDNS** with the GeoIP backend plus MaxMind `geoipupdate`
-(weekly timer). There is no HTTP reverse proxy in this role.
+repo), and **PowerDNS** (`pdns-server`). It does not create DNS zones,
+configure application hostnames, or verify website records. The externally
+managed nameserver hostname is `cloud_nameserver_hostname` in `cloud.yml`,
+whose default is `ns.example.com`. Caddy is installed with its systemd service
+disabled and stopped.
 
-Clients resolve the public name **`test-app.stackific.com`**. PowerDNS is
-authoritative for that zone and returns a **WireGuard** A record: for NA/SA,
-an equal-weight random choice among roaming mesh IPs (`roaming-1` /
-`roaming-2` / …); otherwise `static-1`. Answers are mesh IPs — useful for
-mesh-side consumers, not public HTTP.
-
-### Cloudflare NS delegation (once)
-
-PowerDNS on `static-1` also listens on the static public IP for UDP/TCP **53**.
-At the parent zone (`stackific.com`), create **DNS-only (grey cloud)** records.
-Do **not** orange-cloud these — Cloudflare’s proxy is HTTP(S) only and will
-break authoritative DNS and mesh GeoDNS ([proxy status](https://developers.cloudflare.com/dns/proxy-status/),
-[limitations](https://developers.cloudflare.com/dns/proxy-status/limitations/)):
-
-1. `ns1.stackific.com` → **A** → `static-1` public IPv4 (**DNS-only**)
-2. `test-app.stackific.com` → **NS** → `ns1.stackific.com` (NS is never proxied;
-   do not also create a proxied A/CNAME for `test-app`)
-
-Allow inbound UDP/TCP **53** to `static-1` in the provider firewall (world or
-at least public resolvers). Tunnel SSH hostnames (`ubu26-nas.stackific.com`,
-`ubu26-desk.stackific.com`) stay separate Cloudflare Tunnel / Access routes.
-
-### Verify from a mesh peer (or dig @ static public :53)
+### Verify the installed runtime
 
 ```sh
-dig +short test-app.stackific.com A
-# → 10.217.79.12 or 10.217.79.13 (NA/SA, random) or 10.217.79.11 (elsewhere)
-
-# On a node after cluster-up:
 runsc --version
 docker version
 ```
@@ -286,8 +259,8 @@ mesh from a new Mac. Do **not** rely on git for anything marked gitignored.
 
 | Item                     | Path / form                               | Why                                                                                                                        |
 | ------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Operator SSH private key | `~/.ssh/<deployment_name>-<provider>`     | Proves you are the operator on every node (`ops` / inventory user)                                                         |
-| Operator SSH public key  | `~/.ssh/<deployment_name>-<provider>.pub` | Rebuild authorized_keys or verify the key pair                                                                             |
+| Operator SSH private key | `~/.ssh/<cloud_name>-<provider>`     | Proves you are the operator on every node (`ops` / inventory user)                                                         |
+| Operator SSH public key  | `~/.ssh/<cloud_name>-<provider>.pub` | Rebuild authorized_keys or verify the key pair                                                                             |
 | Ansible Vault password   | `inventories/<provider>/.vault-pass`      | Decrypts WireGuard private keys; **gitignored**—losing this loses the vault contents |
 
 
@@ -298,10 +271,10 @@ mesh from a new Mac. Do **not** rely on git for anything marked gitignored.
 
 | Item                           | Where                                                    | Why                                                                                                                                        |
 | ------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Encrypted vault                | `inventories/<provider>/group_vars/all/vault.yml`        | Holds `vault_prod_wireguard_*` key pairs. Prefer committing it; also keep a secret-manager copy |
-| Per-node host-key fingerprints | `SHA256:…` from each `/etc/ssh/ssh_host_ed25519_key.pub` | Must match `prod_ssh_host_ed25519_sha256` in `hosts.yml` for `up` / known_hosts                                                         |
+| Encrypted vault                | `inventories/<provider>/group_vars/all/vault.yml`        | Holds `vault_cloud_wireguard_*` key pairs. Prefer committing it; also keep a secret-manager copy |
+| Per-node host-key fingerprints | `SHA256:…` from each `/etc/ssh/ssh_host_ed25519_key.pub` | Must match `cloud_ssh_host_ed25519_sha256` in `hosts.yml` for `up` / known_hosts                                                         |
 | Per-node public endpoints      | IPv4 or DNS in `hosts.yml`                               | WireGuard peer endpoints and bootstrap SSH                                                                                                 |
-| Inventory + `deployment.yml`   | Git clone                                                | Host names, mesh IPs, SSH user, launchd label namespace                                                                                    |
+| Inventory + `cloud.yml`   | Git clone                                                | Host names, mesh IPs, SSH user, launchd label namespace                                                                                    |
 
 
 Also note your **Mac’s current public IPv4** for temporary TCP **22** to each
@@ -323,7 +296,7 @@ secrets above and clone the repo:
 ### Restore on a fresh Mac
 
 1. Install Task, `uv`, and `wireguard-tools`; clone the repo (or this worktree); `task setup` (also installs `cloudflared` on macOS).
-2. Restore the SSH key pair to `~/.ssh/<deployment_name>-<provider>` (mode `0600` on the private key); `ssh-add` it; set `prod_ssh_private_key_file` if you use that path.
+2. Restore the SSH key pair to `~/.ssh/<cloud_name>-<provider>` (mode `0600` on the private key); `ssh-add` it; set `cloud_ssh_private_key_file` if you use that path.
 3. Restore `inventories/<provider>/.vault-pass` (mode `0600`). Confirm `vault.yml` is present (from git or secret manager).
 4. Confirm `hosts.yml` fingerprints and endpoints match what you stored.
 5. Update the provider firewall with this Mac’s public `/32` if it changed.
@@ -334,20 +307,19 @@ secrets above and clone the repo:
 
 ## Sample mesh addresses
 
-Default stub uses:
+Use the configured mesh values:
 
-
-| Role            | Address                                                         |
-| --------------- | --------------------------------------------------------------- |
-| Mac controller  | `10.217.79.1` (`prod_wireguard_controller_address` in main.yml) |
-| Inventory nodes | `prod_wireguard_address` per host in `hosts.yml` (e.g. `.11+`)  |
+| Role | Address |
+| --- | --- |
+| Mac controller | `cloud_wireguard_controller_address` in `group_vars/all/main.yml` |
+| Inventory nodes | `cloud_wireguard_address` per host in `hosts.yml` |
 
 
 Interface name on servers: `scwg0`. Listen port: `51830`.
 
 ```code
-# From a static node, ping macOS's address
-ping -c 10 -I scwg0 10.217.79.1
+# From a static node, ping the configured macOS controller address
+ping -c 10 -I scwg0 <cloud_wireguard_controller_address>
 
 # < 20 ms: Excellent (same metro / nearby region)
 # 20–50 ms: Very good (typical same-country / nearby DC)
@@ -355,4 +327,3 @@ ping -c 10 -I scwg0 10.217.79.1
 # 100–200 ms: Usable; feel a bit of lag on interactive work
 # > 200 ms: Cross-ocean / congested path; still OK for automation, poor for “snappy” shells
 ```
-

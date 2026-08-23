@@ -1,0 +1,18 @@
+---
+- name: Remove dev runtime state
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Require the dev reset confirmation
+      ansible.builtin.assert:
+        that:
+          - inventory_slug == 'dev'
+          - lookup('ansible.builtin.env', 'CONFIRM') == 'reset-dev'
+        fail_msg: >-
+          dev-reset only removes .state/dev and requires CONFIRM=reset-dev.
+
+    - name: Remove the dev runtime state
+      ansible.builtin.file:
+        path: "{{ playbook_dir | dirname }}/.state/dev"
+        state: absent

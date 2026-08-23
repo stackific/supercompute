@@ -11,13 +11,13 @@ Lima provides Ubuntu guests on the Mac for **`node_lima_guest: true`** hosts. Li
 | `lima-destroy` | Same (requires `CONFIRM`) |
 | `lima-host-fingerprints` | Same |
 
-`PROVIDER=dev` with `roaming-1` is the tracked example.
+These task entrypoints are dev-only; `roaming-1` is the tracked guest.
 
 ## Runtime vs tracked state
 
 | Location | Content |
 | --- | --- |
-| `~/.lima/.<deployment_name>-<provider>/` | Lima VM runtime (`LIMA_HOME` / `lima_runtime_home`) |
+| `~/.lima/.<cloud_name>-<provider>/` | Lima VM runtime (`LIMA_HOME` / `lima_runtime_home`) |
 | `.state/<provider>/lima/` | Instance definitions managed by Ansible |
 | `inventories/<provider>/group_vars/all/main.yml` | `lima_nodes` port/MAC mapping |
 
@@ -33,8 +33,8 @@ Image defaults in `dev` inventory point at Ubuntu 26.04 arm64 template.
 
 Lima roaming guests are **`wireguard_roaming: true`** peers:
 
-- They dial the static hub’s **`prod_wireguard_endpoint`** (`public-ip:51830`).
-- They do **not** have `prod_wireguard_endpoint` in inventory.
+- They dial the static hub’s **`cloud_wireguard_endpoint`** (`public-ip:51830`).
+- They do **not** have `cloud_wireguard_endpoint` in inventory.
 - The Mac does not need inbound UDP 51830 for Mac↔guest mesh (hub forwards when applicable).
 
 ## Bootstrap SSH
@@ -49,10 +49,10 @@ Ansible reaches Lima guests via **Lima-local SSH**:
 
 ## Host-key fingerprints
 
-After `lima-up`, `scripts/lima-host-fingerprints.py` scans each guest and writes `prod_ssh_host_ed25519_sha256` into `hosts.yml`.
+After `lima-up`, `scripts/lima-host-fingerprints.py` scans each guest and writes `cloud_ssh_host_ed25519_sha256` into `hosts.yml`.
 
 ```sh
-task lima-host-fingerprints PROVIDER=dev
+task lima-host-fingerprints
 ```
 
 After destroy + recreate:
@@ -66,7 +66,7 @@ uv run --locked python scripts/lima-host-fingerprints.py --provider dev --force
 ## Destroy confirmation
 
 ```sh
-task lima-destroy PROVIDER=dev CONFIRM=destroy-lima-dev
+task lima-destroy CONFIRM=destroy-lima-dev
 ```
 
 `CONFIRM` must be exactly `destroy-lima-<inventory_slug>`.
@@ -74,11 +74,24 @@ task lima-destroy PROVIDER=dev CONFIRM=destroy-lima-dev
 ## Typical sequence
 
 ```sh
-task lima-up PROVIDER=dev
-task lima-status PROVIDER=dev
+task lima-up
+task lima-status
 limactl shell roaming-1   # operator smoke test
 task up PROVIDER=dev
 task ssh PROVIDER=dev NODE=roaming-1
+```
+
+## Full dev reset
+
+`dev-reset` disconnects the dev controller interface, destroys the Lima
+guests, deletes `.state/dev`, and deletes the dev vault/password. It leaves the
+dedicated Lima runtime home and remote static host intact.
+
+```sh
+task dev-reset CONFIRM=reset-dev
+task vault-init PROVIDER=dev
+task lima-up
+task up PROVIDER=dev
 ```
 
 ## Related

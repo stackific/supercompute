@@ -18,7 +18,7 @@ tasks:
         platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
         case "${platform}" in
           public)
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/prod-wireguard-status.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/cloud-wireguard-status.yml
             ;;
           lima)
             echo "provider.platform=lima is refused; use provider.platform=public." >&2
@@ -48,7 +48,7 @@ tasks:
         platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
         case "${platform}" in
           public)
-            bash scripts/disconnect-prod-wireguard.sh "{{.PROVIDER}}"
+            bash scripts/disconnect-cloud-wireguard.sh "{{.PROVIDER}}"
             ;;
           lima)
             echo "provider.platform=lima is refused; use provider.platform=public." >&2
@@ -88,10 +88,10 @@ tasks:
         platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
         case "${platform}" in
           public)
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/prod-wireguard-up.yml
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/prod-wireguard-down.yml
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/prod-wireguard-status.yml
-            bash -n scripts/disconnect-prod-wireguard.sh
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-down.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-status.yml
+            bash -n scripts/disconnect-cloud-wireguard.sh
             bash -n scripts/wg-ssh.sh
             ;;
           lima)

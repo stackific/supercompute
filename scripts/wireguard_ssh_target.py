@@ -27,10 +27,10 @@ def load_yaml(path: Path) -> dict:
 
 
 def lima_runtime_home(provider: str) -> Path:
-  deployment = load_yaml(ROOT / "deployment.yml")
-  name = deployment.get("deployment_name")
+  deployment = load_yaml(ROOT / "cloud.yml")
+  name = deployment.get("cloud_name")
   if not isinstance(name, str) or not name.strip():
-    raise ValueError("deployment.yml must contain deployment_name")
+    raise ValueError("cloud.yml must contain cloud_name")
   home = Path.home() / ".lima" / f".{name}-{provider}"
   return home
 

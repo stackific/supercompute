@@ -23,11 +23,11 @@ python_runtime="${project_dir}/.venv/bin/python"
   exit 2
 }
 
-deployment_name="$("${python_runtime}" "${project_dir}/scripts/deployment_name.py")"
+cloud_name="$("${python_runtime}" "${project_dir}/scripts/cloud_name.py")"
 node_names="$("${python_runtime}" "${project_dir}/scripts/lima_nodes.py" --provider "${provider_name}")"
 
 lima_system_home="${HOME}/.lima"
-lima_provider_home="${lima_system_home}/.${deployment_name}-${provider_name}"
+lima_provider_home="${lima_system_home}/.${cloud_name}-${provider_name}"
 
 validate_private_directory() {
   local path="$1"

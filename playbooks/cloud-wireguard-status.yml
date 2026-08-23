@@ -4,12 +4,12 @@
   gather_facts: false
   any_errors_fatal: true
   pre_tasks:
-    - name: Require a public-endpoint provider for production WireGuard status
+    - name: Require a public-endpoint provider for WireGuard status
       ansible.builtin.assert:
         that:
           - provider.platform == 'public'
         fail_msg: >-
-          prod-wireguard-status requires provider.platform=public for
+          cloud-wireguard-status requires provider.platform=public for
           PROVIDER={{ inventory_slug }}.
   tasks:
     - name: Show macOS WireGuard peers
@@ -18,7 +18,7 @@
       become: true
       changed_when: false
 
-- name: Show production node WireGuard status
+- name: Show server WireGuard status
   hosts: wireguard_nodes
   gather_facts: false
   serial: 1
@@ -26,6 +26,6 @@
   tasks:
     - name: Show node WireGuard peer state
       ansible.builtin.command:
-        argv: [wg, show, "{{ prod_wireguard_interface }}"]
+        argv: [wg, show, "{{ cloud_wireguard_interface }}"]
       become: true
       changed_when: false
