@@ -1,0 +1,130 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Inventory slug under inventories/
+        required: true
+        type: string
+      action:
+        description: Lifecycle action
+        required: true
+        type: choice
+        options:
+          - up
+          - down
+          - verify
+      confirm:
+        description: Required for down — must equal down-<provider>
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROVIDER: ${{ inputs.provider }}
+      CONFIRM: ${{ inputs.confirm }}
+      MAC_OPERATOR_SSH_PUBLIC_KEY: ${{ secrets.MAC_OPERATOR_SSH_PUBLIC_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: Sync Python / Ansible toolchain
+        run: |
+          uv lock --check
+          uv sync --locked
+
+      - name: Materialize vault password
+        env:
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+        run: |
+          test -n "${ANSIBLE_VAULT_PASSWORD}" || {
+            echo "Set repository secret ANSIBLE_VAULT_PASSWORD" >&2
+            exit 1
+          }
+          umask 077
+          printf '%s\n' "${ANSIBLE_VAULT_PASSWORD}" >"inventories/${PROVIDER}/.vault-pass"
+          chmod 600 "inventories/${PROVIDER}/.vault-pass"
+
+      - name: Materialize ops SSH key
+        env:
+          OPS_SSH_PRIVATE_KEY: ${{ secrets.OPS_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "${OPS_SSH_PRIVATE_KEY}" || {
+            echo "Set repository secret OPS_SSH_PRIVATE_KEY" >&2
+            exit 1
+          }
+          project="$(uv run --locked python scripts/config_project.py)"
+          key_path="${HOME}/.ssh/${project}-${PROVIDER}"
+          mkdir -p "${HOME}/.ssh"
+          umask 077
+          printf '%s\n' "${OPS_SSH_PRIVATE_KEY}" >"${key_path}"
+          chmod 600 "${key_path}"
+
+      - name: Known hosts
+        if: inputs.action != 'verify'
+        run: |
+          uv run --locked python scripts/known-hosts.py \
+            --inventory "inventories/${PROVIDER}/hosts.yml" \
+            --known-hosts ".state/${PROVIDER}/known_hosts" \
+            --reuse-existing
+
+      - name: Ensure WireGuard vault keys
+        if: inputs.action == 'up'
+        run: PROVIDER="${PROVIDER}" uv run --locked python scripts/vault.py ensure-wireguard
+
+      - name: WireGuard + cluster up
+        if: inputs.action == 'up'
+        run: |
+          bash scripts/ansible-playbook.sh "${PROVIDER}" \
+            --extra-vars "control_plane=gha" \
+            playbooks/wireguard-up.yml
+          bash scripts/gha-mesh-peer.sh "${PROVIDER}" present
+          bash scripts/ansible-playbook.sh "${PROVIDER}" \
+            --extra-vars "control_plane=gha" \
+            playbooks/cluster-up.yml
+
+      - name: Down
+        if: inputs.action == 'down'
+        run: |
+          test "${CONFIRM}" = "down-${PROVIDER}" || {
+            echo "Set confirm=down-${PROVIDER} for destructive down" >&2
+            exit 2
+          }
+          bash scripts/gha-mesh-peer.sh "${PROVIDER}" absent || true
+          bash scripts/ansible-playbook.sh "${PROVIDER}" \
+            --extra-vars "control_plane=gha" \
+            playbooks/cluster-down.yml
+          bash scripts/ansible-playbook.sh "${PROVIDER}" \
+            --extra-vars "control_plane=gha" \
+            playbooks/wireguard-down.yml
+
+      - name: Verify
+        if: inputs.action == 'verify'
+        run: |
+          bash scripts/ansible-playbook.sh "${PROVIDER}" \
+            --extra-vars "control_plane=gha" \
+            playbooks/verify.yml
+
+      - name: Remove ephemeral mesh peer
+        if: always() && inputs.action == 'up'
+        run: bash scripts/gha-mesh-peer.sh "${PROVIDER}" absent || true

@@ -6,9 +6,10 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 
 | Playbook | Purpose |
 | --- | --- |
-| `playbooks/wireguard-up.yml` | Classify static/roaming nodes; hub selection; controller + nodes |
+| `playbooks/wireguard-up.yml` | Classify static/roaming; hub; Mac controller when `control_plane!=gha`; nodes |
 | `playbooks/wireguard-down.yml` | Tear down node WireGuard (`wireguard_node` absent) |
 | `playbooks/wireguard-status.yml` | Mesh status |
+| `playbooks/gha-mesh-peer.yml` | Ephemeral GitHub Actions WireGuard peer on nodes |
 | `playbooks/lima-up.yml` | Create/start `node_lima_guest` VMs |
 | `playbooks/lima-status.yml` | Lima resource status |
 | `playbooks/lima-destroy.yml` | Destroy Lima guests |
@@ -22,8 +23,8 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 | Role | Purpose |
 | --- | --- |
 | `wireguard_controller` | macOS controller `scwg0`, LaunchDaemon (any `public` provider) |
-| `wireguard_node` | Ubuntu nodes: WireGuard, hub forwarding, syncconf |
-| `supercompute_config` | Ubuntu nodes: `/etc/supercompute/config.yml` from worktree `config.yml` |
+| `wireguard_node` | Ubuntu nodes: WireGuard, static forwarding, roaming dial helper, syncconf |
+| `supercompute_config` | Ubuntu nodes: `/etc/supercompute/config.yml` + public-endpoints sidecar |
 | `lima` | Lima guest lifecycle (`dev` testing) |
 | `lima_wireguard_*` | Lima/`dev` local-testing WireGuard controller/lockdown/remove/verify |
 | `cluster_node` | gVisor, Docker CE, Caddy, PowerDNS |
@@ -31,10 +32,9 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 ## `wireguard-up` flow (summary)
 
 1. **localhost** — Assert `provider.platform: public`; classify static vs roaming; pick `wireguard_hub` (first static host).
-2. **localhost** — `wireguard_controller` role.
+2. **localhost** — `wireguard_controller` role when `control_plane` is not `gha`.
 3. **localhost** — Probe mesh SSH; choose bootstrap vs mesh transport per node.
-4. **wireguard_nodes** — `wireguard_node` with bootstrap SSH (public, Cloudflare, or Lima-local).
-
+4. **wireguard_nodes** — `wireguard_node` with bootstrap SSH (public, Cloudflare, or Lima-local); post-up roaming dial helper.
 ## `cluster_node` role
 
 Controlled by `cluster_lifecycle`:

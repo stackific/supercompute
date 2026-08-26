@@ -1,0 +1,10 @@
+{# One public static dial target per line: name pubkey mesh_ip endpoint #}
+{% for node in groups['wireguard_nodes'] | sort %}
+{% set node_vars = hostvars[node] %}
+{% set endpoint = node_vars.wireguard_endpoint | default('') | string %}
+{% if not (node_vars.wireguard_roaming | default(false) | bool)
+   and endpoint | length > 0
+   and not (endpoint is match('^REPLACE_WITH_')) %}
+{{ node }} {{ vault_wireguard_public_keys[node] }} {{ node_vars.wireguard_address }} {{ endpoint }}:{{ wireguard_listen_port }}
+{% endif %}
+{% endfor %}

@@ -16,6 +16,7 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 | --- | --- |
 | [setup-dev.md](setup-dev.md) | `PROVIDER=dev` — public hub + Lima `node_lima_guest` roaming |
 | [setup-prod.md](setup-prod.md) | Operator `prod` mesh (restore `inventories/prod/` from backup; gitignored) |
+| [gha-deploy.md](gha-deploy.md) | Manual GitHub Actions deploy (`control_plane: gha`) |
 | [roaming-nodes.md](roaming-nodes.md) | Non-Lima dynamic-IP roaming via Cloudflare Tunnel SSH |
 
 ## Concepts
@@ -25,8 +26,9 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 | [inventories.md](inventories.md) | `inventories/<slug>/`, groups, `provider.platform: public` |
 | [wireguard.md](wireguard.md) | Mesh model, static hub, roaming, Mac controller |
 | [lima.md](lima.md) | Lima guests, fingerprints, runtime home |
-| [vault.md](vault.md) | Ansible Vault lifecycle and WireGuard keys |
+| [vault.md](vault.md) | Ansible Vault lifecycle, `.vault-pass` creation, WireGuard keys |
 | [cluster.md](cluster.md) | gVisor, Docker Engine, Caddy, PowerDNS |
+| [gha-deploy.md](gha-deploy.md) | GHA control plane secrets and workflow |
 
 ## Reference
 

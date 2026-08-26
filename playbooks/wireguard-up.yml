@@ -60,8 +60,11 @@
   hosts: localhost
   gather_facts: false
   any_errors_fatal: true
-  roles:
-    - wireguard_controller
+  tasks:
+    - name: Install macOS WireGuard controller when using the Mac control plane
+      ansible.builtin.include_role:
+        name: wireguard_controller
+      when: control_plane | default('mac') != 'gha'
 
 - name: Select the server transport without assuming public SSH remains open
   hosts: localhost

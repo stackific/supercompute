@@ -139,7 +139,15 @@ task vault-init PROVIDER=dev
 task up PROVIDER=dev
 ```
 
-When it asks for `BECOME password`, enter your macOS password. You can run `task up` multiple times to retry if you have issues, made mistakes, or just want to be sure, because this is a rather long operation yet an idempotent one. 
+`vault-init` creates `inventories/dev/.vault-pass` (gitignored) and the encrypted vault. To create the password file yourself instead (or to copy the value into GitHub Actions secret `ANSIBLE_VAULT_PASSWORD`):
+
+```sh
+python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
+  > inventories/dev/.vault-pass
+chmod 600 inventories/dev/.vault-pass
+```
+
+When it asks for `BECOME password`, enter your macOS password. You can run `task up` multiple times to retry if you have issues, made mistakes, or just want to be sure, because this is a rather long operation yet an idempotent one.
 
 Please note that the speed of operations heavily depends on the network connection between the Mac and the VM and the performance of the VM/server. We tried with dirt cheap VPSes from arbitrary providers and got poor results vs. reputable providers.
 

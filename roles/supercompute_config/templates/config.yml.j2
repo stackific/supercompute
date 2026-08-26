@@ -11,4 +11,7 @@ hosts:
   - name: {{ node }}
     wireguard_address: "{{ node_vars.wireguard_address }}"
     type: {{ node_type }}
+{% if node_type == 'public' and node_vars.wireguard_endpoint is defined and (node_vars.wireguard_endpoint | string | length) > 0 %}
+    wireguard_endpoint: "{{ node_vars.wireguard_endpoint }}:{{ wireguard_listen_port }}"
+{% endif %}
 {% endfor %}

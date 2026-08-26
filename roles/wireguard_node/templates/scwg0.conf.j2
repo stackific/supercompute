@@ -5,14 +5,19 @@ ListenPort = {{ wireguard_listen_port }}
 SaveConfig = false
 {% set hub = hostvars['localhost'].wireguard_hub | default('') %}
 {% set roaming_nodes = hostvars['localhost'].wireguard_roaming_nodes | default([]) %}
+{% set static_nodes = hostvars['localhost'].wireguard_static_nodes | default([]) %}
 {% set use_hub = roaming_nodes | length > 0 %}
 {% set self_roaming = wireguard_roaming | default(false) | bool %}
-{% if use_hub and inventory_hostname == hub %}
+{% set forward_here = use_hub and (not self_roaming) and (
+  (wireguard_forward_on_all_statics | default(true) | bool)
+  or inventory_hostname == hub
+) %}
+{% if forward_here %}
 {# ip_forward is applied by the role (drop-in + sysctl -w). PostUp only restores iptables on boot. #}
 PostUp = iptables -C FORWARD -i %i -o %i -j ACCEPT 2>/dev/null || iptables -A FORWARD -i %i -o %i -j ACCEPT
 PostDown = iptables -D FORWARD -i %i -o %i -j ACCEPT 2>/dev/null || true
 {% endif %}
-{% if not self_roaming %}
+{% if (wireguard_include_controller_peer | default(true) | bool) and (not self_roaming) %}
 
 [Peer]
 # macOS controller. Its current endpoint is learned from the authenticated
@@ -32,17 +37,22 @@ AllowedIPs = {{ wireguard_controller_address }}/32
 {% set _ = ns.other_roaming_ips.append(hostvars[r].wireguard_address ~ '/32') %}
 {% endif %}
 {% endfor %}
+{% set transit = ns.other_roaming_ips + (
+  [wireguard_controller_address ~ '/32']
+  if (wireguard_include_controller_peer | default(true) | bool) else []
+) %}
 {% set allowed = [hostvars[peer].wireguard_address ~ '/32'] + (
-  ([wireguard_controller_address ~ '/32'] + ns.other_roaming_ips)
-  if (use_hub and peer == hub) else []
+  transit if (use_hub and peer == hub) else []
 ) %}
 
 [Peer]
-# {{ peer }}{{ ' (static hub; Mac + other roaming via hub)' if (use_hub and peer == hub) else '' }}
+# {{ peer }}{{ ' (build-up hub; transit AllowedIPs; Endpoint rotated post-up)' if (use_hub and peer == hub) else '' }}
 PublicKey = {{ vault_wireguard_public_keys[peer] }}
 AllowedIPs = {{ allowed | join(', ') }}
+{% if use_hub and peer == hub %}
 Endpoint = {{ hostvars[peer].wireguard_endpoint }}:{{ wireguard_listen_port }}
 PersistentKeepalive = 25
+{% endif %}
 {% else %}
 
 [Peer]

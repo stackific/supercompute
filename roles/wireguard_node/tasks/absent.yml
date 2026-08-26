@@ -5,6 +5,27 @@
   vars:
     supercompute_config_lifecycle: absent
 
+- name: Stop and disable roaming dial timer
+  ansible.builtin.systemd_service:
+    name: supercompute-roaming-dial.timer
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  become: true
+  failed_when: false
+  when: wireguard_roaming | default(false) | bool
+
+- name: Remove roaming dial helper units and script
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  become: true
+  loop:
+    - /etc/systemd/system/supercompute-roaming-dial.timer
+    - /etc/systemd/system/supercompute-roaming-dial.service
+    - /usr/local/sbin/supercompute-roaming-dial
+  when: wireguard_roaming | default(false) | bool
+
 - name: Stop and disable this server's WireGuard interface
   ansible.builtin.systemd_service:
     name: "wg-quick@{{ wireguard_interface }}.service"
@@ -19,16 +40,19 @@
     state: absent
   become: true
 
-- name: Remove hub IPv4 forwarding drop-in written by wireguard_node
+- name: Remove IPv4 forwarding drop-in written by wireguard_node
   ansible.builtin.file:
     path: /etc/sysctl.d/99-scwg-forward.conf
     state: absent
   become: true
   when:
     - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
+    - not (wireguard_roaming | default(false) | bool)
+    - >-
+      (wireguard_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
-- name: Remove hub WireGuard peer forwarding rule
+- name: Remove WireGuard peer forwarding rule on public static relays
   ansible.builtin.iptables:
     chain: FORWARD
     in_interface: "{{ wireguard_interface }}"
@@ -38,4 +62,7 @@
   become: true
   when:
     - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
+    - not (wireguard_roaming | default(false) | bool)
+    - >-
+      (wireguard_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))

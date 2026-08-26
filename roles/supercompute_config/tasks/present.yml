@@ -42,3 +42,45 @@
     group: root
     mode: '0644'
   become: true
+
+- name: Install public static dial list for roaming Endpoint rotation
+  ansible.builtin.template:
+    src: public-endpoints.list.j2
+    dest: "{{ supercompute_public_endpoints_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+  become: true
+  no_log: true
+
+- name: Build transit AllowedIPs for roaming dial helper
+  ansible.builtin.set_fact:
+    supercompute_roaming_transit_ips: >-
+      {{
+        (
+          (
+            hostvars['localhost'].wireguard_roaming_nodes | default([])
+            | difference([inventory_hostname])
+            | map('extract', hostvars, 'wireguard_address')
+            | map('regex_replace', '^(.*)$', '\\1/32')
+            | list
+          )
+          + (
+            [wireguard_controller_address ~ '/32']
+            if (wireguard_include_controller_peer | default(true) | bool) else []
+          )
+        )
+        | unique
+        | list
+      }}
+  when: wireguard_roaming | default(false) | bool
+
+- name: Install roaming transit AllowedIPs sidecar
+  ansible.builtin.copy:
+    dest: "{{ supercompute_roaming_transit_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+    content: "{{ (supercompute_roaming_transit_ips | default([])) | join(',') }}\n"
+  become: true
+  when: wireguard_roaming | default(false) | bool

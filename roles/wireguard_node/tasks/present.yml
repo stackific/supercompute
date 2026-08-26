@@ -32,8 +32,12 @@
       - wireguard_address != wireguard_controller_address
       - vault_wireguard_private_keys[inventory_hostname] is string
       - vault_wireguard_public_keys[inventory_hostname] is string
-      - vault_wireguard_private_keys.macos is string
-      - vault_wireguard_public_keys.macos is string
+      - >
+        (not (wireguard_include_controller_peer | default(true) | bool))
+        or (
+          vault_wireguard_private_keys.macos is string
+          and vault_wireguard_public_keys.macos is string
+        )
       - >
         (wireguard_roaming | default(false) | bool)
         or (
@@ -66,7 +70,7 @@
       This server lacks hosts.yml wireguard_address, a complete
       Vault-managed WireGuard identity, or the correct bootstrap dial target
       (wireguard_endpoint for a static public host; Lima-local SSH for
-      node_lima_guest; bootstrap_ssh_host + Cloudflare for non-Lima roaming).
+      node_lima_guest; bootstrap_ssh_host for non-Lima roaming).
   no_log: true
 
 - name: Require WireGuard material for every server
@@ -118,21 +122,24 @@
   become: true
   no_log: true
 
-- name: Persist IPv4 forwarding drop-in on the static hub
+- name: Persist IPv4 forwarding drop-in on public static relays
   ansible.builtin.copy:
     dest: /etc/sysctl.d/99-scwg-forward.conf
     owner: root
     group: root
     mode: '0644'
     content: |
-      # Managed by wireguard_node — Mac↔roaming via this hub.
+      # Managed by wireguard_node — roaming transit via public statics.
       net.ipv4.ip_forward = 1
   become: true
   when:
     - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
+    - not (wireguard_roaming | default(false) | bool)
+    - >-
+      (wireguard_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
-- name: Apply IPv4 forwarding on the static hub now
+- name: Apply IPv4 forwarding on public static relays now
   ansible.builtin.command:
     argv: [sysctl, -w, net.ipv4.ip_forward=1]
   become: true
@@ -142,7 +149,10 @@
   failed_when: wireguard_hub_sysctl_apply.rc != 0
   when:
     - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
+    - not (wireguard_roaming | default(false) | bool)
+    - >-
+      (wireguard_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
 - name: Enable and start this server's WireGuard interface
   ansible.builtin.systemd_service:
@@ -193,7 +203,7 @@
   when: >-
     (hostvars['localhost'].wireguard_roaming_nodes | default([]) | length) > 0
 
-- name: Allow WireGuard peer forwarding on the static hub
+- name: Allow WireGuard peer forwarding on public static relays
   ansible.builtin.iptables:
     chain: FORWARD
     in_interface: "{{ wireguard_interface }}"
@@ -204,9 +214,12 @@
   become: true
   when:
     - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
+    - not (wireguard_roaming | default(false) | bool)
+    - >-
+      (wireguard_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
-- name: Require IPv4 forwarding on the static hub after WireGuard is up
+- name: Require IPv4 forwarding on public static relays after WireGuard is up
   ansible.builtin.command:
     argv: [sysctl, -n, net.ipv4.ip_forward]
   register: wireguard_hub_ip_forward
@@ -214,9 +227,73 @@
   failed_when: (wireguard_hub_ip_forward.stdout | trim) != '1'
   when:
     - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
+    - not (wireguard_roaming | default(false) | bool)
+    - >-
+      (wireguard_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
-- name: Have roaming nodes initiate WireGuard through the static hub toward the Mac
+- name: Install roaming random-static dial helper
+  ansible.builtin.copy:
+    src: supercompute-roaming-dial.sh
+    dest: /usr/local/sbin/supercompute-roaming-dial
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when: wireguard_roaming | default(false) | bool
+
+- name: Install roaming dial systemd service
+  ansible.builtin.template:
+    src: supercompute-roaming-dial.service.j2
+    dest: /etc/systemd/system/supercompute-roaming-dial.service
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: wireguard_roaming | default(false) | bool
+
+- name: Install roaming dial systemd timer
+  ansible.builtin.template:
+    src: supercompute-roaming-dial.timer.j2
+    dest: /etc/systemd/system/supercompute-roaming-dial.timer
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: wireguard_roaming | default(false) | bool
+
+- name: Enable and start roaming dial timer
+  ansible.builtin.systemd_service:
+    name: supercompute-roaming-dial.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+  when: wireguard_roaming | default(false) | bool
+
+- name: Run roaming dial helper once after WireGuard is up
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/supercompute-roaming-dial]
+  become: true
+  when: wireguard_roaming | default(false) | bool
+  changed_when: true
+
+- name: Install optional Mac operator SSH public key for ops
+  ansible.builtin.lineinfile:
+    path: "/home/{{ default_ssh_user }}/.ssh/authorized_keys"
+    line: "{{ mac_operator_ssh_public_key | trim }}"
+    create: true
+    owner: "{{ default_ssh_user }}"
+    group: "{{ default_ssh_user }}"
+    mode: '0600'
+    state: present
+  become: true
+  when:
+    - mac_operator_ssh_public_key is string
+    - mac_operator_ssh_public_key | length > 0
+    - not (node_lima_guest | default(false) | bool)
+
+- name: Have roaming nodes initiate WireGuard toward the Mac controller when present
   ansible.builtin.command:
     argv:
       - ping
@@ -227,7 +304,9 @@
       - -I
       - "{{ wireguard_interface }}"
       - "{{ wireguard_controller_address }}"
-  when: wireguard_roaming | default(false) | bool
+  when:
+    - wireguard_roaming | default(false) | bool
+    - wireguard_include_controller_peer | default(true) | bool
   register: wireguard_roaming_controller_ping
   changed_when: false
   failed_when: false

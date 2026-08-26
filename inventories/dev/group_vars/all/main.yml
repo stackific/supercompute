@@ -20,15 +20,25 @@ provider:
 # Reverse-DNS of config.yml hostname (example.com → com.example) for LaunchDaemon labels.
 reverse_dns: "{{ hostname.split('.') | reverse | join('.') }}"
 
+# mac = local Mac controller peer + LaunchDaemon; gha = runner-only control plane (no Mac peer).
+control_plane: mac
+wireguard_include_controller_peer: "{{ control_plane != 'gha' }}"
+# When roaming exists, every public static forwards so post-build random dial can use any static.
+wireguard_forward_on_all_statics: true
+wireguard_roaming_dial_timer_on_calendar: hourly
+
 default_ssh_user: ops
 default_ssh_port: 22
 known_hosts_file: "{{ provider_state_dir }}/known_hosts"
 ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ project }}-{{ inventory_slug }}"
+# Optional operator Mac pubkey (GHA secret MAC_OPERATOR_SSH_PUBLIC_KEY); empty skips install.
+mac_operator_ssh_public_key: "{{ lookup('ansible.builtin.env', 'MAC_OPERATOR_SSH_PUBLIC_KEY') | default('', true) }}"
 
 wireguard_interface: scwg0
 wireguard_network_cidr: 10.217.80.0/24
 wireguard_prefix_length: 24
 wireguard_controller_address: 10.217.80.1
+wireguard_ci_address: 10.217.80.254
 wireguard_listen_port: 51830
 wireguard_tools_version: "1.0.20250521-1ubuntu1"
 wireguard_state_dir: "{{ provider_state_dir }}/wireguard"

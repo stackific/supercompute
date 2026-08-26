@@ -120,8 +120,12 @@
     that:
       - vault_wireguard_private_keys is mapping
       - vault_wireguard_public_keys is mapping
-      - vault_wireguard_private_keys.macos is string
-      - vault_wireguard_public_keys.macos is string
+      - >
+        (not (wireguard_include_controller_peer | default(true) | bool))
+        or (
+          vault_wireguard_private_keys.macos is string
+          and vault_wireguard_public_keys.macos is string
+        )
   no_log: true
 
 - name: Require encrypted WireGuard material for every server

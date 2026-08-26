@@ -23,6 +23,7 @@ Python helpers use **`uv run --locked`** from the worktree root. Shell scripts a
 | `scripts/wireguard-ssh-config.py` | Generate SSH config snippets for mesh/bootstrap |
 | `scripts/wg-ssh.sh` | `task ssh` entrypoint |
 | `scripts/disconnect-wireguard.sh` | `task wg-remove` for public meshes |
+| `scripts/gha-mesh-peer.sh` | Ephemeral GHA runner WireGuard peer (`control_plane=gha`) |
 | `scripts/dev_reset_controller_wireguard.py` | Dev-reset controller teardown when `.state/dev` is absent |
 | `scripts/wireguard_ssh_target.py` | Resolve SSH target for a node |
 | `scripts/select-wireguard-interface.py` | Pick WireGuard interface name |

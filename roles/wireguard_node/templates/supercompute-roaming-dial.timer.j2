@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically re-pick Supercompute roaming WireGuard dial target
+
+[Timer]
+OnCalendar={{ wireguard_roaming_dial_timer_on_calendar | default('hourly') }}
+Persistent=true
+Unit=supercompute-roaming-dial.service
+
+[Install]
+WantedBy=timers.target
