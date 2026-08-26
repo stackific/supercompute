@@ -22,6 +22,17 @@ wireguard_ci_address: 10.217.79.254   # ephemeral runner mesh IP (unique in CIDR
 
 Commit `hosts.yml` and encrypted `group_vars/all/vault.yml`. Keep `.vault-pass` out of git.
 
+## Ephemeral runner mesh peer
+
+`up` / `verify` briefly join the GitHub-hosted **runner VM** (`ubuntu-latest`) to the mesh as `wireguard_ci_address`, then remove that peer when the job ends. That runner filesystem (including generated CI WireGuard keys under `.state/<provider>/gha-peer/`) is discarded with the runner — **not** your static/roaming/Lima nodes. A later workflow run generates a new CI keypair, re-adds the peer, works, and removes it again without tearing down the existing node mesh.
+
+## Log hygiene
+
+- Repo secrets are written to mode-`0600` files; values are not echoed.
+- Generated CI keys and optional Mac pubkey are registered with `::add-mask::`.
+- Ansible receives `control_plane` / keys via `--extra-vars @file` (not argv literals).
+- `gha-mesh-peer` play uses play-level `no_log: true`.
+
 ## Repository secrets
 
 | Secret | Required | Purpose |

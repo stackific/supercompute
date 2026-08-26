@@ -21,6 +21,7 @@
   gather_facts: false
   serial: 1
   any_errors_fatal: true
+  no_log: true
   vars:
     gha_mesh_peer_lifecycle: present
     # Reach nodes over bootstrap/public SSH — the runner is not on-mesh yet.
@@ -47,7 +48,6 @@
           - gha_wg_public_key is string
           - gha_wg_public_key | length > 0
       when: gha_mesh_peer_lifecycle == 'present'
-      no_log: true
 
     - name: Add ephemeral CI peer on this node
       ansible.builtin.command:
@@ -63,7 +63,6 @@
           - "25"
       become: true
       when: gha_mesh_peer_lifecycle == 'present'
-      no_log: true
 
     - name: Remove ephemeral CI peer on this node
       ansible.builtin.shell:

@@ -30,7 +30,9 @@ jobs:
     env:
       PROVIDER: ${{ inputs.provider }}
       CONFIRM: ${{ inputs.confirm }}
-      MAC_OPERATOR_SSH_PUBLIC_KEY: ${{ secrets.MAC_OPERATOR_SSH_PUBLIC_KEY }}
+      ANSIBLE_STDOUT_CALLBACK: default
+      ANSIBLE_DISPLAY_ARGS_TO_STDOUT: "False"
+      ANSIBLE_VERBOSITY: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -80,6 +82,28 @@ jobs:
           printf '%s\n' "${OPS_SSH_PRIVATE_KEY}" >"${key_path}"
           chmod 600 "${key_path}"
 
+      - name: Write GHA Ansible extra-vars file
+        env:
+          MAC_OPERATOR_SSH_PUBLIC_KEY: ${{ secrets.MAC_OPERATOR_SSH_PUBLIC_KEY }}
+        run: |
+          umask 077
+          mkdir -p ".state/${PROVIDER}"
+          export VARS_FILE=".state/${PROVIDER}/gha-extra-vars.yml"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["VARS_FILE"])
+          key = (os.environ.get("MAC_OPERATOR_SSH_PUBLIC_KEY") or "").strip()
+          lines = ["control_plane: gha"]
+          if key:
+            print(f"::add-mask::{key}", flush=True)
+            escaped = key.replace("'", "''")
+            lines.append(f"mac_operator_ssh_public_key: '{escaped}'")
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          path.chmod(0o600)
+          PY
+
       - name: Known hosts
         if: inputs.action != 'verify'
         run: |
@@ -96,11 +120,11 @@ jobs:
         if: inputs.action == 'up'
         run: |
           bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "control_plane=gha" \
+            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
             playbooks/wireguard-up.yml
           bash scripts/gha-mesh-peer.sh "${PROVIDER}" present
           bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "control_plane=gha" \
+            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
             playbooks/cluster-up.yml
 
       - name: Down
@@ -112,19 +136,24 @@ jobs:
           }
           bash scripts/gha-mesh-peer.sh "${PROVIDER}" absent || true
           bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "control_plane=gha" \
+            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
             playbooks/cluster-down.yml
           bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "control_plane=gha" \
+            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
             playbooks/wireguard-down.yml
 
       - name: Verify
         if: inputs.action == 'verify'
         run: |
+          uv run --locked python scripts/known-hosts.py \
+            --inventory "inventories/${PROVIDER}/hosts.yml" \
+            --known-hosts ".state/${PROVIDER}/known_hosts" \
+            --reuse-existing
+          bash scripts/gha-mesh-peer.sh "${PROVIDER}" present
           bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "control_plane=gha" \
+            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
             playbooks/verify.yml
 
       - name: Remove ephemeral mesh peer
-        if: always() && inputs.action == 'up'
+        if: always() && (inputs.action == 'up' || inputs.action == 'verify')
         run: bash scripts/gha-mesh-peer.sh "${PROVIDER}" absent || true
