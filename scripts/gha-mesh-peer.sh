@@ -14,15 +14,6 @@ project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${project_dir}"
 
 state_dir="${project_dir}/.state/${provider}/gha-peer"
-iface="$(
-  uv run --locked python - <<PY
-import yaml
-from pathlib import Path
-main = yaml.safe_load(Path("inventories/${provider}/group_vars/all/main.yml").read_text())
-# Jinja in that file — fall back.
-print("scwg0")
-PY
-)"
 iface="${WIREGUARD_INTERFACE:-scwg0}"
 
 ci_address="$(
