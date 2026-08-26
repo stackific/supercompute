@@ -43,7 +43,7 @@ tasks:
         - CONFIRM
     env:
       CONFIRM: "{{.CONFIRM}}"
-      LIMA_RUNTIME_HOME_MODE: path
+      LIMA_RUNTIME_HOME_MODE: ensure
     preconditions:
       - sh: command -v limactl >/dev/null 2>&1
         msg: Install Lima before running lima-destroy
@@ -67,7 +67,7 @@ tasks:
       - sh: command -v uv >/dev/null 2>&1
         msg: Install uv before running dev-reset
     cmds:
+      - CONFIRM=destroy-lima-dev LIMA_RUNTIME_HOME_MODE=ensure bash scripts/ansible-playbook.sh dev playbooks/lima-destroy.yml
       - CONFIRM=reset-dev bash scripts/ansible-playbook.sh dev --ask-become-pass playbooks/dev-reset-controller.yml
-      - CONFIRM=destroy-lima-dev LIMA_RUNTIME_HOME_MODE=path bash scripts/ansible-playbook.sh dev playbooks/lima-destroy.yml
       - PROVIDER=dev CONFIRM=destroy-vault-dev uv run --locked python scripts/vault.py destroy
       - CONFIRM=reset-dev bash scripts/ansible-playbook.sh dev playbooks/dev-reset.yml

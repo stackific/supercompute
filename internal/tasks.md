@@ -22,8 +22,9 @@ task --list
 | `task vault-init PROVIDER=<slug>` | New encrypted vault + password file |
 | `task vault-edit PROVIDER=<slug>` | Edit vault in `$EDITOR` |
 | `task vault-wireguard-ensure PROVIDER=<slug>` | Ensure WG keys in vault |
-| `task vault-reset PROVIDER=<slug> CONFIRM=reset-vault-<slug>` | Empty vault + new password |
 | `task vault-destroy PROVIDER=<slug> CONFIRM=destroy-vault-<slug>` | Delete vault files |
+
+Wipe and recreate: `vault-destroy`, then `vault-init`.
 
 ## Lima (`taskfiles/lima.yml`)
 
@@ -35,7 +36,7 @@ Only affects hosts with `node_lima_guest: true`.
 | `task lima-host-fingerprints` | Capture dev guest ED25519 fingerprints into `hosts.yml` |
 | `task lima-status` | Dev resource table without creating state |
 | `task lima-destroy CONFIRM=destroy-lima-dev` | Destroy dev guests and disks |
-| `task dev-reset CONFIRM=reset-dev` | Disconnect dev controller WireGuard, destroy Lima guests, delete `.state/dev`, and delete the dev vault/password |
+| `task dev-reset CONFIRM=reset-dev` | Destroy Lima guests and runtime home, disconnect dev controller WireGuard, delete `.state/dev`, and delete the dev vault/password |
 
 ## Lifecycle (`taskfiles/cluster.yml`)
 

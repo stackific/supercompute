@@ -1,0 +1,3 @@
+---
+- name: Apply supercompute project config lifecycle
+  ansible.builtin.include_tasks: "{{ supercompute_config_lifecycle }}.yml"

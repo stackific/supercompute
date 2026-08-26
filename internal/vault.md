@@ -7,15 +7,15 @@ Each provider inventory has an encrypted vault and a local password file.
 | `inventories/<provider>/group_vars/all/vault.yml` | Encrypted YAML |
 | `inventories/<provider>/.vault-pass` | Vault password (operator-local) |
 
-Vault ID label: `<cloud_name>-<provider>` (from `cloud.yml` + inventory slug). Header must match for `ansible-vault` operations.
+Vault ID label: `<project>-<provider>` (from `config.yml` + inventory slug). Header must match for `ansible-vault` operations.
 
 ## Document shape
 
 Decrypted vault must contain:
 
 ```yaml
-cloud_vault:
-  cloud_name: sc   # must match cloud.yml
+vault_meta:
+  project: example   # must match config.yml
   provider: dev         # must match inventory slug
   secrets: { … }
 ```
@@ -30,8 +30,9 @@ cloud_vault:
 | `task vault-edit PROVIDER=<slug>` | Decrypt, edit in `$EDITOR`, re-encrypt, validate |
 | `task vault-wireguard-ensure PROVIDER=<slug>` | Ensure WireGuard key pairs exist in vault |
 | `PROVIDER=<slug> uv run --locked python scripts/vault.py migrate` | Upgrade legacy vault key names in place |
-| `task vault-reset PROVIDER=<slug> CONFIRM=reset-vault-<slug>` | Empty vault + rotate password |
 | `task vault-destroy PROVIDER=<slug> CONFIRM=destroy-vault-<slug>` | Delete vault and password file |
+
+To wipe and recreate a provider vault: `vault-destroy`, then `vault-init`.
 
 `up` calls `vault.py ensure-wireguard` automatically before the WireGuard playbook.
 
@@ -47,18 +48,18 @@ task vault-init PROVIDER=dev
 
 ## WireGuard keys
 
-`ensure-wireguard` generates per-node WireGuard key material in the vault when missing (`vault_cloud_wireguard_private_keys` / `vault_cloud_wireguard_public_keys`). Keys sync to `.state/<provider>/wireguard/` during `up`.
+`ensure-wireguard` generates per-node WireGuard key material in the vault when missing (`vault_wireguard_private_keys` / `vault_wireguard_public_keys`). Keys sync to `.state/<provider>/wireguard/` during `up`.
 
 ## Rename / migration
 
-If `cloud_name` changes:
+If `project` changes:
 
 1. Decrypt vault with old vault-id label.
-2. Update `cloud_vault.cloud_name` inside the document.
-3. Change `cloud.yml`.
+2. Update `vault_meta.project` inside the document.
+3. Change `config.yml`.
 4. Re-encrypt with the new vault-id label.
 
-Mismatch between `cloud.yml`, vault header, and inner `cloud_name` causes decrypt or validation failures.
+Mismatch between `config.yml`, vault header, and inner `project` causes decrypt or validation failures.
 
 ## Related
 

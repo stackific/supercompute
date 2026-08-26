@@ -32,5 +32,4 @@ tasks:
           '  dev-reset      CONFIRM=reset-dev' \
           '  lima-destroy   CONFIRM=destroy-lima-dev' \
           '  ssh            NODE=<inventory_hostname>' \
-          '  vault-reset    CONFIRM=reset-vault-<slug>' \
           '  vault-destroy  CONFIRM=destroy-vault-<slug>'

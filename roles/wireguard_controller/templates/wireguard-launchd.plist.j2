@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>{{ cloud_wireguard_launchd_label }}</string>
+  <string>{{ wireguard_launchd_label }}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{{ cloud_wireguard_controller_wg_quick.stdout }}</string>
+    <string>{{ wireguard_controller_wg_quick.stdout }}</string>
     <string>up</string>
-    <string>{{ cloud_wireguard_config_path }}</string>
+    <string>{{ wireguard_config_path }}</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>{{ cloud_wireguard_controller_wg_quick.stdout | dirname }}:/usr/local/bin:/usr/bin:/bin</string>
+    <string>{{ wireguard_controller_wg_quick.stdout | dirname }}:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

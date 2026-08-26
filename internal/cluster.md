@@ -17,8 +17,8 @@
 zones, configure an application hostname, or perform DNS lookups. DNS
 delegation remains an external operator responsibility.
 
-Set the externally managed nameserver hostname in `cloud.yml` with
-`cloud_nameserver_hostname`; its default is `ns.example.com`.
+Set the externally managed nameserver hostname in `config.yml` with
+`nameserver_hostname`; its default is `ns.example.com`.
 
 ## Architecture mapping
 

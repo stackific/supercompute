@@ -10,7 +10,7 @@ requested_provider="$1"
 shift
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cloud_vars="${project_dir}/cloud.yml"
+cloud_vars="${project_dir}/config.yml"
 python_runtime="${project_dir}/.venv/bin/python"
 provider_dir="${project_dir}/inventories/${requested_provider}"
 
@@ -60,7 +60,7 @@ fi
 vault_args=()
 provider_vault_file="${provider_dir}/group_vars/all/vault.yml"
 provider_vault_password_file="${provider_dir}/.vault-pass"
-cloud_name="$("${python_runtime}" "${project_dir}/scripts/cloud_name.py")"
+cloud_name="$("${python_runtime}" "${project_dir}/scripts/config_project.py")"
 provider_vault_id="${cloud_name}-${requested_provider}"
 
 if [[ -e "${provider_vault_file}" || -e "${provider_vault_password_file}" ]]; then

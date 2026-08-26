@@ -17,7 +17,7 @@ These task entrypoints are dev-only; `roaming-1` is the tracked guest.
 
 | Location | Content |
 | --- | --- |
-| `~/.lima/.<cloud_name>-<provider>/` | Lima VM runtime (`LIMA_HOME` / `lima_runtime_home`) |
+| `~/.lima/.<project>-<provider>/` | Lima VM runtime (`LIMA_HOME` / `lima_runtime_home`) |
 | `.state/<provider>/lima/` | Instance definitions managed by Ansible |
 | `inventories/<provider>/group_vars/all/main.yml` | `lima_nodes` port/MAC mapping |
 
@@ -33,8 +33,8 @@ Image defaults in `dev` inventory point at Ubuntu 26.04 arm64 template.
 
 Lima roaming guests are **`wireguard_roaming: true`** peers:
 
-- They dial the static hub’s **`cloud_wireguard_endpoint`** (`public-ip:51830`).
-- They do **not** have `cloud_wireguard_endpoint` in inventory.
+- They dial the static hub’s **`wireguard_endpoint`** (`public-ip:51830`).
+- They do **not** have `wireguard_endpoint` in inventory.
 - The Mac does not need inbound UDP 51830 for Mac↔guest mesh (hub forwards when applicable).
 
 ## Bootstrap SSH
@@ -49,7 +49,7 @@ Ansible reaches Lima guests via **Lima-local SSH**:
 
 ## Host-key fingerprints
 
-After `lima-up`, `scripts/lima-host-fingerprints.py` scans each guest and writes `cloud_ssh_host_ed25519_sha256` into `hosts.yml`.
+After `lima-up`, `scripts/lima-host-fingerprints.py` scans each guest and writes `ssh_host_ed25519_sha256` into `hosts.yml`.
 
 ```sh
 task lima-host-fingerprints
@@ -83,9 +83,9 @@ task ssh PROVIDER=dev NODE=roaming-1
 
 ## Full dev reset
 
-`dev-reset` disconnects the dev controller interface, destroys the Lima
-guests, deletes `.state/dev`, and deletes the dev vault/password. It leaves the
-dedicated Lima runtime home and remote static host intact.
+`dev-reset` disconnects the dev controller interface, destroys Lima guests and
+their dedicated runtime home (`~/.lima/.<project>-dev`), deletes `.state/dev`,
+and deletes the dev vault/password. It leaves the remote static host intact.
 
 ```sh
 task dev-reset CONFIRM=reset-dev

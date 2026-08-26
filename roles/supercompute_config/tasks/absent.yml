@@ -1,0 +1,12 @@
+---
+- name: Remove project config from this server
+  ansible.builtin.file:
+    path: "{{ supercompute_config_path }}"
+    state: absent
+  become: true
+
+- name: Remove the supercompute configuration directory when empty
+  ansible.builtin.file:
+    path: "{{ supercompute_config_dir }}"
+    state: absent
+  become: true

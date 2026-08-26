@@ -16,4 +16,4 @@
           WireGuard wg-remove for PROVIDER={{ inventory_slug }} requires a Lima
           local provider. Public-endpoint WireGuard is the next slice.
   roles:
-    - wireguard_remove
+    - lima_wireguard_remove

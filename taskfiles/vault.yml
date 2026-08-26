@@ -18,17 +18,6 @@ tasks:
     cmds:
       - uv run --locked python scripts/vault.py edit
 
-  vault-reset:
-    desc: Reset a provider vault and rotate its generated password
-    requires:
-      vars:
-        - PROVIDER
-        - CONFIRM
-    env:
-      CONFIRM: "{{.CONFIRM}}"
-    cmds:
-      - uv run --locked python scripts/vault.py reset
-
   vault-destroy:
     desc: Delete a provider vault and its generated password
     requires:

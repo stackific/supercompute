@@ -152,26 +152,26 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
   contract: list[dict[str, str]] = []
   for node in nodes:
     values = hosts[node]
-    fingerprint = values.get("cloud_ssh_host_ed25519_sha256")
+    fingerprint = values.get("ssh_host_ed25519_sha256")
     if not isinstance(fingerprint, str) or not FINGERPRINT_PATTERN.fullmatch(fingerprint):
       raise HostKeyError(
-        f"{node}: cloud_ssh_host_ed25519_sha256 must be a complete "
+        f"{node}: ssh_host_ed25519_sha256 must be a complete "
         "console-verified SHA256 fingerprint"
       )
     if fingerprint.startswith("SHA256:REPLACE_WITH_"):
-      raise HostKeyError(f"{node}: replace cloud_ssh_host_ed25519_sha256 placeholder first")
+      raise HostKeyError(f"{node}: replace ssh_host_ed25519_sha256 placeholder first")
 
     if is_lima_guest(values):
       if not is_roaming(values):
         raise HostKeyError(f"{node}: node_lima_guest requires wireguard_roaming: true")
-      if values.get("cloud_bootstrap_ssh_host"):
+      if values.get("bootstrap_ssh_host"):
         raise HostKeyError(
-          f"{node}: node_lima_guest must omit cloud_bootstrap_ssh_host "
+          f"{node}: node_lima_guest must omit bootstrap_ssh_host "
           "(bootstrap uses Lima-local SSH)"
         )
-      if values.get("cloud_wireguard_endpoint"):
+      if values.get("wireguard_endpoint"):
         raise HostKeyError(
-          f"{node}: node_lima_guest must omit cloud_wireguard_endpoint"
+          f"{node}: node_lima_guest must omit wireguard_endpoint"
         )
       if node not in lima_ports:
         raise HostKeyError(f"{node}: node_lima_guest requires a matching lima_nodes entry")
@@ -180,17 +180,17 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
       port = str(lima_ports[node])
     elif is_roaming(values):
       dial = validate_dial_target(
-        values.get("cloud_bootstrap_ssh_host"),
+        values.get("bootstrap_ssh_host"),
         node,
-        "cloud_bootstrap_ssh_host",
+        "bootstrap_ssh_host",
       )
       kind = "roaming"
       port = ""
     else:
       dial = validate_dial_target(
-        values.get("cloud_wireguard_endpoint"),
+        values.get("wireguard_endpoint"),
         node,
-        "cloud_wireguard_endpoint",
+        "wireguard_endpoint",
       )
       kind = "public"
       port = ""
@@ -210,7 +210,7 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
     raise HostKeyError("Inventory contains duplicate public endpoints among static hosts")
   roaming_hosts = [item["endpoint"] for item in contract if item["kind"] == "roaming"]
   if len(set(roaming_hosts)) != len(roaming_hosts):
-    raise HostKeyError("Inventory contains duplicate cloud_bootstrap_ssh_host values")
+    raise HostKeyError("Inventory contains duplicate bootstrap_ssh_host values")
   lima_endpoints = [
     f"{item['endpoint']}:{item['port']}" for item in contract if item["kind"] == "lima"
   ]
@@ -270,7 +270,7 @@ def parse_host_pubkey_line(output: str, node: str) -> tuple[str, str]:
     return fields[1], fingerprint_key_blob(fields[1])
   raise HostKeyError(
     f"{node}: bootstrap SSH did not return /etc/ssh/ssh_host_ed25519_key.pub "
-    "(prove `ssh <cloud_bootstrap_ssh_host> true` per internal/roaming-nodes.md first)"
+    "(prove `ssh <bootstrap_ssh_host> true` per internal/roaming-nodes.md first)"
   )
 
 

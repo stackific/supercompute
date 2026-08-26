@@ -23,8 +23,8 @@ task setup
 1. Create Ubuntu 26.04 `x86_64` on a provider with a public IP.
 2. Follow host prep in [setup-prod.md](setup-prod.md) (SSH user, operator key, sudo).
 3. Fill `inventories/dev/hosts.yml` placeholders for `static-1`:
-   - `cloud_wireguard_endpoint`
-   - `cloud_ssh_host_ed25519_sha256`
+   - `wireguard_endpoint`
+   - `ssh_host_ed25519_sha256`
 4. Open UDP **51830** on the static host for roaming egress.
 
 ## 4. Lima roaming guest
@@ -34,7 +34,7 @@ task lima-up
 task lima-status
 ```
 
-`lima-up` auto-fills `cloud_ssh_host_ed25519_sha256` for `node_lima_guest` hosts.
+`lima-up` auto-fills `ssh_host_ed25519_sha256` for `node_lima_guest` hosts.
 
 ## 5. Vault and mesh
 
@@ -57,8 +57,8 @@ task lima-up
 task up PROVIDER=dev
 ```
 
-`dev-reset` does not change the remote static host or delete the dedicated
-Lima runtime home.
+`dev-reset` does not change the remote static host. It removes Lima guests,
+their dedicated runtime home, `.state/dev`, and the dev vault/password.
 
 ## 6. Optional cluster stack
 

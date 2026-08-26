@@ -19,12 +19,12 @@ tasks:
         platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
         case "${platform}" in
           public)
-            uv run --locked python scripts/cloud-known-hosts.py \
+            uv run --locked python scripts/known-hosts.py \
               --inventory "inventories/{{.PROVIDER}}/hosts.yml" \
               --known-hosts ".state/{{.PROVIDER}}/known_hosts" \
               --reuse-existing
             uv run --locked python scripts/vault.py ensure-wireguard
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/cloud-wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/wireguard-up.yml
             bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cluster-up.yml
             ;;
           lima)
@@ -71,8 +71,8 @@ tasks:
         case "${platform}" in
           public)
             bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cluster-down.yml
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cloud-wireguard-down.yml
-            bash scripts/disconnect-cloud-wireguard.sh "{{.PROVIDER}}"
+            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/wireguard-down.yml
+            bash scripts/disconnect-wireguard.sh "{{.PROVIDER}}"
             ;;
           lima)
             echo "provider.platform=lima is refused; use provider.platform=public." >&2

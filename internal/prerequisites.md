@@ -20,14 +20,16 @@ task setup
 
 ## Deployment namespace
 
-`cloud.yml` at the worktree root defines `cloud_name` (currently `sc`). This name prefixes:
+`config.yml` at the worktree root defines `project` (currently `example`). This name prefixes:
 
-- SSH key path: `~/.ssh/<cloud_name>-<provider>`
-- Lima runtime home: `~/.lima/.<cloud_name>-<provider>`
+- SSH key path: `~/.ssh/<project>-<provider>`
+- Lima runtime home: `~/.lima/.<project>-<provider>`
 - WireGuard LaunchDaemon label on macOS
-- Vault ID label: `<cloud_name>-<provider>`
+- Vault ID label: `<project>-<provider>`
 
-Changing `cloud_name` after go-live creates new paths and labels; it does not migrate existing state.
+The same file is rendered to **`/etc/supercompute/config.yml`** on every deployment node during `task up` / WireGuard reconcile. That copy adds a `hosts` list (`name`, `wireguard_address`, `type`: `public` | `roaming` | `lima`) from inventory.
+
+Changing `project` after go-live creates new paths and labels; it does not migrate existing state.
 
 ## Operator SSH identity
 
@@ -35,12 +37,12 @@ Create once per deployment (empty passphrase; store in password manager):
 
 ```sh
 ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/<cloud_name>-<provider> \
-  -C "<cloud_name> <provider>"
-ssh-add ~/.ssh/<cloud_name>-<provider>
+  -f ~/.ssh/<project>-<provider> \
+  -C "<project> <provider>"
+ssh-add ~/.ssh/<project>-<provider>
 ```
 
-Inventory references this key via `cloud_ssh_private_key_file` in `group_vars/all/main.yml`.
+Inventory references this key via `ssh_private_key_file` in `group_vars/all/main.yml`.
 
 ## Node OS
 

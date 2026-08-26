@@ -20,6 +20,4 @@
 
 - Design pragmatic, production-safe infrastructure for hosting business applications—not bank-grade systems. Prefer the smallest maintainable solution built from existing project and upstream primitives; avoid speculative hardening, duplicate mechanisms, compatibility layers without a current need, and unrelated scope.
 - Treat proven working subsystems—especially the existing WireGuard + Lima foundation—as frozen behavior. Integrate only through the smallest adapter, add characterization/parity tests before changing a consumer, and reject adjacent-ticket edits to their ownership, lifecycle, networking, firewall, or cleanup; any unavoidable redesign requires its own explicit operator-approved issue.
-- Before proposing work, inspect the current code, active documentation and issues, and relevant upstream primary sources. Amend the owning issue instead of creating a duplicate, and do not reopen decisions the operator has already made.
-- Keep each GitHub issue small, dependency-ordered, and independently implementable. State its goal, dependencies, exact scope, observable acceptance criteria, and exclusions.
-- Draft ticket changes first. Create or edit a GitHub issue only with explicit operator approval for that exact mutation, and immediately report the issue link after an approved change. GitHub Project board changes likewise require explicit operator approval.
+- Before proposing work, inspect the current code and active documentation

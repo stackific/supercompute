@@ -8,7 +8,7 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 | --- | --- |
 | [overview.md](overview.md) | What Supercompute is and how the automation fits together |
 | [get-started.md](get-started.md) | Fast path from clone to a working `dev` mesh |
-| [prerequisites.md](prerequisites.md) | Host tools, `cloud_name`, SSH identity |
+| [prerequisites.md](prerequisites.md) | Host tools, `project`, SSH identity |
 
 ## Runbooks
 
@@ -41,7 +41,7 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 
 ## Conventions
 
-- **Worktree root** — directory containing `Taskfile.yml`, `cloud.yml`, `inventories/`, and `internal/`.
+- **Worktree root** — directory containing `Taskfile.yml`, `config.yml`, `inventories/`, and `internal/`.
 - **`PROVIDER`** — inventory slug (`dev`, `prod`, …).
-- **`cloud_name`** — from `cloud.yml` (currently `sc`).
+- **`project`** — from `config.yml` (currently `example`).
 - **`provider.platform: public`** — required; `vps` and `lima` are refused.

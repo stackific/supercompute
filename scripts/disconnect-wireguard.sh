@@ -22,8 +22,23 @@ provider_platform="$("${python_runtime}" "${project_dir}/scripts/provider_platfo
   exit 2
 }
 
-cloud_name="$("${python_runtime}" "${project_dir}/scripts/cloud_name.py")"
-launchd_label="com.stackific.${cloud_name}.${requested_provider}.wireguard"
+project_name="$("${python_runtime}" "${project_dir}/scripts/config_project.py")"
+launchd_label="$(
+  cd "${project_dir}"
+  uv run --locked python - <<PY
+from pathlib import Path
+import yaml
+config = yaml.safe_load(Path("config.yml").read_text(encoding="utf-8"))
+hostname = config.get("hostname")
+project = config.get("project")
+if not isinstance(hostname, str) or not hostname.strip():
+  raise SystemExit("config.yml must contain a non-empty hostname")
+if not isinstance(project, str) or not project.strip():
+  raise SystemExit("config.yml must contain a non-empty project")
+reverse_dns = ".".join(reversed(hostname.split(".")))
+print(f"{reverse_dns}.{project}.${requested_provider}.wireguard")
+PY
+)"
 launchd_path="/Library/LaunchDaemons/${launchd_label}.plist"
 
 if [[ "${DEPLOY_CLOUD_WG_DISCONNECT_TEST_MODE:-0}" == "1" ]]; then
@@ -56,8 +71,8 @@ import yaml
 root = Path("${project_dir}")
 provider = "${requested_provider}"
 main = yaml.safe_load((root / "inventories" / provider / "group_vars/all/main.yml").read_text())
-address = main["cloud_wireguard_controller_address"]
-iface = main["cloud_wireguard_interface"]
+address = main["wireguard_controller_address"]
+iface = main["wireguard_interface"]
 state = root / ".state" / provider
 print(address, iface, state / "wireguard" / f"{iface}.conf", state / "known_hosts")
 PY
@@ -101,8 +116,8 @@ if [[ -f "${launchd_path}" && ! -L "${launchd_path}" ]]; then
 elif ifconfig | awk -v expected="${controller_address}" \
   '$1 == "inet" && $2 == expected { found = 1 } END { exit !found }'; then
   echo "LaunchDaemon ${launchd_path} is missing but ${controller_address} is active."
-  echo "Disconnecting via ${config_path} only (common after renaming cloud_name)."
-  echo "Remove any orphaned /Library/LaunchDaemons/com.stackific.*.prod.wireguard.plist manually if present."
+  echo "Disconnecting via ${config_path} only (common after renaming project)."
+  echo "Remove any orphaned LaunchDaemon plists for previous reverse-DNS prefixes under /Library/LaunchDaemons/ manually if present."
 else
   echo "Production controller already disconnected for label ${launchd_label} (no ${launchd_path}; ${controller_address} is inactive)."
   exit 0

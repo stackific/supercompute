@@ -3,13 +3,14 @@ title: Get started locally
 description: Install the toolchain and bring up a Supercompute dev mesh on your Mac.
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { Card, CardGrid } from "@astrojs/starlight/components";
 
 Supercompute is a free geo-replicated purpose-built cloud for AI-first workloads that you can self-host on own commodity hardware, inside of your laptop's VM, inside of your NAS. You can achieve high availability even with just _two_ nodes. It was created by Stackific Inc.
 
 All you need is a static IP (because users need to reach you) and an external Postgres.
 
-This guide gets you from a fresh clone to a working local **`dev`** instance: one public static hub plus an optional Lima roaming guest on Apple Silicon.
+This guide gets you from a fresh clone to a working local **`dev`** instance: one public VM plus an optional Lima roaming guest on Apple Silicon.
 
 ## Quick Start
 
@@ -26,7 +27,15 @@ This guide gets you from a fresh clone to a working local **`dev`** instance: on
 brew install go-task/tap/go-task uv wireguard-tools lima
 ```
 
-### Step 1 - Install dependencies
+If you already have a working `dev` inventory you setup successfully or otherwise, you must reset it before continuing.
+
+```yaml
+task dev-reset CONFIRM=reset-dev
+```
+
+If it asks for `BECOME password`, enter your macOS password. It does not change the remote static servers. It removes Lima guests, their dedicated runtime home (`~/.lima/.<project>-dev`), `.state/dev`, and the dev vault. 
+
+### Step 1: Install dependencies
 
 From the project root directory:
 
@@ -36,28 +45,119 @@ task setup
 
 `task setup` installs the locked Ansible venv. On macOS it also ensures `cloudflared` is on PATH when missing (needed only for non-Lima roaming nodes, not Lima guests).
 
-### Prepare inventory
+### Step 2: Prepare inventory
+
+Let's start with the project configuration found in `config.yml`. You will need to edit it to match your project with real values even for local development. Use a domain you can control (e.g., `example.com`). Supercompute does not require you to setup a NS server, but it requires a couple of DNS records, which you will see shortly.
+
+Modifying the `config.yml` file in later steps will likely break the automation, so do not edit it unless you know what you are doing.
+
+```yaml
+---
+project: example
+hostname: example.com
+nameserver_hostname: ns.example.com
+```
+
+Now let's setup the server inventory, which is basically a list of servers you will be using to deploy your applications to.
 
 The default `dev` inventory is for local development on a macOS computer:
 
 - **static-1** — Ubuntu 26.04 public endpoint (`x86_64`)
-- **roaming-1** — Lima guest
+- **roaming-1** — Lima guest (optional)
 
-Edit `inventories/dev/hosts.yml` and fill placeholders for `static-1` (public IP and SSH host-key fingerprint). Install this public key on the VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/).
+Edit `inventories/dev/hosts.yml` and fill placeholders for `static-1` (public IP and SSH host-key fingerprint). Install this public key on the VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
 
-### Create the Lima guest
+A completed `inventories/dev/hosts.yml` file looks like this:
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+```yaml
+---
+all:
+  children:
+    controller:
+      hosts:
+        localhost:
+          ansible_connection: local
+    deployment:
+      hosts:
+        static-1:
+          wireguard_endpoint: "159.203.27.69" # Public IP of the VM with static IP
+          ssh_host_ed25519_sha256: "SHA256:pRR...e+M" # Server fingerprint
+          wireguard_address: 10.217.80.11
+        roaming-1:
+          wireguard_roaming: true
+          node_lima_guest: true
+          node_host_architecture: aarch64
+          ssh_host_ed25519_sha256: "SHA256:FILLED_AUTOMATICALLY_FOR_DEV"
+          wireguard_address: 10.217.80.21
+    wireguard_nodes:
+      children:
+        deployment: {}
+```
+</TabItem>
+<TabItem label="Template">
+```yaml
+---
+all:
+  children:
+    controller:
+      hosts:
+        localhost:
+          ansible_connection: local
+    deployment:
+      hosts:
+        static-1:
+          wireguard_endpoint: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4" # Public IP of the VM/server with static IP
+          ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1" # VM/server fingerprint
+          wireguard_address: 10.217.80.11
+        roaming-1:
+          wireguard_roaming: true
+          node_lima_guest: true
+          node_host_architecture: aarch64
+          ssh_host_ed25519_sha256: "SHA256:FILLED_AUTOMATICALLY_FOR_DEV"
+          wireguard_address: 10.217.80.21
+    wireguard_nodes:
+      children:
+        deployment: {}
+```
+</TabItem>
+</Tabs>
+
+### Step 3: Create the Lima guest
 
 ```sh
 task lima-up
 ```
 
-### Vault and bring up
+This creates a Lima guest on Apple Silicon. It is used to run applications that require aarch64 architecture. It is not optional.
+
+### Step 4: Vault and bring up
 
 ```sh
 task vault-init PROVIDER=dev
 task up PROVIDER=dev
+```
+
+When it asks for `BECOME password`, enter your macOS password. You can run `task up` multiple times to retry if you have issues, made mistakes, or just want to be sure, because this is a rather long operation yet an idempotent one. 
+
+Please note that the speed of operations heavily depends on the network connection between the Mac and the VM and the performance of the VM/server. We tried with dirt cheap VPSes from arbitrary providers and got poor results vs. reputable providers.
+
+For example, a 1 vCPU + 1 GB RAM "regular" (not Intel/AMD) VPS from Digital Ocean took 5 minutes whereas a 8 vCPU + 12 GB RAM VPS from an arbitrary cheap European provider took 20 minutes.
+
+### Step 5: SSH to the nodes
+
+```sh
 task ssh PROVIDER=dev NODE=static-1
 task ssh PROVIDER=dev NODE=roaming-1
+```
+
+If you can access the nodes, you are done. 
+
+Optional: from the VM over the network connection to the Mac and check the latency:
+
+```sh
+ping -c 10 -I scwg0 10.217.80.1
 ```
 
 ### Reset local dev
@@ -69,27 +169,4 @@ the dev vault, run:
 task dev-reset CONFIRM=reset-dev
 ```
 
-This is destructive and prompts for the macOS become password. It does not
-change the remote `static-1` server or delete the dedicated Lima runtime home.
-Because it deletes `inventories/dev/group_vars/all/vault.yml` and
-`inventories/dev/.vault-pass`, recreate the vault before bringing dev back up:
-
-```sh
-task vault-init PROVIDER=dev
-task lima-up
-task up PROVIDER=dev
-```
-
-## Next steps
-
-<CardGrid stagger>
-	<Card title="Deploy to production" icon="rocket">
-		Copy `dev` → `prod` with two public nodes and one Cloudflare roaming host: [Deploy to production](/start-here/deploy-to-production/).
-	</Card>
-	<Card title="Adding a public node" icon="add-document">
-		Single public VM walkthrough: [Adding a public node](/guides/adding-public-node/).
-	</Card>
-	<Card title="Operator runbooks" icon="open-book">
-		Index: `internal/README.md` (includes roaming via Cloudflare Tunnel).
-	</Card>
-</CardGrid>
+This is destructive and prompts for the macOS become password as mentioned in the Prerequisites section.

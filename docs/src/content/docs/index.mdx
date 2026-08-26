@@ -14,34 +14,30 @@ hero:
       variant: minimal
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
-import AboutSection from '@/components/about-section.astro';
+import { Card, CardGrid } from "@astrojs/starlight/components";
+import AboutSection from "@/components/about-section.astro";
 
 ## Next steps
 
 <CardGrid stagger>
-	<Card title="Update content" icon="pencil">
-		Edit `src/content/docs/index.mdx` to see this page change.
-	</Card>
-	<Card title="Change page layout" icon="document">
-		Delete `template: splash` in `src/content/docs/index.mdx` to display a
-		sidebar on this page.
-	</Card>
-	<Card title="Add new content" icon="add-document">
-		Add Markdown or MDX files to `src/content/docs` to create new pages.
-	</Card>
-	<Card title="Configure your site" icon="setting">
-		Edit your `sidebar` and other config in `astro.config.mjs`.
-	</Card>
-	<Card title="Read the docs" icon="open-book">
-		Learn more in [the Starlight Docs](https://starlight.astro.build/).
-	</Card>
+  <Card title="Get started locally" icon="rocket">
+    Install the toolchain and bring up a Supercompute **dev** mesh on your Mac.
+    [Open guide](/start-here/get-started/)
+  </Card>
+  <Card title="Adding a public node" icon="add-document">
+    Add an Ubuntu VM with a static IP to your mesh from a Mac.
+    [Open guide](/guides/adding-public-node/)
+  </Card>
+  <Card title="Deploy to production" icon="approve-check">
+    Turn a working **dev** setup into a **prod** mesh with public and roaming nodes.
+    [Open guide](/start-here/deploy-to-production/)
+  </Card>
 </CardGrid>
 
 <AboutSection title="About Supercompute">
 
 Self-host a purpose-built cloud for AI-first workloads on commodity hardware—in your laptop VM, on a NAS, or on public nodes. High availability is achievable with as few as two nodes.
 
-Created by Stackific Inc.
+Created by [Stackific Inc.](https://stackific.com)
 
 </AboutSection>

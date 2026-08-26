@@ -1,13 +1,13 @@
 # WireGuard mesh
 
-Production meshes use interface **`scwg0`**, UDP port **`51830`** (inventory: `cloud_wireguard_listen_port`), and addresses in the inventory mesh CIDR.
+Production meshes use interface **`scwg0`**, UDP port **`51830`** (inventory: `wireguard_listen_port`), and addresses in the inventory mesh CIDR.
 
 ## Participants
 
 | Party | Role |
 | --- | --- |
-| macOS controller | WireGuard peer at `cloud_wireguard_controller_address` (usually `.1`) |
-| Static public hosts | Stable `cloud_wireguard_endpoint`; mesh hub when roaming exists |
+| macOS controller | WireGuard peer at `wireguard_controller_address` (usually `.1`) |
+| Static public hosts | Stable `wireguard_endpoint`; mesh hub when roaming exists |
 | Roaming hosts | `wireguard_roaming: true`; dial hub; no inbound UDP 51830 at home |
 
 Inventory hostnames: `static-1`, `static-2`, … and `roaming-1`, `roaming-2`, … (not `home-*` or `prod-*` prefixes).
@@ -23,7 +23,7 @@ Cloudflare Tunnel carries **SSH bootstrap only**; it does not carry `scwg0` UDP.
 
 ## Static hub (Mac ↔ roaming)
 
-When any roaming node exists, `cloud-wireguard-up` selects the first static host as **`cloud_wireguard_hub`** (typically `static-1`).
+When any roaming node exists, `wireguard-up` selects the first static host as **`wireguard_hub`** (typically `static-1`).
 
 The hub:
 
@@ -40,14 +40,14 @@ Spoke-to-spoke roaming traffic routes through the hub; roaming peers do not peer
 | Host type | Before / during `up` | After mesh up |
 | --- | --- | --- |
 | Static public | Public IP SSH (or mesh if already up) | `task ssh` over mesh |
-| Non-Lima roaming | Cloudflare Tunnel → `cloud_bootstrap_ssh_host` | Mesh SSH |
+| Non-Lima roaming | Cloudflare Tunnel → `bootstrap_ssh_host` | Mesh SSH |
 | Lima guest | Lima-local `127.0.0.1` + `lima_nodes[].ssh_port` | Mesh SSH |
 
 See [lima.md](lima.md) and [roaming-nodes.md](roaming-nodes.md).
 
 ## Host-key contract
 
-`cloud_ssh_host_ed25519_sha256` on each host must match the VM’s `ssh_host_ed25519` key. `scripts/cloud-known-hosts.py` syncs `.state/<provider>/known_hosts` before `up`.
+`ssh_host_ed25519_sha256` on each host must match the VM’s `ssh_host_ed25519` key. `scripts/known-hosts.py` syncs `.state/<provider>/known_hosts` before `up`.
 
 Lima guests: auto-filled by `lima-up` / `lima-host-fingerprints`. Static hosts: manual verification — see [setup-prod.md](setup-prod.md).
 

@@ -14,33 +14,27 @@
 
     - name: Check for tracked dev controller WireGuard state
       ansible.builtin.stat:
-        path: "{{ cloud_wireguard_config_path }}"
+        path: "{{ wireguard_config_path }}"
       register: dev_reset_controller_config
 
-    - name: Read controller interfaces when tracked state is absent
+    - name: Disconnect orphaned dev controller WireGuard when tracked state is absent
       ansible.builtin.command:
-        argv: [ifconfig]
-      register: dev_reset_controller_interfaces
-      changed_when: false
-      when: not dev_reset_controller_config.stat.exists
-
-    - name: Refuse to forget an active controller interface
-      ansible.builtin.assert:
-        that:
-          - >-
-            'inet ' ~ cloud_wireguard_controller_address ~ ' '
-            not in dev_reset_controller_interfaces.stdout
-        fail_msg: >-
-          .state/dev is missing its controller WireGuard configuration while
-          {{ cloud_wireguard_controller_address }} is active. Restore the
-          tracked state before resetting dev.
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir | dirname }}/scripts/dev_reset_controller_wireguard.py"
+          - --provider
+          - "{{ inventory_slug }}"
+      environment:
+        CONFIRM: reset-dev
+        PROVIDER: "{{ inventory_slug }}"
+      become: true
       when: not dev_reset_controller_config.stat.exists
 
     - name: Disconnect the tracked dev controller WireGuard interface
       ansible.builtin.command:
         argv:
           - bash
-          - "{{ playbook_dir | dirname }}/scripts/disconnect-cloud-wireguard.sh"
-          - dev
+          - "{{ playbook_dir | dirname }}/scripts/disconnect-wireguard.sh"
+          - "{{ inventory_slug }}"
       become: true
       when: dev_reset_controller_config.stat.exists

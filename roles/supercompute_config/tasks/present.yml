@@ -1,0 +1,44 @@
+---
+- name: Require project identity from config.yml extra-vars
+  ansible.builtin.assert:
+    that:
+      - project is string
+      - project | length > 0
+      - hostname is string
+      - hostname | length > 0
+      - nameserver_hostname is string
+      - nameserver_hostname | length > 0
+    fail_msg: >-
+      config.yml must define project, hostname, and nameserver_hostname before
+      nodes can receive {{ supercompute_config_path }}.
+
+- name: Require WireGuard mesh hosts for the node config file
+  ansible.builtin.assert:
+    that:
+      - groups['wireguard_nodes'] | length > 0
+      - hostvars[item].wireguard_address is defined
+      - hostvars[item].wireguard_address | string | length > 0
+    fail_msg: >-
+      Every wireguard_nodes host must define wireguard_address before
+      {{ supercompute_config_path }} can list mesh hosts.
+  loop: "{{ groups['wireguard_nodes'] | sort }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Create the supercompute configuration directory
+  ansible.builtin.file:
+    path: "{{ supercompute_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+
+- name: Install project config on this server
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ supercompute_config_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the cloud_name from cloud.yml."""
+"""Print the project id from config.yml."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ INSTANCE_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 def main() -> int:
-  path = ROOT / "cloud.yml"
+  path = ROOT / "config.yml"
   try:
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
   except FileNotFoundError:
@@ -26,19 +26,19 @@ def main() -> int:
     return 1
 
   if not isinstance(document, dict):
-    print("cloud.yml must contain a YAML mapping", file=sys.stderr)
+    print("config.yml must contain a YAML mapping", file=sys.stderr)
     return 1
-  name = document.get("cloud_name")
-  if not isinstance(name, str) or not name.strip():
-    print("cloud.yml must contain a non-empty cloud_name", file=sys.stderr)
+  project = document.get("project")
+  if not isinstance(project, str) or not project.strip():
+    print("config.yml must contain a non-empty project", file=sys.stderr)
     return 1
-  if Path(name).name != name or name in {".", ".."}:
-    print("cloud_name must be a single path-safe name", file=sys.stderr)
+  if Path(project).name != project or project in {".", ".."}:
+    print("project must be a single path-safe name", file=sys.stderr)
     return 1
-  if not INSTANCE_NAME.fullmatch(name):
-    print("cloud_name must be a lowercase DNS-label name", file=sys.stderr)
+  if not INSTANCE_NAME.fullmatch(project):
+    print("project must be a lowercase DNS-label name", file=sys.stderr)
     return 1
-  print(name)
+  print(project)
   return 0
 
 

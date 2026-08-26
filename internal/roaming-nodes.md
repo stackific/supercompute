@@ -3,13 +3,13 @@
 This guide is the operator runbook for adding Ubuntu **26.04** amd64 machines
 with a **changing public IP** (typically home lab VMs) to a **public-endpoint**
 WireGuard mesh (usually operator `prod`). Stable static hosts also run Ubuntu
-**26.04**, with fixed `cloud_wireguard_endpoint` values.
+**26.04**, with fixed `wireguard_endpoint` values.
 
 **Lima guests (`node_lima_guest: true`, e.g. `dev` `roaming-1`) do not use this
 guide.** They still dial the public hub WireGuard `Endpoint`, but bootstrap
 Ansible uses **Lima-local SSH** (not Cloudflare). Fingerprints for those guests
 are auto-filled by `lima-up` / `lima-host-fingerprints` — see
-[setup-dev.md](setup-dev.md). Do not set `cloud_bootstrap_ssh_host` on Lima
+[setup-dev.md](setup-dev.md). Do not set `bootstrap_ssh_host` on Lima
 guests.
 
 Inventory hostnames: stable public hosts as `static-1`, `static-2`, …; roaming as
@@ -26,9 +26,9 @@ WireGuard mesh is down. Cloudflare does **not** carry `scwg0` UDP; after join,
 day-2 mesh SSH uses WireGuard addresses.
 
 `up` syncs `.state` (known_hosts + mesh configs) from `hosts.yml`. For
-non-Lima `wireguard_roaming: true` it uses `cloud_bootstrap_ssh_host` (not a
+non-Lima `wireguard_roaming: true` it uses `bootstrap_ssh_host` (not a
 public WG endpoint). Prepare the tunnel and prove SSH first, then fill inventory.
-Mesh address lives on each host as `cloud_wireguard_address`.
+Mesh address lives on each host as `wireguard_address`.
 
 ## 0. What you are building
 
@@ -164,7 +164,7 @@ Add to `~/.ssh/config` (adjust user and key to match [setup-prod.md](setup-prod.
 ```sshconfig
 Host roaming-1.example.com
   User ops
-  IdentityFile ~/.ssh/<cloud_name>-prod
+  IdentityFile ~/.ssh/<project>-prod
   IdentitiesOnly yes
   ProxyCommand cloudflared access ssh --hostname %h
 ```
@@ -215,14 +215,14 @@ In `inventories/prod/hosts.yml`:
 ```yaml
 roaming-1:
   wireguard_roaming: true
-  cloud_bootstrap_ssh_host: "roaming-1.example.com"
-  cloud_ssh_host_ed25519_sha256: "SHA256:…"
-  cloud_wireguard_address: 10.217.79.21   # free address in 10.217.79.0/24
-  # no cloud_wireguard_endpoint — roaming never publishes a WG dial-in address
+  bootstrap_ssh_host: "roaming-1.example.com"
+  ssh_host_ed25519_sha256: "SHA256:…"
+  wireguard_address: 10.217.79.21   # free address in 10.217.79.0/24
+  # no wireguard_endpoint — roaming never publishes a WG dial-in address
   # OS defaults match prod (Ubuntu 26.04 amd64); override only if a host differs
 ```
 
-`cloud_bootstrap_ssh_host` must be the Cloudflare hostname from §3 (the same
+`bootstrap_ssh_host` must be the Cloudflare hostname from §3 (the same
 name as in `~/.ssh/config`).
 
 Add or remove `roaming-N` only in `hosts.yml`; peer configs, Vault keys,
@@ -246,7 +246,7 @@ inbound UDP **51830** on the home router.
 | roaming ↔ that static hub | direct (roaming dials `Endpoint`) |
 
 Hub selection: first non-roaming host in the static set (`static-1` by sort
-order) → `cloud_wireguard_hub`. On `up`, Ansible:
+order) → `wireguard_hub`. On `up`, Ansible:
 
 1. Enables hub `net.ipv4.ip_forward` (sysctl drop-in + live apply) and a
    FORWARD accept on the WG interface (`wg-quick` PostUp re-adds iptables on
@@ -262,7 +262,7 @@ order) → `cloud_wireguard_hub`. On `up`, Ansible:
    syncconf).
 5. Proves mesh SSH for **every** peer pair, including spoke↔spoke.
 
-**Ansible note:** SSH to `cloud_bootstrap_ssh_host` must use the Cloudflare
+**Ansible note:** SSH to `bootstrap_ssh_host` must use the Cloudflare
 `ProxyCommand` (`cloudflared access ssh`). Plain SSH without `cloudflared` fails.
 
 ## 7. Provider firewall on each static public host
@@ -282,7 +282,7 @@ from Cloudflare bootstrap to roaming.
 3. `task up PROVIDER=prod`
    - Configures static hosts + Mac with roaming peer (**no** Endpoint on stables).
    - Reaches roaming via mesh if already up, else via
-     `cloud_bootstrap_ssh_host` (Cloudflare Tunnel SSH).
+     `bootstrap_ssh_host` (Cloudflare Tunnel SSH).
    - On roaming: WireGuard with `Endpoint` + `PersistentKeepalive = 25` toward
      each static hub; hub peer `AllowedIPs` include Mac + other roaming `/32`s.
    - Syncs live peers with `wg syncconf` (see §6).

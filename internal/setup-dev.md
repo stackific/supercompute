@@ -33,11 +33,11 @@ Follow the same host prep as [setup-prod.md](setup-prod.md) (Ubuntu 26.04 amd64,
 inventory SSH user, operator key, host-key fingerprint), then fill
 `inventories/dev/hosts.yml` placeholders for `static-1`:
 
-- `cloud_wireguard_endpoint` — public IPv4
-- `cloud_ssh_host_ed25519_sha256` — `SHA256:…` from the VM
-- `cloud_wireguard_address` — mesh IP in `10.217.80.0/24` (default `.11`)
+- `wireguard_endpoint` — public IPv4
+- `ssh_host_ed25519_sha256` — `SHA256:…` from the VM
+- `wireguard_address` — mesh IP in `10.217.80.0/24` (default `.11`)
 
-Set `cloud_default_ssh_user` / `cloud_ssh_private_key_file` in
+Set `default_ssh_user` / `ssh_private_key_file` in
 `inventories/dev/group_vars/all/main.yml` (same patterns as prod).
 
 Allow inbound UDP **51830** on the static host widely enough for roaming (the
@@ -55,7 +55,7 @@ task lima-status
 Runtime home:
 
 ```text
-~/.lima/.<cloud_name>-dev
+~/.lima/.<project>-dev
 ```
 
 Tracked definitions live under `.state/dev/lima/`. Destroy with:
@@ -66,7 +66,7 @@ task lima-destroy CONFIRM=destroy-lima-dev
 
 ### Guest host-key fingerprints
 
-`lima-up` auto-fills `cloud_ssh_host_ed25519_sha256` for every
+`lima-up` auto-fills `ssh_host_ed25519_sha256` for every
 `node_lima_guest` host (Lima-local SSH scan → `inventories/<provider>/hosts.yml`).
 Re-run capture alone with:
 
@@ -81,8 +81,8 @@ uv run --locked python scripts/lima-host-fingerprints.py --provider dev --force
 ```
 
 **`static-1` (and any non-Lima host) stays manual** — record
-`cloud_ssh_host_ed25519_sha256` yourself, same as [setup-prod.md](setup-prod.md).
-Do **not** set `cloud_bootstrap_ssh_host` or `cloud_wireguard_endpoint` on Lima
+`ssh_host_ed25519_sha256` yourself, same as [setup-prod.md](setup-prod.md).
+Do **not** set `bootstrap_ssh_host` or `wireguard_endpoint` on Lima
 guests.
 
 ## 3. Bootstrap split (Lima-local vs Cloudflare)
@@ -127,8 +127,8 @@ task lima-up
 task up PROVIDER=dev
 ```
 
-It deletes the dev Vault/password and `.state/dev`, but leaves the remote
-static host and the dedicated Lima runtime home intact.
+It deletes the dev Vault/password, `.state/dev`, Lima guests, and their
+dedicated runtime home, but leaves the remote static host intact.
 
 ## Architecture rules
 
@@ -146,9 +146,9 @@ The tracked `dev` inventory uses `10.217.80.0/24`:
 
 | Role | Address |
 | --- | --- |
-| Mac controller | `10.217.80.1` (`cloud_wireguard_controller_address`) |
-| `static-1` hub | `10.217.80.11` (`cloud_wireguard_address`) |
-| `roaming-1` Lima guest | `10.217.80.21` (`cloud_wireguard_address`) |
+| Mac controller | `10.217.80.1` (`wireguard_controller_address`) |
+| `static-1` hub | `10.217.80.11` (`wireguard_address`) |
+| `roaming-1` Lima guest | `10.217.80.21` (`wireguard_address`) |
 
 Test the controller address from both node types:
 
@@ -171,7 +171,7 @@ ping -c 10 -I scwg0 10.217.80.1
 1. Prepare public `static-1` and fill inventory placeholders (including its
    fingerprint by hand).
 2. `task lima-up` — only `node_lima_guest` hosts; auto-fills their
-   `cloud_ssh_host_ed25519_sha256`.
+   `ssh_host_ed25519_sha256`.
 3. Prove `limactl shell roaming-1`.
 4. `task vault-init PROVIDER=dev`; `task up PROVIDER=dev`.
 5. Optional: `task up PROVIDER=dev`.

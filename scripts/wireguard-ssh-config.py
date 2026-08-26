@@ -16,7 +16,7 @@ SLUG = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 HOME_LOOKUP = re.compile(
   r"\{\{\s*lookup\(\s*['\"](?:ansible\.builtin\.)?env['\"]\s*,\s*['\"]HOME['\"]\s*\)\s*\}\}"
 )
-CLOUD_NAME_VAR = re.compile(r"\{\{\s*cloud_name\s*\}\}")
+PROJECT_VAR = re.compile(r"\{\{\s*project\s*\}\}")
 INVENTORY_SLUG_VAR = re.compile(r"\{\{\s*inventory_slug\s*\}\}")
 
 
@@ -27,14 +27,14 @@ def read_mapping(path: Path) -> dict:
   return document
 
 
-def cloud_name() -> str:
-  document = read_mapping(ROOT / "cloud.yml")
-  name = document.get("cloud_name")
-  if not isinstance(name, str) or not name.strip():
-    raise ValueError("cloud.yml must contain a non-empty cloud_name")
-  if Path(name).name != name or name in {".", ".."} or not SLUG.fullmatch(name):
-    raise ValueError("cloud_name must be a lowercase DNS-label name")
-  return name
+def config_project() -> str:
+  document = read_mapping(ROOT / "config.yml")
+  project = document.get("project")
+  if not isinstance(project, str) or not project.strip():
+    raise ValueError("config.yml must contain a non-empty project")
+  if Path(project).name != project or project in {".", ".."} or not SLUG.fullmatch(project):
+    raise ValueError("project must be a lowercase DNS-label name")
+  return project
 
 
 def scalar(value: object, description: str) -> str:
@@ -81,24 +81,24 @@ def resolve_private_key_file(
   if value is None:
     return ""
   if not isinstance(value, str) or not value.strip():
-    raise ValueError("cloud_ssh_private_key_file must be a non-empty string when set")
+    raise ValueError("ssh_private_key_file must be a non-empty string when set")
 
   home = os.environ.get("HOME", "")
   if not home:
-    raise ValueError("HOME must be set to resolve cloud_ssh_private_key_file")
+    raise ValueError("HOME must be set to resolve ssh_private_key_file")
 
   resolved = HOME_LOOKUP.sub(home, value)
-  resolved = CLOUD_NAME_VAR.sub(cloud_name(), resolved)
+  resolved = PROJECT_VAR.sub(config_project(), resolved)
   resolved = INVENTORY_SLUG_VAR.sub(inventory_slug, resolved)
   if "{{" in resolved or "{%" in resolved:
     raise ValueError(
-      "cloud_ssh_private_key_file contains unsupported Jinja; use "
+      "ssh_private_key_file contains unsupported Jinja; use "
       "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/"
-      "{{ cloud_name }}-{{ inventory_slug }} or an absolute path"
+      "{{ project }}-{{ inventory_slug }} or an absolute path"
     )
   path = Path(resolved).expanduser()
   if not path.is_absolute():
-    raise ValueError(f"cloud_ssh_private_key_file must resolve to an absolute path: {path}")
+    raise ValueError(f"ssh_private_key_file must resolve to an absolute path: {path}")
   return str(path)
 
 
@@ -115,35 +115,35 @@ def resolve(inventory_slug: str, node: str) -> tuple[str, str, str, str]:
 
   overrides = manager_hosts[node]
   address = scalar(
-    overrides.get("cloud_wireguard_address"),
-    f"{node}.cloud_wireguard_address",
+    overrides.get("wireguard_address"),
+    f"{node}.wireguard_address",
   )
   lima_guest = overrides.get("node_lima_guest") is True
   if lima_guest:
     user = os.environ.get("USER", "").strip()
     if not user:
       raise ValueError("USER must be set for Lima guest mesh SSH (matches lima_guest_user)")
-    port = scalar(main.get("cloud_default_ssh_port", 22), "SSH port")
+    port = scalar(main.get("default_ssh_port", 22), "SSH port")
     lima_home = os.environ.get("LIMA_HOME", "")
     if not lima_home:
       home = os.environ.get("HOME", "")
       if not home:
         raise ValueError("HOME must be set to resolve the Lima SSH identity")
-      lima_home = str(Path(home) / ".lima" / f".{cloud_name()}-{inventory_slug}")
+      lima_home = str(Path(home) / ".lima" / f".{config_project()}-{inventory_slug}")
     private_key = str(Path(lima_home) / "_config" / "user")
   else:
     user = scalar(
-      overrides.get("ansible_user", main.get("cloud_default_ssh_user")),
+      overrides.get("ansible_user", main.get("default_ssh_user")),
       "SSH user",
     )
     if user.startswith("REPLACE_WITH_"):
-      raise ValueError("Replace cloud_default_ssh_user placeholder first.")
+      raise ValueError("Replace default_ssh_user placeholder first.")
     port = scalar(
-      overrides.get("ansible_port", main.get("cloud_default_ssh_port")),
+      overrides.get("ansible_port", main.get("default_ssh_port")),
       "SSH port",
     )
     private_key = resolve_private_key_file(
-      main.get("cloud_ssh_private_key_file"),
+      main.get("ssh_private_key_file"),
       inventory_slug=inventory_slug,
     )
   if not port.isdecimal() or not 0 < int(port) < 65536:

@@ -23,7 +23,7 @@ python_runtime="${project_dir}/.venv/bin/python"
   exit 2
 }
 
-cloud_name="$("${python_runtime}" "${project_dir}/scripts/cloud_name.py")"
+cloud_name="$("${python_runtime}" "${project_dir}/scripts/config_project.py")"
 node_names="$("${python_runtime}" "${project_dir}/scripts/lima_nodes.py" --provider "${provider_name}")"
 
 lima_system_home="${HOME}/.lima"

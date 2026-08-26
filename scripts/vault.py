@@ -19,8 +19,8 @@ class VaultError(RuntimeError):
   pass
 
 
-def cloud_name() -> str:
-  path = ROOT / "cloud.yml"
+def config_project() -> str:
+  path = ROOT / "config.yml"
   try:
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
   except FileNotFoundError as error:
@@ -29,13 +29,13 @@ def cloud_name() -> str:
     raise VaultError(f"Cloud configuration is not valid YAML: {error}") from error
 
   if not isinstance(document, dict):
-    raise VaultError("cloud.yml must contain a YAML mapping")
-  name = document.get("cloud_name")
-  if not isinstance(name, str) or not name.strip():
-    raise VaultError("cloud.yml must contain a non-empty cloud_name")
-  if Path(name).name != name or name in {".", ".."}:
-    raise VaultError("cloud_name must be a single path-safe name")
-  return name
+    raise VaultError("config.yml must contain a YAML mapping")
+  project = document.get("project")
+  if not isinstance(project, str) or not project.strip():
+    raise VaultError("config.yml must contain a non-empty project")
+  if Path(project).name != project or project in {".", ".."}:
+    raise VaultError("project must be a single path-safe name")
+  return project
 
 
 def provider_directories() -> dict[str, Path]:
@@ -93,28 +93,62 @@ def run_ansible_vault(*arguments: str, capture_output: bool = False) -> str:
 
 
 def normalize_vault_document(document: dict) -> bool:
-  """Upgrade legacy deployment_vault / vault_prod_wireguard_* keys in place."""
+  """Upgrade older vault key names in place."""
   changed = False
 
   legacy_vault = document.pop("deployment_vault", None)
-  if legacy_vault is not None and "cloud_vault" not in document:
-    document["cloud_vault"] = legacy_vault
+  if legacy_vault is not None and "vault_meta" not in document:
+    document["vault_meta"] = legacy_vault
     changed = True
 
-  vault = document.get("cloud_vault")
+  cloud_vault = document.pop("cloud_vault", None)
+  if cloud_vault is not None and "vault_meta" not in document:
+    document["vault_meta"] = cloud_vault
+    changed = True
+  elif cloud_vault is not None:
+    changed = True
+
+  vault = document.get("vault_meta")
   if isinstance(vault, dict) and "deployment_name" in vault:
-    vault["cloud_name"] = vault.pop("deployment_name")
+    vault["project"] = vault.pop("deployment_name")
+    changed = True
+  if isinstance(vault, dict) and "cloud_name" in vault and "project" not in vault:
+    vault["project"] = vault.pop("cloud_name")
+    changed = True
+  elif isinstance(vault, dict) and "cloud_name" in vault:
+    vault.pop("cloud_name")
+    changed = True
+  if isinstance(vault, dict) and "name" in vault and "project" not in vault:
+    vault["project"] = vault.pop("name")
+    changed = True
+  elif isinstance(vault, dict) and "name" in vault:
+    vault.pop("name")
+    changed = True
+  if isinstance(vault, dict) and "namespace" in vault and "project" not in vault:
+    vault["project"] = vault.pop("namespace")
+    changed = True
+  elif isinstance(vault, dict) and "namespace" in vault:
+    vault.pop("namespace")
+    changed = True
+  if isinstance(vault, dict) and "installation" in vault and "project" not in vault:
+    vault["project"] = vault.pop("installation")
+    changed = True
+  elif isinstance(vault, dict) and "installation" in vault:
+    vault.pop("installation")
     changed = True
 
-  legacy_private = document.pop("vault_prod_wireguard_private_keys", None)
-  if legacy_private is not None and "vault_cloud_wireguard_private_keys" not in document:
-    document["vault_cloud_wireguard_private_keys"] = legacy_private
-    changed = True
-
-  legacy_public = document.pop("vault_prod_wireguard_public_keys", None)
-  if legacy_public is not None and "vault_cloud_wireguard_public_keys" not in document:
-    document["vault_cloud_wireguard_public_keys"] = legacy_public
-    changed = True
+  for old_key, new_key in (
+    ("vault_prod_wireguard_private_keys", "vault_wireguard_private_keys"),
+    ("vault_prod_wireguard_public_keys", "vault_wireguard_public_keys"),
+    ("vault_cloud_wireguard_private_keys", "vault_wireguard_private_keys"),
+    ("vault_cloud_wireguard_public_keys", "vault_wireguard_public_keys"),
+  ):
+    legacy_value = document.pop(old_key, None)
+    if legacy_value is not None and new_key not in document:
+      document[new_key] = legacy_value
+      changed = True
+    elif legacy_value is not None:
+      changed = True
 
   return changed
 
@@ -130,24 +164,24 @@ def validate_document(content: str, provider: str) -> None:
 
   normalize_vault_document(document)
 
-  vault = document.get("cloud_vault")
+  vault = document.get("vault_meta")
   if not isinstance(vault, dict):
-    raise VaultError("Vault must contain a cloud_vault mapping")
-  if vault.get("cloud_name") != cloud_name():
+    raise VaultError("Vault must contain a vault_meta mapping")
+  if vault.get("project") != config_project():
     raise VaultError(
-      f"cloud_vault.cloud_name must be {cloud_name()}"
+      f"vault_meta.project must be {config_project()}"
     )
   if vault.get("provider") != provider:
-    raise VaultError(f"cloud_vault.provider must be {provider}")
+    raise VaultError(f"vault_meta.provider must be {provider}")
   if not isinstance(vault.get("secrets"), dict):
-    raise VaultError("cloud_vault.secrets must be a mapping")
+    raise VaultError("vault_meta.secrets must be a mapping")
 
 
 def empty_document(provider: str) -> str:
   return yaml.safe_dump(
     {
-      "cloud_vault": {
-        "cloud_name": cloud_name(),
+      "vault_meta": {
+        "project": config_project(),
         "provider": provider,
         "secrets": {},
       }
@@ -192,7 +226,7 @@ def read_password(path: Path) -> str:
 
 def temporary_password_file(password: str):
   directory = tempfile.TemporaryDirectory(
-    prefix=f"{cloud_name()}-vault-password-"
+    prefix=f"{config_project()}-vault-password-"
   )
   path = Path(directory.name) / "password"
   path.write_text(f"{password}\n", encoding="utf-8")
@@ -201,7 +235,7 @@ def temporary_password_file(password: str):
 
 
 def vault_label(provider: str) -> str:
-  return f"{cloud_name()}-{provider}"
+  return f"{config_project()}-{provider}"
 
 
 def vault_id(provider: str, password_file: Path) -> str:
@@ -261,7 +295,7 @@ def encrypt_and_replace(
 
 def create_empty_vault(provider: str, password: str) -> None:
   destination = vault_path(provider)
-  prefix = f"{cloud_name()}-vault-init-"
+  prefix = f"{config_project()}-vault-init-"
   with tempfile.TemporaryDirectory(prefix=prefix) as directory_name:
     directory = Path(directory_name)
     plaintext = directory / "vault.yml"
@@ -291,7 +325,7 @@ def initialize(provider: str) -> None:
       )
     raise VaultError(
       f"Vault is already initialized: {encrypted_vault.relative_to(ROOT)}; "
-      "use vault-edit, vault-reset, or vault-destroy"
+      "use vault-edit or vault-destroy, then vault-init"
     )
 
   if not password_file.is_file():
@@ -308,7 +342,7 @@ def edit(provider: str) -> None:
   read_password(password_file)
   content = decrypt(encrypted_vault, provider, password_file)
 
-  prefix = f"{cloud_name()}-vault-{provider}-"
+  prefix = f"{config_project()}-vault-{provider}-"
   with tempfile.TemporaryDirectory(prefix=prefix) as name:
     plaintext = Path(name) / "vault.yml"
     plaintext.write_text(content, encoding="utf-8")
@@ -330,23 +364,6 @@ def edit(provider: str) -> None:
     )
 
   print(f"Vault validated and synced: {encrypted_vault.relative_to(ROOT)}")
-
-
-def reset(provider: str) -> None:
-  expected = f"reset-vault-{provider}"
-  supplied = os.environ.get("CONFIRM", "")
-  if supplied != expected:
-    raise VaultError(f"CONFIRM must be exactly {expected}")
-
-  password_file = password_path(provider)
-  password = generate_password()
-  create_empty_vault(provider, password)
-  write_password(password_file, password)
-  print(
-    "Vault reset to an empty encrypted document: "
-    f"{vault_path(provider).relative_to(ROOT)}"
-  )
-  print(f"Vault password regenerated: {password_file.relative_to(ROOT)}")
 
 
 def destroy(provider: str) -> None:
@@ -442,8 +459,8 @@ def ensure_wireguard(provider: str) -> None:
     raise VaultError(f"{platform_path} must contain a provider mapping")
   platform = provider_config.get("platform")
   if platform == "public":
-    private_key_field = "vault_cloud_wireguard_private_keys"
-    public_key_field = "vault_cloud_wireguard_public_keys"
+    private_key_field = "vault_wireguard_private_keys"
+    public_key_field = "vault_wireguard_public_keys"
   elif platform in {"lima", "vps"}:
     raise VaultError(
       f"provider.platform={platform} is refused; use provider.platform=public "
@@ -500,7 +517,7 @@ def ensure_wireguard(provider: str) -> None:
   document[public_key_field] = public_keys
   plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
 
-  prefix = f"{cloud_name()}-vault-wg-{provider}-"
+  prefix = f"{config_project()}-vault-wg-{provider}-"
   with tempfile.TemporaryDirectory(prefix=prefix) as name:
     plaintext = Path(name) / "vault.yml"
     plaintext.write_text(plaintext_body, encoding="utf-8")
@@ -535,7 +552,7 @@ def migrate(provider: str) -> None:
     return
 
   plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
-  prefix = f"{cloud_name()}-vault-migrate-{provider}-"
+  prefix = f"{config_project()}-vault-migrate-{provider}-"
   with tempfile.TemporaryDirectory(prefix=prefix) as name:
     plaintext = Path(name) / "vault.yml"
     plaintext.write_text(plaintext_body, encoding="utf-8")
@@ -553,7 +570,7 @@ def parse_arguments() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Manage provider vaults")
   parser.add_argument(
     "action",
-    choices=("init", "edit", "reset", "destroy", "ensure-wireguard", "migrate"),
+    choices=("init", "edit", "destroy", "ensure-wireguard", "migrate"),
   )
   return parser.parse_args()
 
@@ -566,8 +583,6 @@ def main() -> int:
       initialize(provider)
     elif arguments.action == "edit":
       edit(provider)
-    elif arguments.action == "reset":
-      reset(provider)
     elif arguments.action == "ensure-wireguard":
       ensure_wireguard(provider)
     elif arguments.action == "migrate":

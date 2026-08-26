@@ -26,64 +26,68 @@
 - name: Require a WireGuard identity for this server
   ansible.builtin.assert:
     that:
-      - cloud_wireguard_address is defined
-      - cloud_wireguard_address is string
-      - cloud_wireguard_address | length > 0
-      - cloud_wireguard_address != cloud_wireguard_controller_address
-      - vault_cloud_wireguard_private_keys[inventory_hostname] is string
-      - vault_cloud_wireguard_public_keys[inventory_hostname] is string
-      - vault_cloud_wireguard_private_keys.macos is string
-      - vault_cloud_wireguard_public_keys.macos is string
+      - wireguard_address is defined
+      - wireguard_address is string
+      - wireguard_address | length > 0
+      - wireguard_address != wireguard_controller_address
+      - vault_wireguard_private_keys[inventory_hostname] is string
+      - vault_wireguard_public_keys[inventory_hostname] is string
+      - vault_wireguard_private_keys.macos is string
+      - vault_wireguard_public_keys.macos is string
       - >
         (wireguard_roaming | default(false) | bool)
         or (
-          cloud_wireguard_endpoint is string
-          and cloud_wireguard_endpoint | length > 0
-          and cloud_wireguard_endpoint is not match('^REPLACE_WITH_')
+          wireguard_endpoint is string
+          and wireguard_endpoint | length > 0
+          and wireguard_endpoint is not match('^REPLACE_WITH_')
         )
       - >
         (not (wireguard_roaming | default(false) | bool))
         or (node_lima_guest | default(false) | bool)
         or (
-          cloud_bootstrap_ssh_host is string
-          and cloud_bootstrap_ssh_host | length > 0
-          and cloud_bootstrap_ssh_host is not match('^REPLACE_WITH_')
+          bootstrap_ssh_host is string
+          and bootstrap_ssh_host | length > 0
+          and bootstrap_ssh_host is not match('^REPLACE_WITH_')
         )
       - >
         (not (node_lima_guest | default(false) | bool))
         or (
           (wireguard_roaming | default(false) | bool)
           and (
-            cloud_bootstrap_ssh_host is not defined
-            or cloud_bootstrap_ssh_host | length == 0
+            bootstrap_ssh_host is not defined
+            or bootstrap_ssh_host | length == 0
           )
           and (
-            cloud_wireguard_endpoint is not defined
-            or cloud_wireguard_endpoint | length == 0
+            wireguard_endpoint is not defined
+            or wireguard_endpoint | length == 0
           )
         )
     fail_msg: >-
-      This server lacks hosts.yml cloud_wireguard_address, a complete
+      This server lacks hosts.yml wireguard_address, a complete
       Vault-managed WireGuard identity, or the correct bootstrap dial target
-      (cloud_wireguard_endpoint for a static public host; Lima-local SSH for
-      node_lima_guest; cloud_bootstrap_ssh_host + Cloudflare for non-Lima roaming).
+      (wireguard_endpoint for a static public host; Lima-local SSH for
+      node_lima_guest; bootstrap_ssh_host + Cloudflare for non-Lima roaming).
   no_log: true
 
 - name: Require WireGuard material for every server
   ansible.builtin.assert:
     that:
-      - vault_cloud_wireguard_private_keys[item] is string
-      - vault_cloud_wireguard_public_keys[item] is string
+      - vault_wireguard_private_keys[item] is string
+      - vault_wireguard_public_keys[item] is string
   loop: "{{ groups['wireguard_nodes'] }}"
   loop_control:
     label: "{{ item }}"
   no_log: true
 
+- name: Install project config on this server
+  ansible.builtin.include_role:
+    name: supercompute_config
+
 - name: Install the pinned WireGuard package
   ansible.builtin.apt:
     update_cache: true
     cache_valid_time: 3600
-    name: "wireguard-tools={{ cloud_wireguard_tools_version }}"
+    name: "wireguard-tools={{ wireguard_tools_version }}"
     state: present
     allow_downgrade: true
   become: true
@@ -106,11 +110,11 @@
 - name: Render this server's private WireGuard configuration
   ansible.builtin.template:
     src: scwg0.conf.j2
-    dest: "/etc/wireguard/{{ cloud_wireguard_interface }}.conf"
+    dest: "/etc/wireguard/{{ wireguard_interface }}.conf"
     owner: root
     group: root
     mode: '0600'
-  register: cloud_wireguard_node_config
+  register: wireguard_node_config
   become: true
   no_log: true
 
@@ -121,40 +125,40 @@
     group: root
     mode: '0644'
     content: |
-      # Managed by cloud_wireguard_node — Mac↔roaming via this hub.
+      # Managed by wireguard_node — Mac↔roaming via this hub.
       net.ipv4.ip_forward = 1
   become: true
   when:
-    - hostvars['localhost'].cloud_wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].cloud_wireguard_hub | default(''))
+    - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
+    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
 - name: Apply IPv4 forwarding on the static hub now
   ansible.builtin.command:
     argv: [sysctl, -w, net.ipv4.ip_forward=1]
   become: true
-  register: cloud_wireguard_hub_sysctl_apply
+  register: wireguard_hub_sysctl_apply
   changed_when: >-
-    'net.ipv4.ip_forward = 1' in (cloud_wireguard_hub_sysctl_apply.stdout | default(''))
-  failed_when: cloud_wireguard_hub_sysctl_apply.rc != 0
+    'net.ipv4.ip_forward = 1' in (wireguard_hub_sysctl_apply.stdout | default(''))
+  failed_when: wireguard_hub_sysctl_apply.rc != 0
   when:
-    - hostvars['localhost'].cloud_wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].cloud_wireguard_hub | default(''))
+    - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
+    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
 - name: Enable and start this server's WireGuard interface
   ansible.builtin.systemd_service:
-    name: "wg-quick@{{ cloud_wireguard_interface }}.service"
+    name: "wg-quick@{{ wireguard_interface }}.service"
     enabled: true
-    state: "{{ 'restarted' if cloud_wireguard_node_config.changed else 'started' }}"
+    state: "{{ 'restarted' if wireguard_node_config.changed else 'started' }}"
   become: true
   when: >-
     not (
-      (cloud_node_mesh_reachable | default(false) | bool)
-      and (cloud_wireguard_node_config.changed | default(false) | bool)
+      (node_mesh_reachable | default(false) | bool)
+      and (wireguard_node_config.changed | default(false) | bool)
     )
 
 - name: Restart WireGuard without holding the mesh SSH session open
   ansible.builtin.systemd_service:
-    name: "wg-quick@{{ cloud_wireguard_interface }}.service"
+    name: "wg-quick@{{ wireguard_interface }}.service"
     enabled: true
     state: restarted
   become: true
@@ -162,23 +166,23 @@
   poll: 0
   ignore_unreachable: true
   when:
-    - cloud_node_mesh_reachable | default(false) | bool
-    - cloud_wireguard_node_config.changed | default(false) | bool
+    - node_mesh_reachable | default(false) | bool
+    - wireguard_node_config.changed | default(false) | bool
 
 - name: Wait for SSH after restarting WireGuard over the mesh path
   ansible.builtin.wait_for_connection:
     delay: 3
     timeout: 90
   when:
-    - cloud_node_mesh_reachable | default(false) | bool
-    - cloud_wireguard_node_config.changed | default(false) | bool
+    - node_mesh_reachable | default(false) | bool
+    - wireguard_node_config.changed | default(false) | bool
 
 - name: Sync live WireGuard peers from the rendered config
   ansible.builtin.shell:
     cmd: >-
       set -euo pipefail;
-      wg-quick strip {{ cloud_wireguard_interface | quote }}
-      | wg syncconf {{ cloud_wireguard_interface | quote }} /dev/stdin
+      wg-quick strip {{ wireguard_interface | quote }}
+      | wg syncconf {{ wireguard_interface | quote }} /dev/stdin
   args:
     executable: /bin/bash
   become: true
@@ -187,30 +191,30 @@
   # spoke AllowedIPs (e.g. after adding roaming-2). systemd "started" does not
   # reload AllowedIPs; syncconf does, without dropping mesh SSH.
   when: >-
-    (hostvars['localhost'].cloud_wireguard_roaming_nodes | default([]) | length) > 0
+    (hostvars['localhost'].wireguard_roaming_nodes | default([]) | length) > 0
 
 - name: Allow WireGuard peer forwarding on the static hub
   ansible.builtin.iptables:
     chain: FORWARD
-    in_interface: "{{ cloud_wireguard_interface }}"
-    out_interface: "{{ cloud_wireguard_interface }}"
+    in_interface: "{{ wireguard_interface }}"
+    out_interface: "{{ wireguard_interface }}"
     jump: ACCEPT
     action: insert
     state: present
   become: true
   when:
-    - hostvars['localhost'].cloud_wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].cloud_wireguard_hub | default(''))
+    - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
+    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
 - name: Require IPv4 forwarding on the static hub after WireGuard is up
   ansible.builtin.command:
     argv: [sysctl, -n, net.ipv4.ip_forward]
-  register: cloud_wireguard_hub_ip_forward
+  register: wireguard_hub_ip_forward
   changed_when: false
-  failed_when: (cloud_wireguard_hub_ip_forward.stdout | trim) != '1'
+  failed_when: (wireguard_hub_ip_forward.stdout | trim) != '1'
   when:
-    - hostvars['localhost'].cloud_wireguard_roaming_nodes | default([]) | length > 0
-    - inventory_hostname == (hostvars['localhost'].cloud_wireguard_hub | default(''))
+    - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
+    - inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
 
 - name: Have roaming nodes initiate WireGuard through the static hub toward the Mac
   ansible.builtin.command:
@@ -221,15 +225,15 @@
       - -W
       - "2"
       - -I
-      - "{{ cloud_wireguard_interface }}"
-      - "{{ cloud_wireguard_controller_address }}"
+      - "{{ wireguard_interface }}"
+      - "{{ wireguard_controller_address }}"
   when: wireguard_roaming | default(false) | bool
-  register: cloud_wireguard_roaming_controller_ping
+  register: wireguard_roaming_controller_ping
   changed_when: false
   failed_when: false
 
 - name: Show this server's WireGuard peers without private keys
   ansible.builtin.command:
-    argv: [wg, show, "{{ cloud_wireguard_interface }}"]
+    argv: [wg, show, "{{ wireguard_interface }}"]
   become: true
   changed_when: false

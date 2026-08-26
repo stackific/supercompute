@@ -1,12 +1,12 @@
 [Interface]
-PrivateKey = {{ vault_wireguard_private_keys.macos }}
+PrivateKey = {{ vault_lima_wireguard_private_keys.macos }}
 Address = {{ wireguard_macos_address }}/24
 SaveConfig = false
 {% for node in lima_nodes %}
 
 [Peer]
 # {{ node.name }}
-PublicKey = {{ vault_wireguard_public_keys[node.name] }}
+PublicKey = {{ vault_lima_wireguard_public_keys[node.name] }}
 AllowedIPs = {{ node.wg_address }}/32
 Endpoint = 127.0.0.1:{{ node.wg_host_port }}
 PersistentKeepalive = 25

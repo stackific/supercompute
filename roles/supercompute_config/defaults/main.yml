@@ -1,0 +1,4 @@
+---
+supercompute_config_dir: /etc/supercompute
+supercompute_config_path: "{{ supercompute_config_dir }}/config.yml"
+supercompute_config_lifecycle: present
