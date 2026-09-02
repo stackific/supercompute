@@ -65,44 +65,7 @@ Later, dynamic app URLs use the same nameserver:
 
 Supercompute's Nameserver then serves `*.apps.sc.example.com`. If the VM IPs are not ready yet, add the A records before bring-up.
 
-### Step 3: Operator SSH key for prod
-
-Create an unpassphrased operator key for the GitHub runner and install the public key on both VMs.
-
-Create a **separate** key from dev. Use an **empty passphrase**—the runner cannot unlock a passphrase-protected key. Store both files in your password manager.
-
-<Tabs syncKey="pkg">
-<TabItem label="prod">
-
-```sh
-ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/example-prod \
-  -C "example prod"
-
-ssh-add ~/.ssh/example-prod
-pbcopy < ~/.ssh/example-prod.pub
-```
-
-</TabItem>
-<TabItem label="Template">
-
-```sh
-ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/<project>-prod \
-  -C "<project> prod"
-
-ssh-add ~/.ssh/<project>-prod
-pbcopy < ~/.ssh/<project>-prod.pub
-```
-
-</TabItem>
-</Tabs>
-
-Inventory resolves this path automatically via `ssh_private_key_file` in group vars (`~/.ssh/{{ project }}-{{ inventory_slug }}` → `~/.ssh/example-prod` when `project: example` and `ENV=prod`).
-
-Install the **public** key on each production VM (`ops` user)—follow [Adding a public node](/guides/adding-public-node/) for each host. The **private** key is what you store later as GitHub secret `OPS_SSH_PRIVATE_KEY`. The workflow writes that secret to `~/.ssh/${project}-${ENV}` on the runner—the same path Ansible expects.
-
-### Step 4: Set GHA control plane
+### Step 3: Set GHA control plane
 
 Tell the inventory that GitHub Actions—not your Mac—will run deploys.
 
@@ -114,11 +77,15 @@ control_plane: gha
 
 Mesh CIDR (`10.217.79.0/24`), `node_ci_address` (`.254`), Ubuntu 26.04 amd64 image (`template:ubuntu-26.04`), and production resources are already set in the committed prod inventory. `node_include_controller_peer` becomes `false` automatically when `control_plane: gha`.
 
-### Step 5: Prepare the two public VMs
+### Step 4: Prepare the two public VMs
+
+Install this public key on both production VMs (`ops` user)—follow [Adding a public node](/guides/adding-public-node/) for each host.
+
+Use an **empty passphrase**—the runner cannot unlock a passphrase-protected key. The private key is GitHub secret `OPS_SSH_PRIVATE_KEY` later.
 
 Install Ubuntu on each VM, create the ops user, and open bootstrap firewall ports.
 
-For **static-1** and **static-2**, follow [Adding a public node](/guides/adding-public-node/) twice:
+For **static-1** and **static-2**:
 
 1. Ubuntu 26.04 amd64 + public IP.
 2. Create `ops`, install `~/.ssh/example-prod.pub`, passwordless sudo.
@@ -147,7 +114,7 @@ ssh -i ~/.ssh/<project>-prod -o IdentitiesOnly=yes ops@STATIC_2_IP true
 </TabItem>
 </Tabs>
 
-### Step 6: Initialize the vault
+### Step 5: Initialize the vault
 
 Create the encrypted vault locally and back up the password for CI.
 
@@ -242,7 +209,7 @@ Commit the encrypted vault; CI decrypts with `ANSIBLE_VAULT_PASSWORD` (no separa
 
 Commit `inventories/prod/hosts.yml`, `inventories/prod/group_vars/all/main.yml` (with `control_plane: gha`), and encrypted `inventories/prod/group_vars/all/vault.yml` in the repository where Actions runs. Never commit `.vault-pass`.
 
-### Step 7: Repository secrets
+### Step 6: Repository secrets
 
 Add the vault password and operator SSH key to GitHub Actions secrets.
 
@@ -256,7 +223,7 @@ In GitHub → **Settings** → **Secrets and variables** → **Actions**, add:
 
 Every node must allow passwordless `sudo` for `ops` (the runner cannot answer a become password).
 
-### Step 8: Run the workflow
+### Step 7: Run the workflow
 
 Trigger the Deploy workflow to bring up production from CI.
 
@@ -275,7 +242,7 @@ What **`up`** does on the runner:
 
 The runner VM is discarded after the job; your static nodes stay up.
 
-### Step 9: Verify
+### Step 8: Verify
 
 Confirm the workflow succeeded and nodes are reachable.
 
