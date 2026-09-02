@@ -25,7 +25,7 @@ The same prod inventory works from your Mac or from GitHub Actions—the control
 
 Both paths use the same **`prod`** inventory shape. They differ by **control plane**.
 
-| | Mac (`control_plane: mac`) | GHA (`control_plane: gha`) |
+| | Mac | GitHub Actions |
 | --- | --- | --- |
 | Guide | [Deploy to production](/start-here/deploy-to-production/) | This guide |
 | Entry | `task up ENV=prod` | Actions → **Deploy** workflow |
@@ -44,7 +44,7 @@ Read `project` from `inventories/prod/hosts.yml` → `all.vars.project` (current
 
 Replace template DNS names, public IPs, and SSH fingerprints for both static nodes.
 
-Edit `inventories/prod/hosts.yml` the same way as [Deploy to production — Step 1](/start-here/deploy-to-production/#step-1-configure-prod-hosts): set `hostname`, then fill `public_ip` and `ssh_ed25519_sha256` for **static-1** and **static-2**.
+Edit `inventories/prod/hosts.yml` the same way as [Deploy to production — Step 1](/start-here/deploy-to-production/#step-1-configure-prod-hosts): set `hostname`, then fill `public_ip` and `ssh_ed25519_sha256` for **static-1** and **static-2**. Install this public key on each VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
 
 ### Step 2: Configure DNS
 

@@ -8,7 +8,7 @@ import { Tabs, TabItem } from "@astrojs/starlight/components";
 
 This guide walks through adding a **roaming** node: Ubuntu at home (or anywhere with a changing public IP), bootstrap SSH through **Cloudflare Tunnel**, and WireGuard that **always dials out** to your public static hub(s).
 
-The example uses the **prod environment**, host name **`roaming-1`**, and hostname **`roaming-1.example.com`**.
+The example uses the **prod environment**, host name **`roaming-1`**, and hostname **`roaming-1.sc.example.com`**.
 
 Where you see `ENV=<env>`, replace with your environment name (for example `prod`).
 
@@ -43,22 +43,22 @@ Add a block like this under `nodes.hosts` in `inventories/<env>/hosts.yml`:
 <TabItem label="dev">
 
 ```yaml
-    roaming-1:
-      roaming: true
-      bootstrap_ssh_host: "roaming-1.example.com"
-      ssh_ed25519_sha256: "SHA256:pRR2cezc6UOTGq+vTrVwPFCFKlHRKuuV/OL/9/c3e+M"
-      private_address: 10.217.79.21
+roaming-1:
+  roaming: true
+  bootstrap_ssh_host: "roaming-1.sc.example.com"
+  ssh_ed25519_sha256: "SHA256:pRR2cezc6UOTGq+vTrVwPFCFKlHRKuuV/OL/9/c3e+M"
+  private_address: 10.217.79.21
 ```
 
 </TabItem>
 <TabItem label="Template">
 
 ```yaml
-    roaming-1:
-      roaming: true
-      bootstrap_ssh_host: "roaming-1.example.com"
-      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT"
-      private_address: 10.217.79.21
+roaming-1:
+  roaming: true
+  bootstrap_ssh_host: "roaming-1.sc.example.com"
+  ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT"
+  private_address: 10.217.79.21
 ```
 
 </TabItem>
@@ -147,8 +147,8 @@ Still in **[Cloudflare One → Tunnels](https://one.dash.cloudflare.com/)** → 
 
 | Field | Example | Notes |
 | --- | --- | --- |
-| Subdomain | `roaming-1` | Becomes `roaming-1.example.com` |
-| Domain | `example.com` | Must be a zone in this account |
+| Subdomain | `roaming-1` | Becomes `roaming-1.sc.example.com` |
+| Domain | `sc.example.com` | Must be a zone in this account |
 | Path | *(leave empty)* | |
 | Type / Service | **SSH** | Not HTTP |
 | URL / Service URL | `localhost:22` | SSH on **this** machine where `cloudflared` runs |
@@ -159,12 +159,12 @@ Wrong: Service URL = `22` alone. Right: type **SSH** + `localhost:22`.
 
 4. Click **Add route** / **Save route**.
 
-Cloudflare usually creates a **proxied CNAME** for `roaming-1.example.com` → `<tunnel-id>.cfargotunnel.com`. Confirm under your zone **DNS** → **Records**.
+Cloudflare usually creates a **proxied CNAME** for `roaming-1.sc.example.com` → `<tunnel-id>.cfargotunnel.com`. Confirm under your zone **DNS** → **Records**.
 
 If DNS is missing, from a machine with tunnel credentials:
 
 ```sh
-cloudflared tunnel route dns home-lab-ssh roaming-1.example.com
+cloudflared tunnel route dns home-lab-ssh roaming-1.sc.example.com
 ```
 
 ### Step 5: Cloudflare Access (recommended)
@@ -175,7 +175,7 @@ Access controls **who** can use the hostname before SSH reaches your VM.
 
 1. **[Cloudflare One](https://one.dash.cloudflare.com/)** → **Access controls** → **Applications**.
 2. **Add an application** → **Self-hosted**.
-3. **Application domain**: `roaming-1.example.com` (same hostname as Step 4).
+3. **Application domain**: `roaming-1.sc.example.com` (same hostname as Step 4).
 4. **Policies** → add a rule:
    - **Action**: Allow
    - **Include**: your email (or an IdP group you use)
@@ -203,7 +203,7 @@ Add to `~/.ssh/config` (adjust key path to match your provider):
 <TabItem label="dev">
 
 ```text
-Host roaming-1.example.com
+Host roaming-1.sc.example.com
   User ops
   IdentityFile ~/.ssh/sc-prod
   IdentitiesOnly yes
@@ -214,7 +214,7 @@ Host roaming-1.example.com
 <TabItem label="Template">
 
 ```text
-Host roaming-1.example.com
+Host roaming-1.sc.example.com
   User ops
   IdentityFile ~/.ssh/<project>-<env>
   IdentitiesOnly yes
@@ -231,7 +231,7 @@ Host roaming-1.example.com
 Confirm tunnel SSH from your Mac works and record the VM host-key fingerprint.
 
 ```sh
-ssh roaming-1.example.com true
+ssh roaming-1.sc.example.com true
 ```
 
 Fix Access policy, DNS, or the published SSH route until this succeeds.
@@ -239,7 +239,7 @@ Fix Access policy, DNS, or the published SSH route until this succeeds.
 Record the VM **host key** fingerprint for `hosts.yml`:
 
 ```sh
-ssh roaming-1.example.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+ssh roaming-1.sc.example.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
 ```
 
 Copy the full `SHA256:…` value into your password manager.
@@ -250,9 +250,9 @@ Copy the full `SHA256:…` value into your password manager.
 | --- | --- |
 | Tunnel **Healthy** in Cloudflare | |
 | Published route: **SSH** → `localhost:22` | |
-| DNS record for `roaming-1.example.com` | |
+| DNS record for `roaming-1.sc.example.com` | |
 | Access application allows your identity | |
-| `ssh roaming-1.example.com true` from Mac | |
+| `ssh roaming-1.sc.example.com true` from Mac | |
 | Host key fingerprint recorded | |
 
 ### Step 8: Fill the environment inventory
@@ -267,7 +267,7 @@ Edit `inventories/<env>/hosts.yml`. Add `roaming-1` under `nodes.hosts` with the
 ```yaml
     roaming-1:
       roaming: true
-      bootstrap_ssh_host: "roaming-1.example.com"
+      bootstrap_ssh_host: "roaming-1.sc.example.com"
       ssh_ed25519_sha256: "SHA256:pRR2cezc6UOTGq+vTrVwPFCFKlHRKuuV/OL/9/c3e+M"
       private_address: 10.217.79.21
 ```
@@ -278,7 +278,7 @@ Edit `inventories/<env>/hosts.yml`. Add `roaming-1` under `nodes.hosts` with the
 ```yaml
     roaming-1:
       roaming: true
-      bootstrap_ssh_host: "roaming-1.example.com"
+      bootstrap_ssh_host: "roaming-1.sc.example.com"
       ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT"
       private_address: 10.217.79.21
 ```

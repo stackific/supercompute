@@ -62,7 +62,7 @@ After reset, recreate dev-lima from Step 3 below (Lima guest, then vault).
 
 Add the static hub and Lima roaming guest to the dev-lima inventory.
 
-Edit `inventories/dev-lima/hosts.yml` — same `all.vars` shape as `dev` (`project` + `hostname`), plus `static-1` and `roaming-1`.
+Edit `inventories/dev-lima/hosts.yml` — same `all.vars` shape as `dev` (`project` + `hostname`), plus `static-1` and `roaming-1`. Fill placeholders for `static-1` (public IP and SSH host-key fingerprint). Install this public key on the VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
 
 <Tabs syncKey="pkg">
 <TabItem label="dev-lima">

@@ -43,7 +43,7 @@ Mesh address lives on each host as `private_address`.
 
 1. Prod mesh already works: `task ssh ENV=prod NODE=static-1` succeeds.
 2. Operator SSH key and vault as in [setup-prod.md](setup-prod.md).
-3. Domain zone on Cloudflare (same account as the tunnel), e.g. `example.com`.
+3. Domain zone on Cloudflare (same account as the tunnel), e.g. `sc.example.com`.
 4. On the roaming Ubuntu VM: `cloudflared` already installed and the tunnel
    **connected** (you already have this running).
 
@@ -69,7 +69,7 @@ cloudflared tunnel info <TUNNEL_NAME_OR_ID>
 
 ## 3. Point a hostname at the tunnel (SSH published application)
 
-Goal: public hostname such as `roaming-1.example.com` routes through your
+Goal: public hostname such as `roaming-1.sc.example.com` routes through your
 existing tunnel to **SSH on the same machine** as `cloudflared`.
 
 **Prefer the dashboard (§3.1).** Skip §3.4 unless you deliberately run the
@@ -86,7 +86,7 @@ tunnel from a YAML file on the VM.
 | Field | Value | Notes |
 | --- | --- | --- |
 | Subdomain | e.g. `ubu26-nas` or `roaming-1` | Becomes `<subdomain>.<domain>` |
-| Domain | your Cloudflare zone | e.g. `example.com` |
+| Domain | your Cloudflare zone | e.g. `sc.example.com` |
 | Path | leave empty | |
 | Type / protocol | **SSH** | Not HTTP/HTTPS |
 | Service / URL | `localhost:22` | **Not** bare `22`. Means sshd on this host |
@@ -106,7 +106,7 @@ hostname exists. If missing, add the CNAME (proxied / orange cloud is fine for
 this SSH-over-Access path), or from a machine with tunnel credentials:
 
 ```sh
-cloudflared tunnel route dns <TUNNEL_NAME> roaming-1.example.com
+cloudflared tunnel route dns <TUNNEL_NAME> roaming-1.sc.example.com
 ```
 
 If you changed a local config file on the VM (§3.4), restart the agent:
@@ -118,7 +118,7 @@ sudo systemctl restart cloudflared
 ### 3.3 (Recommended) Cloudflare Access application
 
 1. Zero Trust → **Access** → **Applications** → **Add self-hosted**.
-2. Application domain: the same hostname (e.g. `roaming-1.example.com`).
+2. Application domain: the same hostname (e.g. `roaming-1.sc.example.com`).
 3. Policy: allow your email / IdP group (add a [service token](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/) later if Ansible must be non-interactive).
 4. Save.
 
@@ -131,7 +131,7 @@ in the Cloudflare dashboard. Dashboard-managed tunnels do not need this file.
 That file’s `ingress:` list is “when someone hits this public hostname, forward
 to this local service.” For SSH bootstrap you want one rule that says:
 
-- public name: `roaming-1.example.com`
+- public name: `roaming-1.sc.example.com`
 - local target: SSH on this machine (`ssh://localhost:22`)
 
 Cloudflare also requires a final catch-all rule so unmatched hostnames get a
@@ -140,7 +140,7 @@ Cloudflare also requires a final catch-all rule so unmatched hostnames get a
 ```yaml
 # Fragment only — keep your existing tunnel: and credentials-file: lines.
 ingress:
-  - hostname: roaming-1.example.com
+  - hostname: roaming-1.sc.example.com
     service: ssh://localhost:22
   - service: http_status:404   # must be last
 ```
@@ -162,7 +162,7 @@ command -v cloudflared
 Add to `~/.ssh/config` (adjust user and key to match [setup-prod.md](setup-prod.md)):
 
 ```sshconfig
-Host roaming-1.example.com
+Host roaming-1.sc.example.com
   User ops
   IdentityFile ~/.ssh/<project>-prod
   IdentitiesOnly yes
@@ -183,7 +183,7 @@ Also add `ubu26-desk.example.com` the same way when that roaming host exists.
 ## 5. Prove SSH before inventory
 
 ```sh
-ssh roaming-1.example.com true
+ssh roaming-1.sc.example.com true
 ```
 
 The first connection may open a browser for Access login. Fix Access policy or
@@ -193,7 +193,7 @@ login after Access).
 Record the SSH **host** key fingerprint (for inventory):
 
 ```sh
-ssh roaming-1.example.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+ssh roaming-1.sc.example.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
 ```
 
 Store the full `SHA256:…` line.
@@ -215,7 +215,7 @@ In `inventories/prod/hosts.yml`:
 ```yaml
 roaming-1:
   roaming: true
-  bootstrap_ssh_host: "roaming-1.example.com"
+  bootstrap_ssh_host: "roaming-1.sc.example.com"
   ssh_ed25519_sha256: "SHA256:…"
   private_address: 10.217.79.21   # free address in 10.217.79.0/24
   # no public_ip — roaming never publishes a WG dial-in address
