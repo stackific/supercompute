@@ -6,54 +6,75 @@ description: Step-by-step tutorial to add an Ubuntu node with a public IP to you
 import { Kbd } from 'starlight-kbd/components'
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-This guide walks through adding a VM/VPS/root server/Droplet with a static IP from your Mac: create the VM, prepare SSH, fill inventory and open firewall rules.
+This guide walks through adding a VM/VPS/root server/Droplet with a static IP from your Mac: create the VM, prepare SSH, fill the environment inventory, and open firewall rules.
 
-The example uses inventory slug **`dev`** (for you, it could be `prod`/`staging`/`whatever` you like to call your environment, just `dev`) and host name **`static-1`**. 
+The example uses the **dev environment** (yours might be `prod`, `staging`, or another name) and host name **`static-1`**.
 
-Wherever you will see `PROVIDER=<slug>` replace it with your inventory slug and paths accordingly, e.g., `PROVIDER=prod` for production.
+Where you see `ENV=<env>`, replace with your environment name (for example `prod`).
 
 :::note[What this guide does not cover]
 
-- **Lima guests** (`node_lima_guest`)
-- **Home-lab roaming** (dynamic IP + Cloudflare Tunnel)
-  :::
+- **Lima guests** (`node_lima_guest`) — see [Get started locally with a roaming node](/start-here/get-started-roaming-node/)
+- **Home-lab roaming** — see [Adding a roaming node](/guides/adding-roaming-node/)
 
-## Before you start
+:::
 
-You must be arriving here from [Get started locally](/start-here/get-started) or [Deploy to production](/start-here/deploy-to-production)
+### Before you start
 
-Read `project` from `config.yml` (currently `example`). In examples below, `<project>` is that value and `<provider>` is your inventory slug (here `dev` for local, `prod` for production, or `anything` you like to call your environment).
+Know which environment and inventory file you are completing, and have an external Postgres instance ready for that environment (configured in the vault before the first deploy).
 
-Unsurprisingly, inventory slugs are found in `inventories/{slug}` folder.
+You must be arriving here from [Get started locally](/start-here/get-started/) or [Deploy to production](/start-here/deploy-to-production/).
 
-Our objective is to complete the `inventories/<slug>/hosts.yml`, for `dev` it would be `inventories/dev/hosts.yml`:
+Read `project` from `inventories/<env>/hosts.yml` → `all.vars.project` (currently `example`). In examples below, `<project>` is that value and `<env>` is the environment name you pass as `ENV=` (for example `dev`, `prod`).
+
+Our objective is to complete `inventories/<env>/hosts.yml` — for `dev`, that is `inventories/dev/hosts.yml`:
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
 
 ```yaml
----
 all:
-  children:
-    controller:
-      hosts:
-        localhost:
-          ansible_connection: local
-    deployment:
-      hosts:
-        static-1:
-          wireguard_endpoint: "xxx.xxx.xxx.xxx" # Public IP of the VM with static IP
-          ssh_host_ed25519_sha256: "SHA256:0f37...2ed230"
-          wireguard_address: 10.217.80.11
-        roaming-1:
-          wireguard_roaming: true
-          node_lima_guest: true
-          node_host_architecture: aarch64
-          ssh_host_ed25519_sha256: "SHA256:FILLED_AUTOMATICALLY_FOR_DEV"
-          wireguard_address: 10.217.80.21
-    wireguard_nodes:
-      children:
-        deployment: {}
+  vars:
+    project: example
+    hostname: sc.example.com
+
+nodes:
+  hosts:
+    static-1:
+      public_ip: "xxx.xxx.xxx.xxx"
+      ssh_ed25519_sha256: "SHA256:0f37...2ed230"
+      private_address: 10.217.80.11
 ```
 
-## Step 1: Operator SSH key
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+all:
+  vars:
+    project: <project>
+    hostname: <your-prefix>.<project>.com
+
+nodes:
+  hosts:
+    static-1:
+      public_ip: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4"
+      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1"
+      private_address: 10.217.80.11
+```
+
+</TabItem>
+</Tabs>
+
+For a Lima guest or a home-lab roaming node, see the other start-here and roaming guides — this page is **public static nodes only**.
+
+:::note[Database]
+Supercompute needs a Postgres database with owner role hosted outside of the Supercompute cloud. Run `task vault-init ENV=<env>`, then `task vault-edit ENV=<env>` to set `vault_database_url`.
+:::
+
+### Step 1: Operator SSH key
+
+Create the Ed25519 key Ansible will use from your Mac.
 
 On your Mac, create an Ed25519 key with an **empty passphrase**. Store both files in your password manager.
 
@@ -62,7 +83,7 @@ On your Mac, create an Ed25519 key with an **empty passphrase**. Store both file
 
 ```sh
 ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/example-dev 
+  -f ~/.ssh/example-dev \
   -C "example dev"
 
 ssh-add ~/.ssh/example-dev
@@ -74,11 +95,11 @@ pbcopy < ~/.ssh/example-dev.pub
 
 ```sh
 ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/<project>-<provider> \
-  -C "<project> <provider>"
+  -f ~/.ssh/<project>-<env> \
+  -C "<project> <env>"
 
-ssh-add ~/.ssh/<project>-<provider>
-pbcopy < ~/.ssh/<project>-<provider>.pub
+ssh-add ~/.ssh/<project>-<env>
+pbcopy < ~/.ssh/<project>-<env>.pub
 ```
 
 </TabItem>
@@ -86,19 +107,23 @@ pbcopy < ~/.ssh/<project>-<provider>.pub
 
 Inventory will reference this key as `~/.ssh/example-dev` via `ssh_private_key_file` in group vars.
 
-**Important:** We will need the last line in Step 3.
+**Important:** We will need the public key from Step 1 in Step 3.
 
-## Step 2: Create the VM
+### Step 2: Create the VM
+
+Provision an Ubuntu amd64 VM with a public IPv4 address.
 
 In your cloud provider console:
 
 1. Create a **Ubuntu Server 26.04** **amd64** (`x86_64`) on your favourite cloud provider. arm64 may/may not work, but we have not tested it.
-2. Attach a **public IPv4** (or a stable DNS name you will put in inventory).
+2. Attach a **public IPv4** (or a stable DNS name you will put in `hosts.yml`).
 3. Do **not** rely on this automation to create the server or provider firewall rules—you configure those yourself.
 
 Note the public IP (example format `xxx.xxx.xxx.xxx`).
 
-## Step 3: Prepare the node (console or provider SSH)
+### Step 3: Prepare the node (console or provider SSH)
+
+Create the ops user, install your public key, and grant passwordless sudo.
 
 On the new VM, create the inventory SSH user (example `ops`), install the Mac public key, and grant passwordless sudo:
 
@@ -122,7 +147,9 @@ sudo -u ops sudo -n true
 
 `visudo -cf` should report `parsed OK`.
 
-## Step 4 — Verify the operator key
+### Step 4: Verify the operator key
+
+Confirm the authorized key on the VM matches your Mac key.
 
 On your Mac:
 
@@ -138,7 +165,9 @@ sudo ssh-keygen -lf /home/ops/.ssh/authorized_keys
 
 The `SHA256:…` lines must match.
 
-## Step 5 — Record the VM/server's fingerprint
+### Step 5: Record the VM/server fingerprint
+
+Copy the VM host-key fingerprint for inventory pinning.
 
 On the VM:
 
@@ -148,55 +177,81 @@ sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 # Sample output: 256 SHA256:pRR2cezc6UOTGq+vTrVwPFCFKlHRKuuV/OL/9/c3e+M root@whatever-server (ED25519)
 ```
 
-Copy the full `SHA256:pRR...e+M` value into your password manager. You will paste it into inventory as `ssh_host_ed25519_sha256` (this is the **VM/server's** fingerprint).
+Copy the full `SHA256:pRR...e+M` value into your password manager. You will paste it into `hosts.yml` as `ssh_ed25519_sha256` (this is the **VM/server's** fingerprint).
 
-## Step 6 — Fill inventory on the Mac
+### Step 6: Fill the environment inventory
 
-Remember, our objective was to complete the `inventories/<slug>/hosts.yml`, for `dev` it would be `inventories/dev/hosts.yml` -- now you can do that:
+Add the node's public IP and fingerprint to your hosts inventory.
+
+Edit `inventories/<env>/hosts.yml`. Under `nodes.hosts`, set `static-1` (or add a new `static-2`, …):
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
 
 ```yaml
-...
-static-1:
-  wireguard_endpoint: "159.203.27.69"         # your public IP from Step 2
-  ssh_host_ed25519_sha256: "SHA256:pRR...e+M" # your fingerprint from Step 5
-  wireguard_address: 10.217.80.11             # your mesh IP (always `.11` for the first node)
-...
+    static-1:
+      public_ip: "159.203.27.69"
+      ssh_ed25519_sha256: "SHA256:pRR...e+M"
+      private_address: 10.217.80.11
 ```
 
-To add another public node, duplicate the block as `static-2`, assign the next mesh IP (e.g. `.12`), and run `task up PROVIDER=<slug>` again.
+</TabItem>
+<TabItem label="Template">
 
-## Step 7 — Cloud provider firewall
+```yaml
+    static-1:
+      public_ip: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4"
+      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1"
+      private_address: 10.217.80.11
+```
+
+</TabItem>
+</Tabs>
+
+To add another public node, duplicate the block as `static-2`, assign the next mesh IP (e.g. `.12`), add an A record for `ns.<hostname>` pointing at that node's public IPv4, and run `task up ENV=<env>` again. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+
+### Step 7: Cloud provider firewall
+
+Open TCP 22 for bootstrap and UDP 51830 if roaming peers will dial in later.
 
 On the cloud provider (or host) firewall for this VM:
 
-| Phase          | Rule                                                                                                                                                |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Before setup      | Allow inbound **TCP 22** from your Mac’s current public `/32`                                                                                       |
+| Phase | Rule |
+| --- | --- |
+| Before setup | Allow inbound **TCP 22** from your Mac’s current public `/32` |
 | After setup | Allow inbound **UDP 51830** from peers that will dial this hub (if you will add roaming nodes later, open UDP 51830 broadly—not only the Mac `/32`) |
 
-Your Mac does **not** need further configuration, e.g., firewall rules, etc.
+Your Mac does **not** need further configuration for this step.
 
-## Step 8 — Prove bootstrap SSH
+### Step 8: Prove bootstrap SSH
+
+Confirm direct SSH from your Mac works before continuing.
 
 From the Mac, enter the following command with the path to the private key you created in Step 1 and the public IP of the VM:
 
 <Tabs syncKey="pkg">
 <TabItem label="dev">
+
 ```sh
 ssh -i ~/.ssh/example-dev -o IdentitiesOnly=yes ops@159.203.27.69 true
 ```
+
 </TabItem>
 <TabItem label="Template">
+
 ```sh
-ssh -i ~/.ssh/<project>-<provider> -o IdentitiesOnly=yes ops@xxx.xxx.xxx.xxx true
+ssh -i ~/.ssh/<project>-<env> -o IdentitiesOnly=yes ops@xxx.xxx.xxx.xxx true
 ```
+
 </TabItem>
 </Tabs>
 
-It will ask for "Are you sure you want to continue connecting (yes/no)?" - type `yes` and press <Kbd mac="Enter" windows="Enter" />.
+It will ask for "Are you sure you want to continue connecting (yes/no)?" — type `yes` and press <Kbd mac="Enter" windows="Enter" />.
 
-If this fails, fix user, keys, or firewall before continuing. Otherwise, it means your VM is accessible via SSH.
+If this fails, fix user, keys, or firewall before continuing.
 
-## Next steps
+### Next steps
 
-This part of adding a public node is done. Go back to [Get started locally](/start-here/get-started) or [Deploy to production](/start-here/deploy-to-production) from where you started this guide.
+Go back to [Get started locally](/start-here/get-started/) or [Deploy to production](/start-here/deploy-to-production/) from where you started this guide.
+
+To add a home-lab roaming node later, see [Adding a roaming node](/guides/adding-roaming-node/).

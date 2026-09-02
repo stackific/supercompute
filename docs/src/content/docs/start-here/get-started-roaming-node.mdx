@@ -1,0 +1,261 @@
+---
+title: Get started locally with a roaming node
+description: Add a Lima roaming guest on Apple Silicon using the dev-lima environment.
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { Kbd } from "starlight-kbd/components";
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+This guide extends [Get started locally](/start-here/get-started/) with a **Lima roaming guest** (`roaming-1`) on Apple Silicon, using the **`dev-lima`** inventory. Mesh CIDR is `10.217.81.0/24` (disjoint from **`dev`** at `10.217.80.0/24`).
+
+Finish [Get started locally](/start-here/get-started/) first — you need `task setup`, a prepared `static-1` VM, and familiarity with the `dev` flow.
+
+:::note[One static VM, two environments]
+
+`dev` and `dev-lima` can share the same `static-1` public IP locally. Only run **`task up`** for one environment on that host at a time.
+
+:::
+
+### Prerequisites
+
+You need Apple Silicon, Lima, a completed [Get started locally](/start-here/get-started/) setup, and an external Postgres instance (same requirement as dev — you set the connection URL in the dev-lima vault).
+
+- macOS on **Apple Silicon**
+- [Lima](https://lima-vm.io/docs/installation/)
+- Completed [Get started locally](/start-here/get-started/) (`task setup`, prepared `static-1`, familiar with the `dev` flow)
+- External Postgres instance (not installed by this automation)
+
+```sh
+brew install lima
+```
+
+:::caution[Resetting the dev-lima environment]
+
+If you already set up **dev-lima**, reset before a clean rerun:
+
+```sh
+task dev-reset-lima CONFIRM=reset-dev-lima
+```
+
+`dev-reset-lima` may ask for **BECOME password** (macOS sudo) when disconnecting the Mac WireGuard controller. It retries `task down ENV=dev-lima` up to three times, then destroys Lima guests under `~/.lima/.<project>-dev-lima`, deletes `.state/dev-lima`, and removes the dev-lima vault. It does **not** reset **`dev`**.
+
+To **stop** without wiping vault, Lima guests, or `.state/`, use `task down ENV=dev-lima CONFIRM=down-dev-lima` — then `task up ENV=dev-lima` brings the mesh back. See [Task commands](/reference/task/) (`down` vs reset).
+
+After reset, recreate dev-lima from Step 3 below (Lima guest, then vault).
+
+:::
+
+### Step 1: Prepare the dev-lima inventory
+
+Add the static hub and Lima roaming guest to the dev-lima inventory.
+
+Edit `inventories/dev-lima/hosts.yml` — same `all.vars` shape as `dev` (`project` + `hostname`), plus `static-1` and `roaming-1`.
+
+<Tabs syncKey="pkg">
+<TabItem label="dev-lima">
+```yaml
+---
+all:
+  vars:
+    project: example
+    hostname: sc.example.com
+
+nodes:
+  hosts:
+    static-1:
+      public_ip: "159.203.27.69"
+      ssh_ed25519_sha256: "SHA256:pRR...e+M"
+      private_address: 10.217.81.11
+    roaming-1:
+      roaming: true
+      node_lima_guest: true
+      node_host_architecture: aarch64
+      ssh_ed25519_sha256: "SHA256:FILLED_AUTOMATICALLY_BY_LIMA_UP"
+      private_address: 10.217.81.21
+```
+</TabItem>
+<TabItem label="Template">
+```yaml
+---
+all:
+  vars:
+    project: <project>
+    hostname: <your-prefix>.<project>.com
+
+nodes:
+  hosts:
+    static-1:
+      public_ip: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4"
+      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1"
+      private_address: 10.217.81.11
+    roaming-1:
+      roaming: true
+      node_lima_guest: true
+      node_host_architecture: aarch64
+      ssh_ed25519_sha256: "SHA256:FILLED_AUTOMATICALLY_BY_LIMA_UP"
+      private_address: 10.217.81.21
+```
+</TabItem>
+</Tabs>
+
+`lima-up` fills `roaming-1` `ssh_ed25519_sha256` automatically.
+
+### Step 2: Configure DNS
+
+Create records for the hostname you set in Step 1. Supercompute derives the rest by adding the hostname as a common suffix. Leave `example.com` at your registrar. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+
+| Prefix | Name | Type | Value |
+| --- | --- | --- | --- |
+| `ns` | `ns.sc.example.com` | A | **static-1** public IPv4 |
+| `api` | `api.sc.example.com` | CNAME | `ns.sc.example.com` |
+| `app` | `app.sc.example.com` | CNAME | `ns.sc.example.com` |
+
+Later, dynamic app URLs use the same nameserver:
+
+| Prefix | Name | Type | Value |
+| --- | --- | --- | --- |
+| `apps` | `apps.sc.example.com` | NS | `ns.sc.example.com` |
+
+Supercompute's Nameserver then serves `*.apps.sc.example.com`.
+
+### Step 3: Create the Lima guest
+
+Start the Lima VM and let automation capture its SSH fingerprint.
+
+```sh
+task lima-up ENV=dev-lima
+task lima-status ENV=dev-lima
+```
+
+Requires `limactl`, `uv`, and `ssh-keyscan`.
+
+### Step 4: Initialize the vault
+
+Create the encrypted vault and local password file for dev-lima.
+
+```sh
+task vault-init ENV=dev-lima
+```
+
+Creates `inventories/dev-lima/.vault-pass` and encrypted `vault.yml` with `vault_meta`, placeholder `vault_database_url`, and auto-generated `vault_database_secret`. The first `task up` adds WireGuard keypairs to the vault.
+
+Decrypted `inventories/dev-lima/group_vars/all/vault.yml` looks like this:
+
+<Tabs syncKey="vault-init">
+<TabItem label="dev-lima">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: dev-lima
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: kR7xP2mN9qL4vB8wF3hJ6tY1cZ5aD0eG_sXu
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+#### PostgreSQL database
+
+Point the vault at your external Postgres before the first deploy.
+
+Supercompute needs a Postgres database with owner role hosted outside of the Supercompute cloud.
+
+```sh
+task vault-edit ENV=dev-lima
+```
+
+`task vault-edit` decrypts `inventories/dev-lima/group_vars/all/vault.yml` in your editor. You should see `vault_meta`, `vault_database_url`, and `vault_database_secret` (WireGuard keys appear after the first `task up`). Replace only `vault_database_url` with your connection URI (same shape as the **dev-lima** tab). Leave everything else unchanged.
+
+Example after you set the database URL:
+
+<Tabs syncKey="postgres">
+<TabItem label="dev-lima">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: dev-lima
+vault_database_url: postgresql://app:secret@db.example.com:5432/supercompute
+vault_database_secret: kR7xP2mN9qL4vB8wF3hJ6tY1cZ5aD0eG_sXu
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+Save and exit the editor:
+
+- **vim/vi** (default on macOS): press <Kbd mac="Esc" windows="Esc" />, type `:wq`, press <Kbd mac="Enter" windows="Enter" />
+- **nano**: press <Kbd mac="Control+O" windows="Control+O" />, <Kbd mac="Enter" windows="Enter" />, then <Kbd mac="Control+X" windows="Control+X" />
+
+`task up` rejects the vault-init placeholder in `vault_database_url`.
+
+### Step 5: Bring up the cloud
+
+Join the static hub and Lima guest to the WireGuard mesh.
+
+```sh
+task up ENV=dev-lima
+```
+
+When prompted for **BECOME password**, enter your macOS password.
+
+### Step 6: SSH to nodes
+
+Confirm you can reach both nodes over the mesh.
+
+```sh
+task ssh ENV=dev-lima NODE=static-1
+task ssh ENV=dev-lima NODE=roaming-1
+```
+
+Optional latency check from a node to the Mac mesh peer:
+
+```sh
+ping -c 10 -I scwg0 10.217.81.1
+```
+
+If both nodes are reachable, you are done with this guide.
+
+Public Lima tasks: `lima-up` and `lima-status` (`task --list`). Full reference: [Task commands](/reference/task/).
+
+### Next steps
+
+<CardGrid stagger>
+  <Card title="Get started locally" icon="rocket">
+    Static-only `dev` environment: [Get started locally](/start-here/get-started/).
+  </Card>
+  <Card title="Deploy to production" icon="approve-check">
+    Configure **prod** with two public static nodes: [Deploy to production](/start-here/deploy-to-production/).
+  </Card>
+  <Card title="Adding a roaming node" icon="laptop">
+    Non-Lima home-lab host with a changing public IP: [Adding a roaming node](/guides/adding-roaming-node/).
+  </Card>
+</CardGrid>

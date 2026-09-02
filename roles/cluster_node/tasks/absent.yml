@@ -18,6 +18,16 @@
     state: stopped
   failed_when: false
 
+- name: Remove Supercompute PowerDNS mesh bind drop-in
+  ansible.builtin.file:
+    path: "{{ cluster_pdns_dropin_path }}"
+    state: absent
+
+- name: Restore host DNS after PowerDNS release
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    state: restarted
+
 - name: Remove cluster-managed packages
   ansible.builtin.apt:
     name: >-

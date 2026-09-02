@@ -16,12 +16,17 @@ import tempfile
 import time
 from pathlib import Path
 
+import sys
+
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inventory_hosts  # noqa: E402
 
 
 FINGERPRINT_PATTERN = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
 HOST_KEY_LINE = re.compile(
-  r"^(\s*ssh_host_ed25519_sha256:\s*)(?P<q>[\"']?)(?P<value>[^\"'#\n]+)(?P=q)(\s*(?:#.*)?)?$"
+  r"^(\s*ssh_ed25519_sha256:\s*)(?P<q>[\"']?)(?P<value>[^\"'#\n]+)(?P=q)(\s*(?:#.*)?)?$"
 )
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,30 +65,11 @@ def inventory_paths(provider: str) -> tuple[Path, Path]:
   return hosts_path, main_path
 
 
-def deployment_hosts(document: dict) -> dict[str, dict]:
+def node_hosts(document: dict) -> dict[str, dict]:
   try:
-    children = document["all"]["children"]
-  except (KeyError, TypeError) as error:
-    raise FingerprintError("Inventory must define all.children") from error
-  if not isinstance(children, dict):
-    raise FingerprintError("all.children must be a mapping")
-  deployment = children.get("deployment")
-  if not isinstance(deployment, dict):
-    raise FingerprintError("Inventory must define all.children.deployment")
-  hosts = deployment.get("hosts")
-  if hosts is None:
-    return {}
-  if not isinstance(hosts, dict):
-    raise FingerprintError("deployment.hosts must be a mapping")
-  resolved: dict[str, dict] = {}
-  for name, values in hosts.items():
-    if values is None:
-      resolved[name] = {}
-    elif isinstance(values, dict):
-      resolved[name] = values
-    else:
-      raise FingerprintError(f"deployment host {name} must map to a YAML mapping")
-  return resolved
+    return inventory_hosts.node_hosts(document)
+  except inventory_hosts.InventoryError as error:
+    raise FingerprintError(str(error)) from error
 
 
 def lima_ssh_ports(main_path: Path) -> dict[str, int]:
@@ -207,7 +193,7 @@ def load_lima_guest_targets(
   if not isinstance(document, dict):
     raise FingerprintError("Inventory must be a YAML mapping")
 
-  hosts = deployment_hosts(document)
+  hosts = node_hosts(document)
   ports = lima_ssh_ports(main_path)
   guests = sorted(
     name for name, values in hosts.items() if values.get("node_lima_guest") is True
@@ -218,27 +204,27 @@ def load_lima_guest_targets(
   targets: list[dict[str, object]] = []
   for node in guests:
     values = hosts[node]
-    if values.get("wireguard_roaming") is not True:
-      raise FingerprintError(f"{node}: node_lima_guest requires wireguard_roaming: true")
+    if values.get("roaming") is not True:
+      raise FingerprintError(f"{node}: node_lima_guest requires roaming: true")
     if values.get("bootstrap_ssh_host"):
       raise FingerprintError(
         f"{node}: node_lima_guest must omit bootstrap_ssh_host "
         "(bootstrap uses Lima-local SSH)"
       )
-    if values.get("wireguard_endpoint"):
-      raise FingerprintError(f"{node}: node_lima_guest must omit wireguard_endpoint")
+    if values.get("public_ip"):
+      raise FingerprintError(f"{node}: node_lima_guest must omit public_ip")
     if node not in ports:
       raise FingerprintError(f"{node}: node_lima_guest requires a matching lima_nodes entry")
-    if "ssh_host_ed25519_sha256" not in values:
+    if "ssh_ed25519_sha256" not in values:
       raise FingerprintError(
-        f"{node}: hosts.yml must declare ssh_host_ed25519_sha256 "
+        f"{node}: hosts.yml must declare ssh_ed25519_sha256 "
         "(placeholder OK before lima-up)"
       )
     targets.append(
       {
         "node": node,
         "port": ports[node],
-        "current": values.get("ssh_host_ed25519_sha256"),
+        "current": values.get("ssh_ed25519_sha256"),
       }
     )
 
@@ -278,7 +264,7 @@ def replace_host_fingerprint(text: str, node: str, fingerprint: str) -> str:
     if not still_in_host:
       if not replaced:
         raise FingerprintError(
-          f"{node}: could not find ssh_host_ed25519_sha256 under the host block"
+          f"{node}: could not find ssh_ed25519_sha256 under the host block"
         )
       in_host = False
       host_indent = None
@@ -299,7 +285,7 @@ def replace_host_fingerprint(text: str, node: str, fingerprint: str) -> str:
     raise FingerprintError(f"{node}: host block not found in hosts.yml")
   if not replaced:
     raise FingerprintError(
-      f"{node}: could not find ssh_host_ed25519_sha256 under the host block"
+      f"{node}: could not find ssh_ed25519_sha256 under the host block"
     )
   return "".join(output)
 

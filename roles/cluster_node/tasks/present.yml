@@ -80,6 +80,23 @@
     state: present
     update_cache: true
 
+- name: Ensure PowerDNS drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ cluster_pdns_dropin_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Bind PowerDNS to the mesh address only
+  ansible.builtin.template:
+    src: pdns-local.conf.j2
+    dest: "{{ cluster_pdns_dropin_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart PowerDNS
+
 - name: Enable and start Docker
   ansible.builtin.systemd:
     name: "{{ cluster_docker_service }}"

@@ -105,7 +105,7 @@ def main() -> int:
   parser.add_argument(
     "--ports",
     required=True,
-    help="comma-separated inventory wg_host_port values",
+    help="comma-separated inventory host_port values",
   )
   parser.add_argument(
     "--instance-names",

@@ -1,16 +1,16 @@
 [Interface]
 PrivateKey = {{ vault_wireguard_private_keys.macos }}
-Address = {{ wireguard_controller_address }}/{{ wireguard_prefix_length }}
-ListenPort = {{ wireguard_listen_port }}
+Address = {{ node_controller_address }}/{{ node_prefix_length }}
+ListenPort = {{ node_listen_port }}
 SaveConfig = false
-{% set hub = hostvars['localhost'].wireguard_hub | default('') %}
-{% set roaming_nodes = hostvars['localhost'].wireguard_roaming_nodes | default([]) %}
+{% set hub = hostvars['localhost'].static_hub | default('') %}
+{% set roaming_nodes = hostvars['localhost'].roaming_nodes | default([]) %}
 {% set use_hub = roaming_nodes | length > 0 %}
-{% for node in groups['wireguard_nodes'] | sort %}
-{% set roaming = hostvars[node].wireguard_roaming | default(false) | bool %}
+{% for node in groups['nodes'] | sort %}
+{% set roaming = hostvars[node].roaming | default(false) | bool %}
 {% if not (use_hub and roaming) %}
-{% set allowed = [hostvars[node].wireguard_address ~ '/32'] + (
-  (roaming_nodes | map('extract', hostvars, 'wireguard_address') | map('regex_replace', '^(.+)$', '\\1/32') | list)
+{% set allowed = [hostvars[node].private_address ~ '/32'] + (
+  (roaming_nodes | map('extract', hostvars, 'private_address') | map('regex_replace', '^(.+)$', '\\1/32') | list)
   if (use_hub and node == hub) else []
 ) %}
 
@@ -18,7 +18,7 @@ SaveConfig = false
 # {{ node }}{{ ' (static hub; carries roaming)' if (use_hub and node == hub) else '' }}
 PublicKey = {{ vault_wireguard_public_keys[node] }}
 AllowedIPs = {{ allowed | join(', ') }}
-Endpoint = {{ hostvars[node].wireguard_endpoint }}:{{ wireguard_listen_port }}
+Endpoint = {{ hostvars[node].public_ip }}:{{ node_listen_port }}
 PersistentKeepalive = 25
 {% endif %}
 {% endfor %}

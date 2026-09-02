@@ -30,7 +30,7 @@
       - lima_version is string
       - lima_version | length > 0
       - lima_nodes | length > 0
-      - wireguard_listen_port | int > 0
+      - node_listen_port | int > 0
     fail_msg: >-
       Lima guest factory requires provider.platform=public with Ubuntu
       {{ node_ubuntu_version }} arm64 image, positive resources, and WireGuard
@@ -73,7 +73,7 @@
   ansible.builtin.set_fact:
     lima_inventory_guest_names: "{{ lima_inventory_guest_names | default([]) + [item] }}"
   when: hostvars[item].node_lima_guest | default(false) | bool
-  loop: "{{ groups['deployment'] | default([]) | sort }}"
+  loop: "{{ groups['nodes'] | default([]) | sort }}"
   loop_control:
     label: "{{ item }}"
 
@@ -254,13 +254,13 @@
 
     - name: Check host WireGuard UDP ports before creating Lima instances
       ansible.builtin.command:
-        argv: [lsof, -nP, "-iUDP:{{ item.wg_host_port }}"]
-      register: lima_wireguard_host_port_check
+        argv: [lsof, -nP, "-iUDP:{{ item.host_port }}"]
+      register: lima_host_port_check
       failed_when: false
       changed_when: false
       loop: "{{ lima_nodes }}"
       loop_control:
-        label: "{{ item.name }}:{{ item.wg_host_port }}"
+        label: "{{ item.name }}:{{ item.host_port }}"
       when: item.name in lima_missing_instance_names
 
     - name: Refuse WireGuard host ports owned outside the Lima instance
@@ -268,10 +268,10 @@
         that:
           - item.rc != 0
         fail_msg: >-
-          Cannot create {{ item.item.name }} because UDP/{{ item.item.wg_host_port }}
-          is already in use. Choose a free wg_host_port in the provider inventory.
+          Cannot create {{ item.item.name }} because UDP/{{ item.item.host_port }}
+          is already in use. Choose a free host_port in the provider inventory.
           Current holder: {{ item.stdout | default('unknown', true) }}
-      loop: "{{ lima_wireguard_host_port_check.results | default([]) }}"
+      loop: "{{ lima_host_port_check.results | default([]) }}"
       loop_control:
         label: "{{ item.item.name | default('unknown') }}"
       when: not (item.skipped | default(false))
@@ -292,8 +292,8 @@
             .networks[0].macAddress == "{{ item.mac_address }}" and
             .ssh.localPort == {{ item.ssh_port }} and .containerd.system == false and
             .containerd.user == false and (.portForwards | length) == 2 and
-            .portForwards[0].guestPort == {{ wireguard_listen_port }} and
-            .portForwards[0].hostPort == {{ item.wg_host_port }} and
+            .portForwards[0].guestPort == {{ node_listen_port }} and
+            .portForwards[0].hostPort == {{ item.host_port }} and
             .portForwards[0].hostIP == "127.0.0.1" and .portForwards[0].proto == "udp" and
             .portForwards[0].static != true and .portForwards[1].guestPortRange[0] == 1 and
             .portForwards[1].guestPortRange[1] == 65535 and .portForwards[1].proto == "any" and
@@ -311,10 +311,10 @@
           - item.stdout | trim == 'true'
         fail_msg: >-
           Existing Lima instance {{ item.item.name }} differs from the tracked
-          contract (including UDP {{ wireguard_listen_port }} host forwards).
-          Run task wg-remove PROVIDER={{ inventory_slug }} when WireGuard state
+          contract (including UDP {{ node_listen_port }} host forwards).
+          Run task wg-remove ENV={{ inventory_slug }} when WireGuard state
           exists, then task lima-destroy CONFIRM=destroy-lima-{{ inventory_slug }},
-          task lima-up, and task up PROVIDER={{ inventory_slug }}.
+          task lima-up, and task up ENV={{ inventory_slug }}.
       loop: "{{ lima_instance_contract.results | default([]) }}"
       loop_control:
         label: "{{ item.item.name }}"
@@ -453,27 +453,27 @@
           - "{{ ansible_playbook_python }}"
           - "{{ project_root }}/scripts/lima_release_host_ports.py"
           - --ports
-          - "{{ lima_nodes | map(attribute='wg_host_port') | join(',') }}"
+          - "{{ lima_nodes | map(attribute='host_port') | join(',') }}"
           - --instance-names
           - "{{ lima_desired_instance_names | join(',') }}"
       changed_when: false
 
     - name: Recheck inventory WireGuard host UDP ports after cleanup
       ansible.builtin.command:
-        argv: [lsof, -nP, "-iUDP:{{ item.wg_host_port }}"]
+        argv: [lsof, -nP, "-iUDP:{{ item.host_port }}"]
       register: lima_destroy_port_recheck
       failed_when: false
       changed_when: false
       loop: "{{ lima_nodes }}"
       loop_control:
-        label: "{{ item.name }}:{{ item.wg_host_port }}"
+        label: "{{ item.name }}:{{ item.host_port }}"
 
     - name: Require inventory WireGuard host UDP ports to be free after destroy
       ansible.builtin.assert:
         that:
           - item.rc != 0
         fail_msg: >-
-          Cannot finish lima-destroy because UDP/{{ item.item.wg_host_port }}
+          Cannot finish lima-destroy because UDP/{{ item.item.host_port }}
           for {{ item.item.name }} is still in use:
           {{ item.stdout | default('unknown', true) }}
       loop: "{{ lima_destroy_port_recheck.results | default([]) }}"

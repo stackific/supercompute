@@ -10,7 +10,7 @@
           - provider.platform == 'public'
         fail_msg: >-
           wireguard-status requires provider.platform=public for
-          PROVIDER={{ inventory_slug }}.
+          ENV={{ inventory_slug }}.
   tasks:
     - name: Show macOS WireGuard peers
       ansible.builtin.command:
@@ -19,13 +19,13 @@
       changed_when: false
 
 - name: Show server WireGuard status
-  hosts: wireguard_nodes
+  hosts: nodes
   gather_facts: false
   serial: 1
   any_errors_fatal: true
   tasks:
     - name: Show node WireGuard peer state
       ansible.builtin.command:
-        argv: [wg, show, "{{ wireguard_interface }}"]
+        argv: [wg, show, "{{ node_interface }}"]
       become: true
       changed_when: false

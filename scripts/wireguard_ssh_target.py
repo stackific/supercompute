@@ -8,7 +8,12 @@ import os
 from pathlib import Path
 import sys
 
+import sys
+
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inventory_hosts  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,10 +32,7 @@ def load_yaml(path: Path) -> dict:
 
 
 def lima_runtime_home(provider: str) -> Path:
-  deployment = load_yaml(ROOT / "config.yml")
-  name = deployment.get("project")
-  if not isinstance(name, str) or not name.strip():
-    raise ValueError("config.yml must contain project")
+  name = inventory_hosts.require_project(provider)
   home = Path.home() / ".lima" / f".{name}-{provider}"
   return home
 
@@ -60,9 +62,9 @@ def main() -> int:
       )
       raise ValueError(f"NODE must be one of: {names}")
 
-    address = match.get("wg_address")
+    address = match.get("address")
     if not isinstance(address, str) or not address:
-      raise ValueError(f"lima_nodes entry {arguments.node} needs wg_address")
+      raise ValueError(f"lima_nodes entry {arguments.node} needs address")
 
     macos_address = group_vars.get("wireguard_macos_address")
     if not isinstance(macos_address, str) or not macos_address:

@@ -3,14 +3,14 @@
 This guide is the operator runbook for adding Ubuntu **26.04** amd64 machines
 with a **changing public IP** (typically home lab VMs) to a **public-endpoint**
 WireGuard mesh (usually operator `prod`). Stable static hosts also run Ubuntu
-**26.04**, with fixed `wireguard_endpoint` values.
+**26.04**, with fixed `public_ip` values.
 
-**Lima guests (`node_lima_guest: true`, e.g. `dev` `roaming-1`) do not use this
-guide.** They still dial the public hub WireGuard `Endpoint`, but bootstrap
-Ansible uses **Lima-local SSH** (not Cloudflare). Fingerprints for those guests
-are auto-filled by `lima-up` / `lima-host-fingerprints` — see
-[setup-dev.md](setup-dev.md). Do not set `bootstrap_ssh_host` on Lima
-guests.
+**Lima guests (`node_lima_guest: true`, e.g. `dev-lima` `roaming-1`) do not use this
+guide.** They still dial a public static WireGuard `Endpoint` (build-up hub,
+then the shared roaming dial helper), but bootstrap Ansible uses **Lima-local
+SSH** (not Cloudflare). Fingerprints for those guests are auto-filled by
+`lima-up ENV=dev-lima` / `lima-host-fingerprints ENV=dev-lima` — see [lima.md](lima.md). Do
+not set `bootstrap_ssh_host` on Lima guests.
 
 Inventory hostnames: stable public hosts as `static-1`, `static-2`, …; roaming as
 `roaming-1`, `roaming-2`, … (not `home-*` / `prod-*`).
@@ -26,9 +26,9 @@ WireGuard mesh is down. Cloudflare does **not** carry `scwg0` UDP; after join,
 day-2 mesh SSH uses WireGuard addresses.
 
 `up` syncs `.state` (known_hosts + mesh configs) from `hosts.yml`. For
-non-Lima `wireguard_roaming: true` it uses `bootstrap_ssh_host` (not a
+non-Lima `roaming: true` it uses `bootstrap_ssh_host` (not a
 public WG endpoint). Prepare the tunnel and prove SSH first, then fill inventory.
-Mesh address lives on each host as `wireguard_address`.
+Mesh address lives on each host as `private_address`.
 
 ## 0. What you are building
 
@@ -41,7 +41,7 @@ Mesh address lives on each host as `wireguard_address`.
 
 ## 1. Prerequisites
 
-1. Prod mesh already works: `task ssh PROVIDER=prod NODE=static-1` succeeds.
+1. Prod mesh already works: `task ssh ENV=prod NODE=static-1` succeeds.
 2. Operator SSH key and vault as in [setup-prod.md](setup-prod.md).
 3. Domain zone on Cloudflare (same account as the tunnel), e.g. `example.com`.
 4. On the roaming Ubuntu VM: `cloudflared` already installed and the tunnel
@@ -214,11 +214,11 @@ In `inventories/prod/hosts.yml`:
 
 ```yaml
 roaming-1:
-  wireguard_roaming: true
+  roaming: true
   bootstrap_ssh_host: "roaming-1.example.com"
-  ssh_host_ed25519_sha256: "SHA256:…"
-  wireguard_address: 10.217.79.21   # free address in 10.217.79.0/24
-  # no wireguard_endpoint — roaming never publishes a WG dial-in address
+  ssh_ed25519_sha256: "SHA256:…"
+  private_address: 10.217.79.21   # free address in 10.217.79.0/24
+  # no public_ip — roaming never publishes a WG dial-in address
   # OS defaults match prod (Ubuntu 26.04 amd64); override only if a host differs
 ```
 
@@ -227,49 +227,58 @@ name as in `~/.ssh/config`).
 
 Add or remove `roaming-N` only in `hosts.yml`; peer configs, Vault keys,
 hub `AllowedIPs`, and mesh verification all follow every host with
-`wireguard_roaming: true`. No template hardcoding of `roaming-1` /
-`roaming-2` — a third roaming node is the same inventory pattern plus
-`up` / `up`.
+`roaming: true`. No template hardcoding of `roaming-1` /
+`roaming-2` — a third roaming node is the same inventory pattern plus `up`.
 
-### Day-2 path (hub stays)
+### Day-2 path (build-up hub, then random static dial)
 
 Roaming peers have **no stable public Endpoint**, so there is never a direct
 WireGuard peer between them (or a reliable Mac→roaming dial without a known
-address). The deliberate compromise: keep the first static public hub as the
-**permanent relay** after bootstrap instead of DynDNS / endpoint discovery /
-inbound UDP **51830** on the home router.
+address). Build-up pins the first static as **`static_hub`**. After WG is
+up, every roaming node runs `/usr/local/sbin/supercompute-roaming-dial`, which
+uses `shuf` to pick **one** public static from
+`/etc/supercompute/public-endpoints.list` and `wg set` to make that peer the
+active Endpoint/transit. A systemd timer (default **hourly**) re-runs so the
+choice is not permanently fixed. With `node_forward_on_all_statics: true`
+(dev default), every public static can forward.
 
 | Path | After `up` |
 | --- | --- |
-| Mac ↔ roaming | via static hub |
-| roaming ↔ roaming (spoke↔spoke) | via static hub |
-| roaming ↔ that static hub | direct (roaming dials `Endpoint`) |
+| Mac ↔ roaming | via the static that currently holds transit AllowedIPs (Mac conf still peers roaming through the first hub) |
+| roaming ↔ roaming (spoke↔spoke) | via the active dial/transit static |
+| roaming ↔ a public static | direct when that static is the chosen Endpoint |
 
-Hub selection: first non-roaming host in the static set (`static-1` by sort
-order) → `wireguard_hub`. On `up`, Ansible:
+Hub selection for build-up: first non-roaming host in the static set
+(`static-1` by sort order) → `static_hub`. On `up`, Ansible:
 
-1. Enables hub `net.ipv4.ip_forward` (sysctl drop-in + live apply) and a
-   FORWARD accept on the WG interface (`wg-quick` PostUp re-adds iptables on
-   boot).
-2. On each roaming node, puts **Mac + every other roaming mesh `/32`** on the
-   hub peer’s `AllowedIPs` (cryptokey route through the hub).
-3. On the Mac, puts all roaming `/32`s on the hub peer the same way.
+1. Enables `net.ipv4.ip_forward` (sysctl drop-in + live apply) and a FORWARD
+   accept on the WG interface on the hub, and on **all** public statics when
+   `node_forward_on_all_statics` is true (`wg-quick` PostUp re-adds
+   iptables on boot).
+2. On each roaming node, puts **Mac (if present) + every other roaming mesh
+   `/32`** on the build-up hub peer’s `AllowedIPs` initially; the dial helper
+   moves transit AllowedIPs to the randomly chosen static afterward.
+3. On the Mac (when `control_plane: mac`), puts all roaming `/32`s on the hub
+   peer the same way.
 4. Runs `wg-quick strip … \| wg syncconf …` on every node whenever any
    roaming host exists — systemd `started` does **not** reload `AllowedIPs`
    when the conf file is unchanged; syncconf applies peer updates without
    dropping mesh SSH ([wg-quick(8)](https://git.zx2c4.com/wireguard-tools/about/src/man/wg-quick.8)
    strip + [wg(8)](https://git.zx2c4.com/wireguard-tools/about/src/man/wg.8)
    syncconf).
-5. Proves mesh SSH for **every** peer pair, including spoke↔spoke.
+5. Installs the roaming dial helper + timer; runs it once after WG is up.
+6. Proves mesh SSH for **every** peer pair, including spoke↔spoke.
 
 **Ansible note:** SSH to `bootstrap_ssh_host` must use the Cloudflare
 `ProxyCommand` (`cloudflared access ssh`). Plain SSH without `cloudflared` fails.
 
 ## 7. Provider firewall on each static public host
 
-The roaming public IP changes. Each static hub must accept **inbound UDP 51830** from
-a wide enough source set (often the public internet), not only from a fixed
-list of peer `/32`s that never include the current roaming IP.
+The roaming public IP changes. **Each dialable public static** must accept
+**inbound UDP 51830** from a wide enough source set (often the public
+internet), not only from a fixed list of peer `/32`s that never include the
+current roaming IP. Post-build dial may choose any static, not only
+`static-1`.
 
 TCP 22 from the Mac for **static host** management stays separate from WireGuard and
 from Cloudflare bootstrap to roaming.
@@ -278,21 +287,21 @@ from Cloudflare bootstrap to roaming.
 
 1. Finish §1–§6 (tunnel, Mac SSH, inventory).
 2. Ensure Vault WireGuard keys include each `roaming-N`
-   (`task vault-wireguard-ensure PROVIDER=prod` or via `up`).
-3. `task up PROVIDER=prod`
-   - Configures static hosts + Mac with roaming peer (**no** Endpoint on stables).
+   (`task up ENV=prod` ensures WireGuard keys in the vault).
+3. `task up ENV=prod`
+   - Configures static hosts + Mac (when `control_plane: mac`) with roaming
+     peers (**no** Endpoint on stables toward roaming).
    - Reaches roaming via mesh if already up, else via
      `bootstrap_ssh_host` (Cloudflare Tunnel SSH).
-   - On roaming: WireGuard with `Endpoint` + `PersistentKeepalive = 25` toward
-     each static hub; hub peer `AllowedIPs` include Mac + other roaming `/32`s.
+   - On roaming: build-up `Endpoint` + `PersistentKeepalive = 25` toward the
+     first hub; then dial helper may move Endpoint to another public static.
    - Syncs live peers with `wg syncconf` (see §6).
-   - Mesh prove must include `roaming-N` ↔ `roaming-M` via the hub.
-4. Spot-check: from Mac `task ssh PROVIDER=prod NODE=roaming-1` (and
-   `NODE=roaming-2` if present).
-5. Optional cluster stack: `task up PROVIDER=prod` (see
-   [setup-prod.md](setup-prod.md) — gVisor, Docker Engine, Caddy, and PowerDNS).
-6. Add another roaming VM: new hostname + inventory + vault keys, then
-   `up` (and `task up PROVIDER=prod` if you want node packages).
+   - Installs cluster stack + `/etc/supercompute/*` in the same `up`.
+   - Mesh prove must include `roaming-N` ↔ `roaming-M` via a static relay.
+4. Spot-check: from Mac `task ssh ENV=prod NODE=roaming-1` (and
+   `NODE=roaming-2` if present); on roaming
+   `systemctl status supercompute-roaming-dial.timer`.
+5. Add another roaming VM: new hostname + inventory + vault keys, then `up`.
 
 ## 9. Day-2 operations
 
@@ -303,7 +312,8 @@ from Cloudflare bootstrap to roaming.
 | Add/remove `roaming-N` | Edit `hosts.yml` + vault keys; `up` (syncconf refreshes live `AllowedIPs`) |
 | Mac off-LAN, mesh up | `ssh` / Ansible via mesh IPs |
 | Mesh down, recover roaming | SSH via Cloudflare hostname (§4–§5) |
-| Spoke↔spoke or Mac↔roaming fails | Confirm hub `ip_forward`, FORWARD accept, and hub peer `AllowedIPs` on the roaming node (`wg show`); re-run `up` |
+| Spoke↔spoke or Mac↔roaming fails | Confirm static `ip_forward`, FORWARD accept, dial helper (`wg show`, `supercompute-roaming-dial.timer`), and transit AllowedIPs; re-run `up` |
+| Dial stuck on one static | Check `/etc/supercompute/public-endpoints.list` and timer; run `/usr/local/sbin/supercompute-roaming-dial` |
 
 ## 10. Explicit non-goals
 
@@ -311,6 +321,6 @@ from Cloudflare bootstrap to roaming.
 - Using Cloudflare Tunnel as the `scwg0` (WireGuard UDP) transport
 - LAN / Tailscale / DynDNS as documented bootstrap paths (Cloudflare only here)
 - This repo installing or managing `cloudflared` on the roaming VM
-- Direct roaming↔roaming WireGuard peers (spoke↔spoke is hub-relayed only)
-- Dropping the static hub after bootstrap without endpoint discovery or another
-  relay (pure WireGuard cannot dial unknown roaming public IPs)
+- Direct roaming↔roaming WireGuard peers (spoke↔spoke is static-relayed only)
+- Leaving roaming without any dialable public static (build-up and day-2 dial
+  both need at least one static with a public `public_ip`)

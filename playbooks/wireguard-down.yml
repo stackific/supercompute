@@ -11,39 +11,43 @@
           - provider.mode == 'remote'
         fail_msg: >-
           wireguard-down requires provider.platform=public for
-          PROVIDER={{ inventory_slug }}.
+          ENV={{ inventory_slug }}.
 
     - name: Reset classified WireGuard node lists
       ansible.builtin.set_fact:
-        wireguard_static_nodes: []
-        wireguard_roaming_nodes: []
+        static_nodes: []
+        roaming_nodes: []
 
     - name: Classify each WireGuard inventory node
       ansible.builtin.set_fact:
-        wireguard_static_nodes: >-
+        static_nodes: >-
           {{
-            wireguard_static_nodes
-            + ([] if (hostvars[item].wireguard_roaming | default(false) | bool) else [item])
+            static_nodes
+            + ([] if (hostvars[item].roaming | default(false) | bool) else [item])
           }}
-        wireguard_roaming_nodes: >-
+        roaming_nodes: >-
           {{
-            wireguard_roaming_nodes
-            + ([item] if (hostvars[item].wireguard_roaming | default(false) | bool) else [])
+            roaming_nodes
+            + ([item] if (hostvars[item].roaming | default(false) | bool) else [])
           }}
-      loop: "{{ groups['wireguard_nodes'] | sort }}"
+      loop: "{{ groups['nodes'] | sort }}"
       loop_control:
         label: "{{ item }}"
 
     - name: Record roaming presence and the static hub hostname
       ansible.builtin.set_fact:
-        wireguard_has_roaming: "{{ wireguard_roaming_nodes | length > 0 }}"
-        wireguard_hub: "{{ wireguard_static_nodes | first | default('') }}"
+        has_roaming: "{{ roaming_nodes | length > 0 }}"
+        static_hub: "{{ static_nodes | first | default('') }}"
 
-- name: Tear down WireGuard on every server through the mesh
-  hosts: wireguard_nodes
+- ansible.builtin.import_playbook: node-transport.yml
+
+- name: Tear down WireGuard on every server through mesh or bootstrap SSH
+  hosts: nodes
   gather_facts: false
-  serial: 1
   any_errors_fatal: true
+  serial: 1
+  vars_files:
+    - vars/node_recovery_ssh.yml
   roles:
     - role: wireguard_node
       vars:

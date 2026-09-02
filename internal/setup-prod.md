@@ -1,13 +1,13 @@
 # Production setup
 
 The `prod` inventory manages a WireGuard mesh between one macOS controller and
-an arbitrary number of Ubuntu 26.04 AMD64 **public endpoint** hosts
+two Ubuntu 26.04 AMD64 **public endpoint** hosts
 (`provider.platform: public`). The project does not create servers or provider
 firewall rules. Node names, mesh addresses, and endpoints come from inventory
-only. `inventories/prod/` is operator-local (gitignored); restore it from your
-backup when needed.
+only. `inventories/prod/` is committed in the repository; replace placeholders
+in `hosts.yml` before the first `task up`.
 
-Read `project` from `config.yml` and use inventory slug `prod` (or
+Read `project` from `inventories/<provider>/hosts.yml` → `all.vars` and use inventory slug `prod` (or
 whatever `inventories/<slug>/` directory you are configuring). Below,
 `<project>` and `<provider>` mean those values (for example
 `sc` and `prod`).
@@ -25,11 +25,7 @@ brew install go-task/tap/go-task uv wireguard-tools
 task setup
 ```
 
-`task setup` installs the locked Ansible venv and ensures `cloudflared` is on
-PATH (Homebrew on macOS) for **non-Lima** roaming SSH bootstrap. Lima guests
-under `dev` use Lima-local SSH instead — see [setup-dev.md](setup-dev.md).
-
-
+`task setup` installs the locked Ansible venv.
 
 ## Prepare the Mac SSH identity (once)
 
@@ -97,7 +93,7 @@ sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
 Store the full `SHA256:…` value in your password manager. Put the same value in
-`inventories/<provider>/hosts.yml` as `ssh_host_ed25519_sha256` for that
+`inventories/<provider>/hosts.yml` as `ssh_ed25519_sha256` for that
 host. This is the **server** host key, not the operator key from
 `authorized_keys`.
 
@@ -121,9 +117,9 @@ ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ proje
 - `ssh_private_key_file` should use the form above (Ansible and `ssh`
 both expand it). A leading `~` is **not** expanded; do not hardcode only a
 tilde path.
-- Optionally replace `provider.image.source` (`REPLACE_WITH_PROVIDER_IMAGE_ID`)
-with your provider’s image id when you use provider image automation.
-- Mesh IPs are **not** in this file; set `wireguard_address` per host in
+- Optionally replace `provider.image.source` in `inventories/prod/group_vars/all/main.yml`
+  (default `template:ubuntu-26.04`) when your provider automation requires a different image id.
+- Mesh IPs are **not** in this file; set `private_address` per host in
 `hosts.yml` (choose a CIDR that does not overlap other meshes on this Mac).
 
 
@@ -136,16 +132,16 @@ follow this host set on the next `up`.
 
 ```yaml
 static-1:
-  wireguard_endpoint: "203.0.113.11"
-  ssh_host_ed25519_sha256: "SHA256:…"
-  wireguard_address: "REPLACE_WITH_MESH_IP"
+  public_ip: "203.0.113.11"
+  ssh_ed25519_sha256: "SHA256:…"
+  private_address: "REPLACE_WITH_MESH_IP"
 ```
 
-- `wireguard_endpoint` — public IPv4 or DNS name (not the mesh address)
-- `ssh_host_ed25519_sha256` — complete `SHA256:…` from
+- `public_ip` — public IPv4 or DNS name (not the mesh address)
+- `ssh_ed25519_sha256` — complete `SHA256:…` from
 `/etc/ssh/ssh_host_ed25519_key.pub` on that VM
-- `wireguard_address` — unique mesh IP in `wireguard_network_cidr`
-  (controller uses `wireguard_controller_address`, usually `.1`)
+- `private_address` — unique mesh IP in `node_network_cidr`
+  (controller uses `node_controller_address`, usually `.1`)
 
 
 
@@ -183,21 +179,29 @@ stateful. The Mac does not need inbound UDP **51830**
 ## Initialize vault and bring up the mesh
 
 ```sh
-task vault-init PROVIDER=prod
-task up PROVIDER=prod
+task vault-init ENV=prod
+task up ENV=prod
 ```
 
 `up` fingerprint-pins host keys into `.state/prod/known_hosts`, ensures Vault
-WireGuard key pairs (`macos` plus every inventory host), installs the Mac
-`scwg0` config and launchd unit, configures each server, and proves mesh SSH
-(including roaming↔roaming via the static hub when roaming hosts exist). With
-any `wireguard_roaming: true` host, it also enables hub forwarding and runs
-`wg syncconf` so live `AllowedIPs` match the rendered conf — details in
-[roaming-nodes.md](roaming-nodes.md) §6.
+WireGuard key pairs (`macos` plus every inventory host when `control_plane: mac`),
+installs the Mac `scwg0` config and launchd unit (Mac path), configures each
+server (including `/etc/supercompute/*` and roaming dial), installs the cluster
+stack, and proves mesh SSH (including roaming↔roaming via a static relay when
+roaming hosts exist). With any `roaming: true` host, it also enables
+static forwarding (`node_forward_on_all_statics`) and runs `wg syncconf` —
+details in [roaming-nodes.md](roaming-nodes.md) §6 and [wireguard.md](wireguard.md).
+
+Before first `up`, set `project` and `hostname` in
+`inventories/<provider>/hosts.yml` → `all.vars`. Choose `control_plane: mac` (this Mac runbook) or
+`control_plane: gha` ([gha-deploy.md](gha-deploy.md)). For GHA, also set
+`node_ci_address` to a free mesh IP (often `.254`). Optional repository
+secret `MAC_OPERATOR_SSH_PUBLIC_KEY` installs a Mac operator key onto nodes
+during Actions runs when set.
 
 ```sh
-task wg-status PROVIDER=prod
-task ssh PROVIDER=prod NODE=<inventory_hostname>
+task wg-status ENV=prod
+task ssh ENV=prod NODE=<inventory_hostname>
 ```
 
 `ssh` connects from the Mac to the node's private WireGuard address.
@@ -205,24 +209,23 @@ task ssh PROVIDER=prod NODE=<inventory_hostname>
 Controller-only disconnect (does not change servers):
 
 ```sh
-task wg-remove PROVIDER=prod
+task wg-remove ENV=prod
 ```
 
 ## Cluster services (gVisor, Docker Engine, PowerDNS)
 
-After the mesh is up, install per-node cluster software with:
-
-```sh
-task up PROVIDER=prod
-```
+Cluster software is installed by the **same** `task up ENV=prod` that
+brings up the mesh (not a second step).
 
 `up` installs **gVisor** (`runsc`), **Docker Engine** (`docker-ce`,
 `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin` from Docker’s apt
 repo), and **PowerDNS** (`pdns-server`). It does not create DNS zones,
-configure application hostnames, or verify website records. The externally
-managed nameserver hostname is `nameserver_hostname` in `config.yml`,
-whose default is `ns.example.com`. Caddy is installed with its systemd service
-disabled and stopped.
+configure application hostnames, or verify website records. Set
+`hostname` in `hosts.yml` all.vars (for example `sc.example.com`); Supercompute
+prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. Caddy is installed with its systemd service disabled and stopped.
+
+When using multiple public statics with roaming, allow **inbound UDP 51830** on
+**every** dialable static (not only `static-1`) so post-build random dial works.
 
 ### Verify the installed runtime
 
@@ -234,7 +237,7 @@ docker version
 Undo with:
 
 ```sh
-task down PROVIDER=prod CONFIRM=down-prod
+task down ENV=prod CONFIRM=down-prod
 ```
 
 ## Roaming nodes (dynamic IP)
@@ -272,9 +275,9 @@ mesh from a new Mac. Do **not** rely on git for anything marked gitignored.
 | Item                           | Where                                                    | Why                                                                                                                                        |
 | ------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Encrypted vault                | `inventories/<provider>/group_vars/all/vault.yml`        | Holds `vault_wireguard_*` key pairs. Prefer committing it; also keep a secret-manager copy |
-| Per-node host-key fingerprints | `SHA256:…` from each `/etc/ssh/ssh_host_ed25519_key.pub` | Must match `ssh_host_ed25519_sha256` in `hosts.yml` for `up` / known_hosts                                                         |
+| Per-node host-key fingerprints | `SHA256:…` from each `/etc/ssh/ssh_host_ed25519_key.pub` | Must match `ssh_ed25519_sha256` in `hosts.yml` for `up` / known_hosts                                                         |
 | Per-node public endpoints      | IPv4 or DNS in `hosts.yml`                               | WireGuard peer endpoints and bootstrap SSH                                                                                                 |
-| Inventory + `config.yml`   | Git clone                                                | Host names, mesh IPs, SSH user, launchd label namespace                                                                                    |
+| Inventory (`hosts.yml`)  | Git clone                                                | Project identity, host names, mesh IPs, SSH user, launchd label namespace                                                                                    |
 
 
 Also note your **Mac’s current public IPv4** for temporary TCP **22** to each
@@ -284,7 +287,7 @@ firewall section above).
 
 ### Do not need to back up (recreated on the new Mac)
 
-These are regenerated by `task up PROVIDER=<provider>` after you restore the
+These are regenerated by `task up ENV=<env>` after you restore the
 secrets above and clone the repo:
 
 - `.state/<provider>/known_hosts`
@@ -295,13 +298,13 @@ secrets above and clone the repo:
 
 ### Restore on a fresh Mac
 
-1. Install Task, `uv`, and `wireguard-tools`; clone the repo (or this worktree); `task setup` (also installs `cloudflared` on macOS).
+1. Install Task, `uv`, and `wireguard-tools`; clone the repo (or this worktree); `task setup`.
 2. Restore the SSH key pair to `~/.ssh/<project>-<provider>` (mode `0600` on the private key); `ssh-add` it; set `ssh_private_key_file` if you use that path.
 3. Restore `inventories/<provider>/.vault-pass` (mode `0600`). Confirm `vault.yml` is present (from git or secret manager).
 4. Confirm `hosts.yml` fingerprints and endpoints match what you stored.
 5. Update the provider firewall with this Mac’s public `/32` if it changed.
-6. Run `task up PROVIDER=<provider>` (temporarily allow TCP 22 from the new Mac if the mesh is down and public SSH was closed).
-7. Confirm with `task ssh PROVIDER=<provider> NODE=<inventory_hostname>`.
+6. Run `task up ENV=<env>` (temporarily allow TCP 22 from the new Mac if the mesh is down and public SSH was closed).
+7. Confirm with `task ssh ENV=<env> NODE=<inventory_hostname>`.
 
 
 
@@ -311,15 +314,15 @@ Use the configured mesh values:
 
 | Role | Address |
 | --- | --- |
-| Mac controller | `wireguard_controller_address` in `group_vars/all/main.yml` |
-| Inventory nodes | `wireguard_address` per host in `hosts.yml` |
+| Mac controller | `node_controller_address` in `group_vars/all/main.yml` |
+| Inventory nodes | `private_address` per host in `hosts.yml` |
 
 
 Interface name on servers: `scwg0`. Listen port: `51830`.
 
 ```code
 # From a static node, ping the configured macOS controller address
-ping -c 10 -I scwg0 <wireguard_controller_address>
+ping -c 10 -I scwg0 <node_controller_address>
 
 # < 20 ms: Excellent (same metro / nearby region)
 # 20–50 ms: Very good (typical same-country / nearby DC)

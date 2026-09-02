@@ -3,8 +3,8 @@ name: Deploy
 on:
   workflow_dispatch:
     inputs:
-      provider:
-        description: Inventory slug under inventories/
+      env:
+        description: Environment slug under inventories/
         required: true
         type: string
       action:
@@ -16,7 +16,7 @@ on:
           - down
           - verify
       confirm:
-        description: Required for down — must equal down-<provider>
+        description: Required for down — must equal down-<env>
         required: false
         type: string
         default: ""
@@ -28,7 +28,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      PROVIDER: ${{ inputs.provider }}
+      ENV: ${{ inputs.env }}
       CONFIRM: ${{ inputs.confirm }}
       ANSIBLE_STDOUT_CALLBACK: default
       ANSIBLE_DISPLAY_ARGS_TO_STDOUT: "False"
@@ -64,8 +64,8 @@ jobs:
             exit 1
           }
           umask 077
-          printf '%s\n' "${ANSIBLE_VAULT_PASSWORD}" >"inventories/${PROVIDER}/.vault-pass"
-          chmod 600 "inventories/${PROVIDER}/.vault-pass"
+          printf '%s\n' "${ANSIBLE_VAULT_PASSWORD}" >"inventories/${ENV}/.vault-pass"
+          chmod 600 "inventories/${ENV}/.vault-pass"
 
       - name: Materialize ops SSH key
         env:
@@ -75,8 +75,8 @@ jobs:
             echo "Set repository secret OPS_SSH_PRIVATE_KEY" >&2
             exit 1
           }
-          project="$(uv run --locked python scripts/config_project.py)"
-          key_path="${HOME}/.ssh/${project}-${PROVIDER}"
+          project="$(uv run --locked python scripts/config_project.py --provider "${ENV}")"
+          key_path="${HOME}/.ssh/${project}-${ENV}"
           mkdir -p "${HOME}/.ssh"
           umask 077
           printf '%s\n' "${OPS_SSH_PRIVATE_KEY}" >"${key_path}"
@@ -87,8 +87,8 @@ jobs:
           MAC_OPERATOR_SSH_PUBLIC_KEY: ${{ secrets.MAC_OPERATOR_SSH_PUBLIC_KEY }}
         run: |
           umask 077
-          mkdir -p ".state/${PROVIDER}"
-          export VARS_FILE=".state/${PROVIDER}/gha-extra-vars.yml"
+          mkdir -p ".state/${ENV}"
+          export VARS_FILE=".state/${ENV}/gha-extra-vars.yml"
           python3 - <<'PY'
           import os
           from pathlib import Path
@@ -108,52 +108,56 @@ jobs:
         if: inputs.action != 'verify'
         run: |
           uv run --locked python scripts/known-hosts.py \
-            --inventory "inventories/${PROVIDER}/hosts.yml" \
-            --known-hosts ".state/${PROVIDER}/known_hosts" \
+            --inventory "inventories/${ENV}/hosts.yml" \
+            --known-hosts ".state/${ENV}/known_hosts" \
             --reuse-existing
 
-      - name: Ensure WireGuard vault keys
+      - name: Ensure vault secrets
         if: inputs.action == 'up'
-        run: PROVIDER="${PROVIDER}" uv run --locked python scripts/vault.py ensure-wireguard
+        run: ENV="${ENV}" uv run --locked python scripts/vault.py ensure-secrets
+
+      - name: Validate deployment config
+        if: inputs.action == 'up'
+        run: ENV="${ENV}" uv run --locked python scripts/validate-deployment.py
 
       - name: WireGuard + cluster up
         if: inputs.action == 'up'
         run: |
-          bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
             playbooks/wireguard-up.yml
-          bash scripts/gha-mesh-peer.sh "${PROVIDER}" present
-          bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
+          bash scripts/gha-mesh-peer.sh "${ENV}" present
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
             playbooks/cluster-up.yml
 
       - name: Down
         if: inputs.action == 'down'
         run: |
-          test "${CONFIRM}" = "down-${PROVIDER}" || {
-            echo "Set confirm=down-${PROVIDER} for destructive down" >&2
+          test "${CONFIRM}" = "down-${ENV}" || {
+            echo "Set confirm=down-${ENV} for destructive down" >&2
             exit 2
           }
-          bash scripts/gha-mesh-peer.sh "${PROVIDER}" absent || true
-          bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
+          bash scripts/gha-mesh-peer.sh "${ENV}" absent || true
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
             playbooks/cluster-down.yml
-          bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
             playbooks/wireguard-down.yml
 
       - name: Verify
         if: inputs.action == 'verify'
         run: |
           uv run --locked python scripts/known-hosts.py \
-            --inventory "inventories/${PROVIDER}/hosts.yml" \
-            --known-hosts ".state/${PROVIDER}/known_hosts" \
+            --inventory "inventories/${ENV}/hosts.yml" \
+            --known-hosts ".state/${ENV}/known_hosts" \
             --reuse-existing
-          bash scripts/gha-mesh-peer.sh "${PROVIDER}" present
-          bash scripts/ansible-playbook.sh "${PROVIDER}" \
-            --extra-vars "@.state/${PROVIDER}/gha-extra-vars.yml" \
+          bash scripts/gha-mesh-peer.sh "${ENV}" present
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
             playbooks/verify.yml
 
       - name: Remove ephemeral mesh peer
         if: always() && (inputs.action == 'up' || inputs.action == 'verify')
-        run: bash scripts/gha-mesh-peer.sh "${PROVIDER}" absent || true
+        run: bash scripts/gha-mesh-peer.sh "${ENV}" absent || true

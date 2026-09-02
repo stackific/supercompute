@@ -10,14 +10,14 @@
       ansible.builtin.assert:
         that:
           - control_plane | default('mac') == 'gha'
-          - wireguard_ci_address is string
-          - wireguard_ci_address | length > 0
+          - node_ci_address is string
+          - node_ci_address | length > 0
         fail_msg: >-
-          gha-mesh-peer requires control_plane=gha and wireguard_ci_address
+          gha-mesh-peer requires control_plane=gha and node_ci_address
           in inventories/{{ inventory_slug }}/group_vars.
 
 - name: Reconcile ephemeral CI peer on every mesh node
-  hosts: wireguard_nodes
+  hosts: nodes
   gather_facts: false
   serial: 1
   any_errors_fatal: true
@@ -27,8 +27,8 @@
     # Reach nodes over bootstrap/public SSH — the runner is not on-mesh yet.
     ansible_host: >-
       {{
-        (wireguard_roaming | default(false) | bool)
-        | ternary(bootstrap_ssh_host, wireguard_endpoint)
+        (roaming | default(false) | bool)
+        | ternary(bootstrap_ssh_host, public_ip)
       }}
     ansible_user: "{{ default_ssh_user }}"
     ansible_port: "{{ default_ssh_port }}"
@@ -38,7 +38,7 @@
       -o HostKeyAlias={{ inventory_hostname }} -o StrictHostKeyChecking=yes
       -o UserKnownHostsFile={{ known_hosts_file }}
       -o IdentitiesOnly=yes
-      {% if wireguard_roaming | default(false) | bool %}
+      {% if roaming | default(false) | bool %}
       -o ProxyCommand="{{ lookup('ansible.builtin.pipe', 'command -v cloudflared') }} access ssh --hostname %h"
       {% endif %}
   tasks:
@@ -54,11 +54,11 @@
         argv:
           - wg
           - set
-          - "{{ wireguard_interface }}"
+          - "{{ node_interface }}"
           - peer
           - "{{ gha_wg_public_key }}"
           - allowed-ips
-          - "{{ wireguard_ci_address }}/32"
+          - "{{ node_ci_address }}/32"
           - persistent-keepalive
           - "25"
       become: true
@@ -68,14 +68,14 @@
       ansible.builtin.shell:
         cmd: >-
           set -euo pipefail;
-          pubkey="$(wg show {{ wireguard_interface | quote }} peers | while read -r p; do
-            allowed="$(wg show {{ wireguard_interface | quote }} allowed-ips "$p")";
+          pubkey="$(wg show {{ node_interface | quote }} peers | while read -r p; do
+            allowed="$(wg show {{ node_interface | quote }} allowed-ips "$p")";
             case "${allowed}" in
-              *"{{ wireguard_ci_address }}/32"*) echo "$p"; break ;;
+              *"{{ node_ci_address }}/32"*) echo "$p"; break ;;
             esac;
           done)";
           if [[ -n "${pubkey}" ]]; then
-            wg set {{ wireguard_interface | quote }} peer "${pubkey}" remove;
+            wg set {{ node_interface | quote }} peer "${pubkey}" remove;
           fi
       args:
         executable: /bin/bash

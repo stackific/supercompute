@@ -11,7 +11,7 @@
           - project is match('^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$')
           - inventory_slug is string
           - inventory_slug | length > 0
-        fail_msg: "config.yml and inventory_slug must identify this provider run."
+        fail_msg: "hosts.yml all.vars and inventory_slug must identify this provider run."
 
     - name: Refuse retired provider.platform values
       ansible.builtin.assert:
@@ -40,11 +40,11 @@
 
     - name: Check whether WireGuard controller state exists
       ansible.builtin.stat:
-        path: "{{ wireguard_config_path }}"
+        path: "{{ node_config_path }}"
       register: verify_wireguard_config
       when:
         - provider.platform == 'public'
-        - wireguard_config_path is defined
+        - node_config_path is defined
 
     - name: Require known_hosts aliases when mesh state exists
       when:
@@ -61,12 +61,12 @@
             that:
               - verify_known_hosts_file.stat.exists
               - verify_known_hosts_file.stat.mode == '0600'
-            fail_msg: "Missing mode-0600 {{ known_hosts_file }}; run task up PROVIDER={{ inventory_slug }}."
+            fail_msg: "Missing mode-0600 {{ known_hosts_file }}; run task up ENV={{ inventory_slug }}."
 
         - name: Require each inventory host alias in known_hosts
           ansible.builtin.command:
             argv: [ssh-keygen, -F, "{{ item }}", -f, "{{ known_hosts_file }}"]
-          loop: "{{ groups['wireguard_nodes'] }}"
+          loop: "{{ groups['nodes'] }}"
           loop_control:
             label: "{{ item }}"
           changed_when: false
@@ -80,17 +80,17 @@
         - name: Assert the controller mesh address is active
           ansible.builtin.assert:
             that:
-              - "'inet ' ~ wireguard_controller_address ~ ' ' in verify_interfaces.stdout"
+              - "'inet ' ~ node_controller_address ~ ' ' in verify_interfaces.stdout"
             fail_msg: >-
-              {{ wireguard_controller_address }} is not active; run task up
-              PROVIDER={{ inventory_slug }} or restore the launchd mesh.
+              {{ node_controller_address }} is not active; run task up
+              ENV={{ inventory_slug }} or restore the launchd mesh.
 
     - name: Report when WireGuard verify is skipped
       ansible.builtin.debug:
         msg: >-
           WireGuard config is absent under
-          {{ wireguard_config_path | default('(undefined)') }}; skipped mesh verify.
-          Fill inventory placeholders, then run task up PROVIDER={{ inventory_slug }}.
+          {{ node_config_path | default('(undefined)') }}; skipped mesh verify.
+          Fill inventory placeholders, then run task up ENV={{ inventory_slug }}.
       when:
         - provider.platform == 'public'
         - not (verify_wireguard_config.stat.exists | default(false))

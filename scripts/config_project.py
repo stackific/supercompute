@@ -1,44 +1,39 @@
 #!/usr/bin/env python3
-"""Print the project id from config.yml."""
+"""Print the project id from inventories/<provider>/hosts.yml all.vars."""
 
 from __future__ import annotations
 
-from pathlib import Path
-import re
+import argparse
+import os
 import sys
+from pathlib import Path
 
-import yaml
-
-
-ROOT = Path(__file__).resolve().parents[1]
-INSTANCE_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inventory_hosts  # noqa: E402
 
 
 def main() -> int:
-  path = ROOT / "config.yml"
+  parser = argparse.ArgumentParser(
+    description="Print project from inventories/<provider>/hosts.yml all.vars"
+  )
+  parser.add_argument(
+    "--provider",
+    default=os.environ.get("ENV", ""),
+    help="inventory slug (defaults to ENV environment variable)",
+  )
+  arguments = parser.parse_args()
+  provider = arguments.provider.strip()
+  if not provider:
+    print(
+      "Environment is required (--provider or ENV environment variable).",
+      file=sys.stderr,
+    )
+    return 1
   try:
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-  except FileNotFoundError:
-    print(f"Cloud configuration does not exist: {path}", file=sys.stderr)
+    print(inventory_hosts.require_project(provider))
+  except inventory_hosts.InventoryError as error:
+    print(str(error), file=sys.stderr)
     return 1
-  except yaml.YAMLError as error:
-    print(f"Cloud configuration is not valid YAML: {error}", file=sys.stderr)
-    return 1
-
-  if not isinstance(document, dict):
-    print("config.yml must contain a YAML mapping", file=sys.stderr)
-    return 1
-  project = document.get("project")
-  if not isinstance(project, str) or not project.strip():
-    print("config.yml must contain a non-empty project", file=sys.stderr)
-    return 1
-  if Path(project).name != project or project in {".", ".."}:
-    print("project must be a single path-safe name", file=sys.stderr)
-    return 1
-  if not INSTANCE_NAME.fullmatch(project):
-    print("project must be a lowercase DNS-label name", file=sys.stderr)
-    return 1
-  print(project)
   return 0
 
 

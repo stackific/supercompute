@@ -16,7 +16,12 @@ import subprocess
 import sys
 import tempfile
 
+import sys
+
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inventory_hosts  # noqa: E402
 
 
 FINGERPRINT_PATTERN = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
@@ -59,7 +64,7 @@ def validate_dial_target(value: object, node: str, field: str) -> str:
 
 
 def is_roaming(values: dict) -> bool:
-  return values.get("wireguard_roaming") is True
+  return values.get("roaming") is True
 
 
 def is_lima_guest(values: dict) -> bool:
@@ -99,39 +104,11 @@ def lima_ssh_ports(inventory_path: Path) -> dict[str, int]:
 
 
 def inventory_host_vars(inventory: dict) -> dict[str, dict]:
-  """Resolve wireguard_nodes members and their host vars (supports children alias)."""
+  """Resolve nodes members and their host vars (supports children alias)."""
   try:
-    children = inventory["all"]["children"]
-  except (KeyError, TypeError) as error:
-    raise HostKeyError("Inventory must define all.children") from error
-  if not isinstance(children, dict):
-    raise HostKeyError("all.children must be a mapping")
-
-  wireguard = children.get("wireguard_nodes")
-  if not isinstance(wireguard, dict):
-    raise HostKeyError("Inventory must define all.children.wireguard_nodes")
-
-  hosts: dict[str, dict] = {}
-  direct = wireguard.get("hosts")
-  if isinstance(direct, dict):
-    for name, values in direct.items():
-      hosts[name] = values if isinstance(values, dict) else {}
-
-  nested = wireguard.get("children")
-  if isinstance(nested, dict):
-    for child_name in nested:
-      child = children.get(child_name)
-      if not isinstance(child, dict):
-        raise HostKeyError(f"wireguard_nodes child group {child_name} is missing")
-      child_hosts = child.get("hosts")
-      if not isinstance(child_hosts, dict):
-        raise HostKeyError(f"Group {child_name} must define hosts")
-      for name, values in child_hosts.items():
-        hosts[name] = values if isinstance(values, dict) else {}
-
-  if not hosts:
-    raise HostKeyError("wireguard_nodes declares no hosts")
-  return hosts
+    return inventory_hosts.node_hosts(inventory)
+  except inventory_hosts.InventoryError as error:
+    raise HostKeyError(str(error)) from error
 
 
 def load_contract(inventory_path: Path) -> list[dict[str, str]]:
@@ -152,26 +129,26 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
   contract: list[dict[str, str]] = []
   for node in nodes:
     values = hosts[node]
-    fingerprint = values.get("ssh_host_ed25519_sha256")
+    fingerprint = values.get("ssh_ed25519_sha256")
     if not isinstance(fingerprint, str) or not FINGERPRINT_PATTERN.fullmatch(fingerprint):
       raise HostKeyError(
-        f"{node}: ssh_host_ed25519_sha256 must be a complete "
+        f"{node}: ssh_ed25519_sha256 must be a complete "
         "console-verified SHA256 fingerprint"
       )
     if fingerprint.startswith("SHA256:REPLACE_WITH_"):
-      raise HostKeyError(f"{node}: replace ssh_host_ed25519_sha256 placeholder first")
+      raise HostKeyError(f"{node}: replace ssh_ed25519_sha256 placeholder first")
 
     if is_lima_guest(values):
       if not is_roaming(values):
-        raise HostKeyError(f"{node}: node_lima_guest requires wireguard_roaming: true")
+        raise HostKeyError(f"{node}: node_lima_guest requires roaming: true")
       if values.get("bootstrap_ssh_host"):
         raise HostKeyError(
           f"{node}: node_lima_guest must omit bootstrap_ssh_host "
           "(bootstrap uses Lima-local SSH)"
         )
-      if values.get("wireguard_endpoint"):
+      if values.get("public_ip"):
         raise HostKeyError(
-          f"{node}: node_lima_guest must omit wireguard_endpoint"
+          f"{node}: node_lima_guest must omit public_ip"
         )
       if node not in lima_ports:
         raise HostKeyError(f"{node}: node_lima_guest requires a matching lima_nodes entry")
@@ -188,9 +165,9 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
       port = ""
     else:
       dial = validate_dial_target(
-        values.get("wireguard_endpoint"),
+        values.get("public_ip"),
         node,
-        "wireguard_endpoint",
+        "public_ip",
       )
       kind = "public"
       port = ""

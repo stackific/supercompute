@@ -1,6 +1,6 @@
 # Cluster stack
 
-`task up` brings up the WireGuard mesh and installs runtime/DNS software on every host in the **`deployment`** group.
+`task up` brings up the WireGuard mesh and installs runtime/DNS software on every host in the **`nodes`** group.
 
 ## Software installed (`cluster_node` role, `present`)
 
@@ -13,12 +13,9 @@
 
 ## DNS boundary
 
-`cluster_node` installs and starts PowerDNS but deliberately does not create DNS
-zones, configure an application hostname, or perform DNS lookups. DNS
-delegation remains an external operator responsibility.
+PowerDNS listens on the node mesh address only (`pdns.d/supercompute-local.conf`) so host DNS stays on `systemd-resolved`. Teardown removes that drop-in and restarts `systemd-resolved`.
 
-Set the externally managed nameserver hostname in `config.yml` with
-`nameserver_hostname`; its default is `ns.example.com`.
+Set `hostname` in `hosts.yml` → `all.vars` (for example `sc.example.com`). Prefixes come from `group_vars/all/main.yml` (`dns_prefix_ns`, `api`, `app`, `apps`). Parent DNS: A for `ns.`, CNAME `api.` and `app.` to the nameserver hostname, and NS-delegate `apps.` to it. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. PowerDNS currently listens on the mesh address only.
 
 ## Architecture mapping
 
@@ -30,11 +27,13 @@ Deb architecture follows the host:
 ## Tasks
 
 ```sh
-task up PROVIDER=<slug>
-task down PROVIDER=<slug> CONFIRM=down-<slug>
+task up ENV=<env>
+task down ENV=<env> CONFIRM=down-<slug>   # stop; keeps vault, .state/, Lima
 ```
 
-`down` removes cluster software, tears down node WireGuard, and disconnects the Mac controller mesh.
+`down` removes cluster software and configs, tears down node WireGuard (including `/etc/supercompute/*`), and disconnects the Mac controller mesh (`control_plane: mac`). Down playbooks use mesh SSH when available and bootstrap recovery (public IP, Lima-local, Cloudflare) when the mesh is down.
+
+Factory-reset local automation (vault, `.state/`, optional Lima) with `env-reset` / `dev-reset` / `dev-reset-lima` — see [tasks.md](tasks.md). For GHA-managed inventories use the Actions workflow instead — [gha-deploy.md](gha-deploy.md).
 
 ## Prerequisites
 

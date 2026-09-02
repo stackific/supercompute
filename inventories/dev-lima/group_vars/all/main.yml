@@ -1,0 +1,72 @@
+---
+# Dev-lima mesh: one static public hub + one Lima roaming guest on Apple Silicon.
+# Mesh CIDR is disjoint from dev (10.217.80.0/24) and typical prod (10.217.79.0/24).
+project_root: "{{ playbook_dir | dirname }}"
+provider_state_dir: "{{ project_root }}/.state/{{ inventory_slug }}"
+provider:
+  slug: "{{ inventory_dir | ansible.builtin.basename }}"
+  mode: remote
+  platform: public
+  image:
+    distribution: ubuntu
+    release: "26.04"
+    architecture: arm64
+    source: template:ubuntu-26.04
+  resources:
+    cpus: 1
+    memory_gib: 2
+    disk_gib: 10
+
+# Reverse-DNS of hosts.yml all.vars hostname (example.com → com.example) for LaunchDaemon labels.
+reverse_dns: "{{ hostname.split('.') | reverse | join('.') }}"
+
+# Labels prepended to hosts.yml all.vars hostname.
+dns_prefix_ns: ns
+dns_prefix_api: api
+dns_prefix_app: app
+dns_prefix_apps: apps
+
+# mac = local Mac controller peer + LaunchDaemon; gha = runner-only control plane (no Mac peer).
+control_plane: mac
+node_include_controller_peer: "{{ control_plane != 'gha' }}"
+
+# When roaming exists, every public static forwards so post-build random dial can use any static.
+node_forward_on_all_statics: true
+roaming_dial_timer_on_calendar: hourly
+
+default_ssh_user: ops
+default_ssh_port: 22
+known_hosts_file: "{{ provider_state_dir }}/known_hosts"
+ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ project }}-{{ inventory_slug }}"
+
+# Optional operator Mac pubkey (GHA secret MAC_OPERATOR_SSH_PUBLIC_KEY); empty skips install.
+mac_operator_ssh_public_key: "{{ lookup('ansible.builtin.env', 'MAC_OPERATOR_SSH_PUBLIC_KEY') | default('', true) }}"
+
+node_interface: scwg0
+node_network_cidr: 10.217.81.0/24
+node_prefix_length: 24
+node_controller_address: 10.217.81.1
+node_ci_address: 10.217.81.254
+node_listen_port: 51830
+node_tools_version: "1.0.20250521-1ubuntu1"
+node_state_dir: "{{ provider_state_dir }}/wireguard"
+node_config_path: "{{ node_state_dir }}/{{ node_interface }}.conf"
+node_launchd_label: "{{ reverse_dns }}.{{ project }}.{{ inventory_slug }}.wireguard"
+node_launchd_path: "/Library/LaunchDaemons/{{ node_launchd_label }}.plist"
+
+# Lima guest factory (node_lima_guest hosts only). Mesh itself uses platform public.
+lima_runtime_home: "{{ lookup('ansible.builtin.env', 'LIMA_HOME') }}"
+lima_home_dir: "{{ lima_runtime_home }}"
+lima_state_dir: "{{ provider_state_dir }}/lima"
+lima_version: "2.2.0"
+lima_guest_user: "{{ lookup('ansible.builtin.env', 'USER') }}"
+lima_nodes:
+  - name: roaming-1
+    address: 10.217.81.21
+    ssh_port: 61222
+    host_port: 51982
+    mac_address: "52:55:55:81:00:21"
+
+node_ubuntu_version: "26.04"
+node_ubuntu_codename: resolute
+node_host_architecture: x86_64

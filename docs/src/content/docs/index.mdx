@@ -1,9 +1,14 @@
 ---
-title: Supercompute
-description: Get started building your docs site with Starlight.
-template: splash # Remove or comment out this line to display the site sidebar on this page.
+title: Home
+description: Self-host a purpose-built cloud for AI-first workloads on commodity hardware.
+template: splash
+head:
+  - tag: title
+    content: Supercompute
 hero:
-  tagline: A free geo-replicated purpose-built cloud <br />for AI-first workloads on commodity hardware.
+  title: Supercompute
+  tagline: >
+    World's lowest complexity private cloud that you can launch in minutes.
   actions:
     - text: Get started
       link: /start-here/get-started/
@@ -17,26 +22,34 @@ hero:
 import { Card, CardGrid } from "@astrojs/starlight/components";
 import AboutSection from "@/components/about-section.astro";
 
-## Next steps
+### Next steps
 
 <CardGrid stagger>
   <Card title="Get started locally" icon="rocket">
-    Install the toolchain and bring up a Supercompute **dev** mesh on your Mac.
+    Install the toolchain and bring up the Supercompute **dev environment** on your Mac.
     [Open guide](/start-here/get-started/)
+  </Card>
+  <Card title="Roaming node (Apple Silicon)" icon="laptop">
+    Add a Lima guest with **dev-lima**.
+    [Open guide](/start-here/get-started-roaming-node/)
+  </Card>
+  <Card title="Deploy via GitHub Actions" icon="setting">
+    Run mesh and cluster lifecycle from CI—no permanent Mac WireGuard peer.
+    [Open guide](/start-here/deploy-with-github-actions/)
+  </Card>
+  <Card title="Deploy to production" icon="approve-check">
+    Configure the committed **prod** inventory with two public static nodes.
+    [Open guide](/start-here/deploy-to-production/)
   </Card>
   <Card title="Adding a public node" icon="add-document">
     Add an Ubuntu VM with a static IP to your mesh from a Mac.
     [Open guide](/guides/adding-public-node/)
   </Card>
-  <Card title="Deploy to production" icon="approve-check">
-    Turn a working **dev** setup into a **prod** mesh with public and roaming nodes.
-    [Open guide](/start-here/deploy-to-production/)
-  </Card>
 </CardGrid>
 
 <AboutSection title="About Supercompute">
 
-Self-host a purpose-built cloud for AI-first workloads on commodity hardware—in your laptop VM, on a NAS, or on public nodes. High availability is achievable with as few as two nodes.
+Self-host a purpose-built cloud for AI-first workloads on commodity hardware—in your laptop VM, on a NAS, or on public nodes. You provide a static IP for public endpoints and a Postgres database with owner role hosted outside of the Supercompute cloud. High availability is achievable with as few as two nodes.
 
 Created by [Stackific Inc.](https://stackific.com)
 

@@ -28,8 +28,10 @@ tasks:
       - |
         printf '%s\n' \
           '' \
-          'Task-specific parameters (provider-scoped tasks require PROVIDER=<slug>):' \
+          'Task-specific parameters (environment-scoped tasks require ENV=<slug>):' \
+          '  down           ENV=<slug> CONFIRM=down-<slug>' \
+          '  env-reset      ENV=<slug> CONFIRM=reset-<slug>' \
           '  dev-reset      CONFIRM=reset-dev' \
-          '  lima-destroy   CONFIRM=destroy-lima-dev' \
-          '  ssh            NODE=<inventory_hostname>' \
-          '  vault-destroy  CONFIRM=destroy-vault-<slug>'
+          '  dev-reset-lima CONFIRM=reset-dev-lima' \
+          '  lima-up        ENV=dev-lima (or other env with node_lima_guest hosts)' \
+          '  ssh            NODE=<inventory_hostname>'

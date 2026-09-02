@@ -2,8 +2,6 @@
 .venv/
 .state/
 inventories/*/.vault-pass*
-# Operator-local prod inventory (restore manually; never push).
-inventories/prod/
 __pycache__/
 *.py[cod]
 .DS_Store

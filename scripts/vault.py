@@ -9,33 +9,27 @@ import subprocess
 import sys
 import tempfile
 
+import sys
+
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inventory_hosts  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DATABASE_SECRET_FIELD = "vault_database_secret"
+PLACEHOLDER_DATABASE_URL = (
+  "postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE"
+)
 
 
 class VaultError(RuntimeError):
   pass
 
 
-def config_project() -> str:
-  path = ROOT / "config.yml"
-  try:
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-  except FileNotFoundError as error:
-    raise VaultError(f"Cloud configuration does not exist: {path}") from error
-  except yaml.YAMLError as error:
-    raise VaultError(f"Cloud configuration is not valid YAML: {error}") from error
-
-  if not isinstance(document, dict):
-    raise VaultError("config.yml must contain a YAML mapping")
-  project = document.get("project")
-  if not isinstance(project, str) or not project.strip():
-    raise VaultError("config.yml must contain a non-empty project")
-  if Path(project).name != project or project in {".", ".."}:
-    raise VaultError("project must be a single path-safe name")
-  return project
+def config_project(provider: str) -> str:
+  return inventory_hosts.require_project(provider)
 
 
 def provider_directories() -> dict[str, Path]:
@@ -51,13 +45,13 @@ def provider_directories() -> dict[str, Path]:
 
 
 def provider_from_environment() -> str:
-  provider = os.environ.get("PROVIDER", "")
+  provider = os.environ.get("ENV", "")
   providers = provider_directories()
   if provider not in providers:
     choices = ", ".join(providers) if providers else "none"
     raise VaultError(
-      "PROVIDER must match an inventories/<slug>/hosts.yml entry; "
-      f"available providers: {choices}"
+      "ENV must match an inventories/<slug>/hosts.yml entry; "
+      f"available environments: {choices}"
     )
   return provider
 
@@ -92,67 +86,6 @@ def run_ansible_vault(*arguments: str, capture_output: bool = False) -> str:
   return result.stdout if result.stdout else ""
 
 
-def normalize_vault_document(document: dict) -> bool:
-  """Upgrade older vault key names in place."""
-  changed = False
-
-  legacy_vault = document.pop("deployment_vault", None)
-  if legacy_vault is not None and "vault_meta" not in document:
-    document["vault_meta"] = legacy_vault
-    changed = True
-
-  cloud_vault = document.pop("cloud_vault", None)
-  if cloud_vault is not None and "vault_meta" not in document:
-    document["vault_meta"] = cloud_vault
-    changed = True
-  elif cloud_vault is not None:
-    changed = True
-
-  vault = document.get("vault_meta")
-  if isinstance(vault, dict) and "deployment_name" in vault:
-    vault["project"] = vault.pop("deployment_name")
-    changed = True
-  if isinstance(vault, dict) and "cloud_name" in vault and "project" not in vault:
-    vault["project"] = vault.pop("cloud_name")
-    changed = True
-  elif isinstance(vault, dict) and "cloud_name" in vault:
-    vault.pop("cloud_name")
-    changed = True
-  if isinstance(vault, dict) and "name" in vault and "project" not in vault:
-    vault["project"] = vault.pop("name")
-    changed = True
-  elif isinstance(vault, dict) and "name" in vault:
-    vault.pop("name")
-    changed = True
-  if isinstance(vault, dict) and "namespace" in vault and "project" not in vault:
-    vault["project"] = vault.pop("namespace")
-    changed = True
-  elif isinstance(vault, dict) and "namespace" in vault:
-    vault.pop("namespace")
-    changed = True
-  if isinstance(vault, dict) and "installation" in vault and "project" not in vault:
-    vault["project"] = vault.pop("installation")
-    changed = True
-  elif isinstance(vault, dict) and "installation" in vault:
-    vault.pop("installation")
-    changed = True
-
-  for old_key, new_key in (
-    ("vault_prod_wireguard_private_keys", "vault_wireguard_private_keys"),
-    ("vault_prod_wireguard_public_keys", "vault_wireguard_public_keys"),
-    ("vault_cloud_wireguard_private_keys", "vault_wireguard_private_keys"),
-    ("vault_cloud_wireguard_public_keys", "vault_wireguard_public_keys"),
-  ):
-    legacy_value = document.pop(old_key, None)
-    if legacy_value is not None and new_key not in document:
-      document[new_key] = legacy_value
-      changed = True
-    elif legacy_value is not None:
-      changed = True
-
-  return changed
-
-
 def validate_document(content: str, provider: str) -> None:
   try:
     document = yaml.safe_load(content)
@@ -162,29 +95,58 @@ def validate_document(content: str, provider: str) -> None:
   if not isinstance(document, dict):
     raise VaultError("Vault root must be a YAML mapping")
 
-  normalize_vault_document(document)
-
   vault = document.get("vault_meta")
   if not isinstance(vault, dict):
     raise VaultError("Vault must contain a vault_meta mapping")
-  if vault.get("project") != config_project():
+  if vault.get("project") != config_project(provider):
     raise VaultError(
-      f"vault_meta.project must be {config_project()}"
+      f"vault_meta.project must be {config_project(provider)}"
     )
   if vault.get("provider") != provider:
     raise VaultError(f"vault_meta.provider must be {provider}")
-  if not isinstance(vault.get("secrets"), dict):
-    raise VaultError("vault_meta.secrets must be a mapping")
+  if isinstance(vault.get("secrets"), dict):
+    raise VaultError(
+      "Remove vault_meta.secrets from the vault; store secrets as top-level "
+      "vault_* keys instead"
+    )
+  database_url = document.get("vault_database_url")
+  if database_url is not None:
+    validate_vault_database_url(
+      database_url,
+      label="vault_database_url",
+      allow_placeholder=True,
+    )
+
+
+def validate_vault_database_url(
+  value: object,
+  *,
+  label: str = "vault_database_url",
+  allow_placeholder: bool = False,
+) -> None:
+  if not isinstance(value, str) or not value.strip():
+    raise VaultError(
+      f"{label} missing; run task vault-edit ENV=<env> and set a PostgreSQL "
+      "connection URI"
+    )
+  if not allow_placeholder:
+    if value == PLACEHOLDER_DATABASE_URL or "REPLACE_WITH_" in value:
+      raise VaultError(
+        f"{label} is still the vault-init placeholder; set a PostgreSQL connection URI"
+      )
+  if not value.startswith(("postgres://", "postgresql://")):
+    raise VaultError(f"{label} must start with postgres:// or postgresql://")
 
 
 def empty_document(provider: str) -> str:
   return yaml.safe_dump(
     {
       "vault_meta": {
-        "project": config_project(),
+        "project": config_project(provider),
         "provider": provider,
-        "secrets": {},
-      }
+      },
+      "vault_database_url": PLACEHOLDER_DATABASE_URL,
+      DATABASE_SECRET_FIELD: generate_database_secret(),
     },
     explicit_start=True,
     sort_keys=False,
@@ -193,6 +155,11 @@ def empty_document(provider: str) -> str:
 
 def generate_password() -> str:
   return secrets.token_urlsafe(48)
+
+
+def generate_database_secret() -> str:
+  """256-bit url-safe secret for application-level database encryption."""
+  return secrets.token_urlsafe(32)
 
 
 def write_password(path: Path, password: str) -> None:
@@ -224,9 +191,9 @@ def read_password(path: Path) -> str:
   return password
 
 
-def temporary_password_file(password: str):
+def temporary_password_file(provider: str, password: str):
   directory = tempfile.TemporaryDirectory(
-    prefix=f"{config_project()}-vault-password-"
+    prefix=f"{config_project(provider)}-vault-password-"
   )
   path = Path(directory.name) / "password"
   path.write_text(f"{password}\n", encoding="utf-8")
@@ -235,7 +202,7 @@ def temporary_password_file(password: str):
 
 
 def vault_label(provider: str) -> str:
-  return f"{config_project()}-{provider}"
+  return f"{config_project(provider)}-{provider}"
 
 
 def vault_id(provider: str, password_file: Path) -> str:
@@ -295,13 +262,13 @@ def encrypt_and_replace(
 
 def create_empty_vault(provider: str, password: str) -> None:
   destination = vault_path(provider)
-  prefix = f"{config_project()}-vault-init-"
+  prefix = f"{config_project(provider)}-vault-init-"
   with tempfile.TemporaryDirectory(prefix=prefix) as directory_name:
     directory = Path(directory_name)
     plaintext = directory / "vault.yml"
     plaintext.write_text(empty_document(provider), encoding="utf-8")
     plaintext.chmod(0o600)
-    password_directory, temporary_password = temporary_password_file(password)
+    password_directory, temporary_password = temporary_password_file(provider, password)
     try:
       encrypt_and_replace(
         plaintext,
@@ -342,7 +309,7 @@ def edit(provider: str) -> None:
   read_password(password_file)
   content = decrypt(encrypted_vault, provider, password_file)
 
-  prefix = f"{config_project()}-vault-{provider}-"
+  prefix = f"{config_project(provider)}-vault-{provider}-"
   with tempfile.TemporaryDirectory(prefix=prefix) as name:
     plaintext = Path(name) / "vault.yml"
     plaintext.write_text(content, encoding="utf-8")
@@ -388,32 +355,11 @@ def destroy(provider: str) -> None:
     print(f"Vault password already absent: {password_file.relative_to(ROOT)}")
 
 
-def deployment_host_names(provider: str) -> list[str]:
-  path = inventory_directory(provider) / "hosts.yml"
+def node_host_names(provider: str) -> list[str]:
   try:
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-  except FileNotFoundError as error:
-    raise VaultError(f"Provider inventory does not exist: {path}") from error
-  except yaml.YAMLError as error:
-    raise VaultError(f"Invalid YAML in {path}: {error}") from error
-
-  if not isinstance(document, dict):
-    raise VaultError("hosts.yml must contain a YAML mapping")
-  children = document.get("all")
-  if not isinstance(children, dict):
-    raise VaultError("hosts.yml must contain an all mapping")
-  groups = children.get("children")
-  if not isinstance(groups, dict):
-    raise VaultError("hosts.yml must contain all.children")
-  deployment = groups.get("deployment")
-  if not isinstance(deployment, dict):
-    raise VaultError("hosts.yml must contain all.children.deployment")
-  hosts = deployment.get("hosts")
-  if hosts is None:
-    return []
-  if not isinstance(hosts, dict):
-    raise VaultError("deployment.hosts must be a mapping")
-  return sorted(hosts)
+    return sorted(inventory_hosts.node_hosts(inventory_hosts.load_document(provider)))
+  except inventory_hosts.InventoryError as error:
+    raise VaultError(str(error)) from error
 
 
 def generate_wireguard_keypair() -> tuple[str, str]:
@@ -483,8 +429,7 @@ def ensure_wireguard(provider: str) -> None:
   if not isinstance(document, dict):
     raise VaultError("Vault root must be a YAML mapping")
 
-  migrate_changed = normalize_vault_document(document)
-  required_names = ["macos", *deployment_host_names(provider)]
+  required_names = ["macos", *node_host_names(provider)]
   private_keys = document.get(private_key_field)
   public_keys = document.get(public_key_field)
   if private_keys is None:
@@ -509,7 +454,7 @@ def ensure_wireguard(provider: str) -> None:
     public_keys[name] = generated_public
     changed = True
 
-  if not changed and not migrate_changed:
+  if not changed:
     print(f"WireGuard vault keys already present for {provider}")
     return
 
@@ -517,7 +462,7 @@ def ensure_wireguard(provider: str) -> None:
   document[public_key_field] = public_keys
   plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
 
-  prefix = f"{config_project()}-vault-wg-{provider}-"
+  prefix = f"{config_project(provider)}-vault-wg-{provider}-"
   with tempfile.TemporaryDirectory(prefix=prefix) as name:
     plaintext = Path(name) / "vault.yml"
     plaintext.write_text(plaintext_body, encoding="utf-8")
@@ -532,27 +477,29 @@ def ensure_wireguard(provider: str) -> None:
   print(f"WireGuard vault keys ensured: {encrypted_vault.relative_to(ROOT)}")
 
 
-def migrate(provider: str) -> None:
+def ensure_database_secret(provider: str) -> None:
   password_file = password_path(provider)
   encrypted_vault = vault_path(provider)
   read_password(password_file)
-  content = run_ansible_vault(
-    "view",
-    "--vault-id",
-    vault_id(provider, password_file),
-    str(encrypted_vault),
-    capture_output=True,
-  )
+  content = decrypt(encrypted_vault, provider, password_file)
   document = yaml.safe_load(content)
   if not isinstance(document, dict):
     raise VaultError("Vault root must be a YAML mapping")
-  if not normalize_vault_document(document):
-    validate_document(content, provider)
-    print(f"Vault already uses cloud naming: {encrypted_vault.relative_to(ROOT)}")
-    return
 
+  existing = document.get(DATABASE_SECRET_FIELD)
+  changed = False
+  if isinstance(existing, str) and existing:
+    pass
+  else:
+    document[DATABASE_SECRET_FIELD] = generate_database_secret()
+    changed = True
+
+  if not changed:
+    print(f"Database secret already present for {provider}")
+    return
   plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
-  prefix = f"{config_project()}-vault-migrate-{provider}-"
+
+  prefix = f"{config_project(provider)}-vault-db-{provider}-"
   with tempfile.TemporaryDirectory(prefix=prefix) as name:
     plaintext = Path(name) / "vault.yml"
     plaintext.write_text(plaintext_body, encoding="utf-8")
@@ -563,14 +510,55 @@ def migrate(provider: str) -> None:
       provider,
       password_file,
     )
-  print(f"Vault migrated to cloud naming: {encrypted_vault.relative_to(ROOT)}")
+
+  print(f"Database secret ensured: {encrypted_vault.relative_to(ROOT)}")
+
+
+def validate_deployment_vault(provider: str) -> None:
+  """Require vault_database_secret before task up."""
+  password_file = password_path(provider)
+  encrypted_vault = vault_path(provider)
+  if not password_file.is_file():
+    raise VaultError(
+      f"Vault password file missing ({password_file.relative_to(ROOT)}); "
+      f"run task vault-init ENV={provider}"
+    )
+  if not encrypted_vault.is_file():
+    raise VaultError(
+      f"Encrypted vault missing ({encrypted_vault.relative_to(ROOT)}); "
+      f"run task vault-init ENV={provider}"
+    )
+  read_password(password_file)
+  content = decrypt(encrypted_vault, provider, password_file)
+  document = yaml.safe_load(content)
+  if not isinstance(document, dict):
+    raise VaultError("Vault root must be a YAML mapping")
+  key = document.get(DATABASE_SECRET_FIELD)
+  if not isinstance(key, str) or not key.strip():
+    raise VaultError(
+      f"{DATABASE_SECRET_FIELD} missing from "
+      f"{encrypted_vault.relative_to(ROOT)}; "
+      f"run task up ENV={provider} or "
+      f"ENV={provider} uv run python scripts/vault.py ensure-secrets"
+    )
+  validate_vault_database_url(
+    document.get("vault_database_url"),
+    label=(
+      f"{encrypted_vault.relative_to(ROOT)} vault_database_url"
+    ),
+  )
+
+
+def ensure_vault_secrets(provider: str) -> None:
+  ensure_wireguard(provider)
+  ensure_database_secret(provider)
 
 
 def parse_arguments() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Manage provider vaults")
   parser.add_argument(
     "action",
-    choices=("init", "edit", "destroy", "ensure-wireguard", "migrate"),
+    choices=("init", "edit", "destroy", "ensure-wireguard", "ensure-database-secret", "ensure-secrets"),
   )
   return parser.parse_args()
 
@@ -585,8 +573,10 @@ def main() -> int:
       edit(provider)
     elif arguments.action == "ensure-wireguard":
       ensure_wireguard(provider)
-    elif arguments.action == "migrate":
-      migrate(provider)
+    elif arguments.action == "ensure-database-secret":
+      ensure_database_secret(provider)
+    elif arguments.action == "ensure-secrets":
+      ensure_vault_secrets(provider)
     else:
       destroy(provider)
   except VaultError as error:

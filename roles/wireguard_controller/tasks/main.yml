@@ -24,29 +24,29 @@
 - name: Require a complete WireGuard topology
   ansible.builtin.assert:
     that:
-      - groups['wireguard_nodes'] | length > 0
-      - wireguard_controller_address is string
-      - wireguard_network_cidr is string
-      - wireguard_prefix_length | int > 0
-      - wireguard_prefix_length | int < 32
-      - wireguard_listen_port | int > 0
-      - wireguard_listen_port | int < 65536
+      - groups['nodes'] | length > 0
+      - node_controller_address is string
+      - node_network_cidr is string
+      - node_prefix_length | int > 0
+      - node_prefix_length | int < 32
+      - node_listen_port | int > 0
+      - node_listen_port | int < 65536
     fail_msg: >-
-      {{ inventory_slug }} requires at least one wireguard_nodes host and a
+      {{ inventory_slug }} requires at least one nodes host and a
       valid controller mesh CIDR/listen port.
 
 - name: Require per-host mesh addresses from hosts.yml
   ansible.builtin.assert:
     that:
-      - hostvars[item].wireguard_address is defined
-      - hostvars[item].wireguard_address is string
-      - hostvars[item].wireguard_address | length > 0
-      - hostvars[item].wireguard_address != wireguard_controller_address
+      - hostvars[item].private_address is defined
+      - hostvars[item].private_address is string
+      - hostvars[item].private_address | length > 0
+      - hostvars[item].private_address != node_controller_address
     fail_msg: >-
-      {{ item }} must set wireguard_address in
+      {{ item }} must set private_address in
       inventories/{{ inventory_slug }}/hosts.yml to a unique mesh IP in
-      {{ wireguard_network_cidr }} (not the controller address).
-  loop: "{{ groups['wireguard_nodes'] }}"
+      {{ node_network_cidr }} (not the controller address).
+  loop: "{{ groups['nodes'] }}"
   loop_control:
     label: "{{ item }}"
 
@@ -55,27 +55,27 @@
     that:
       - >
         (
-          groups['wireguard_nodes']
-          | map('extract', hostvars, 'wireguard_address')
+          groups['nodes']
+          | map('extract', hostvars, 'private_address')
           | list
           | unique
           | length
-        ) == (groups['wireguard_nodes'] | length)
+        ) == (groups['nodes'] | length)
     fail_msg: >-
-      wireguard_address values in hosts.yml must be unique across
-      wireguard_nodes.
+      private_address values in hosts.yml must be unique across
+      nodes.
 
 - name: Require public WireGuard endpoints for every stable server
   ansible.builtin.assert:
     that:
-      - hostvars[item].wireguard_endpoint is string
-      - hostvars[item].wireguard_endpoint | length > 0
-      - hostvars[item].wireguard_endpoint is not match('^REPLACE_WITH_')
+      - hostvars[item].public_ip is string
+      - hostvars[item].public_ip | length > 0
+      - hostvars[item].public_ip is not match('^REPLACE_WITH_')
     fail_msg: >-
-      {{ item }} must set wireguard_endpoint in
+      {{ item }} must set public_ip in
       inventories/{{ inventory_slug }}/hosts.yml to its public IPv4 address or DNS name.
-  loop: "{{ groups['wireguard_nodes'] }}"
-  when: not (hostvars[item].wireguard_roaming | default(false) | bool)
+  loop: "{{ groups['nodes'] }}"
+  when: not (hostvars[item].roaming | default(false) | bool)
 
 - name: Require Cloudflare bootstrap hosts for non-Lima roaming nodes
   ansible.builtin.assert:
@@ -83,22 +83,22 @@
       - hostvars[item].bootstrap_ssh_host is string
       - hostvars[item].bootstrap_ssh_host | length > 0
       - hostvars[item].bootstrap_ssh_host is not match('^REPLACE_WITH_')
-      - hostvars[item].wireguard_endpoint is not defined
-        or hostvars[item].wireguard_endpoint | length == 0
+      - hostvars[item].public_ip is not defined
+        or hostvars[item].public_ip | length == 0
     fail_msg: >-
-      {{ item }} (wireguard_roaming, non-Lima) must set bootstrap_ssh_host and
-      must not set wireguard_endpoint in inventories/{{ inventory_slug }}/hosts.yml.
-  loop: "{{ groups['wireguard_nodes'] }}"
+      {{ item }} (roaming, non-Lima) must set bootstrap_ssh_host and
+      must not set public_ip in inventories/{{ inventory_slug }}/hosts.yml.
+  loop: "{{ groups['nodes'] }}"
   when:
-    - hostvars[item].wireguard_roaming | default(false) | bool
+    - hostvars[item].roaming | default(false) | bool
     - not (hostvars[item].node_lima_guest | default(false) | bool)
 
 - name: Require Lima guests to roam without Cloudflare bootstrap hosts
   ansible.builtin.assert:
     that:
-      - hostvars[item].wireguard_roaming | default(false) | bool
-      - hostvars[item].wireguard_endpoint is not defined
-        or hostvars[item].wireguard_endpoint | length == 0
+      - hostvars[item].roaming | default(false) | bool
+      - hostvars[item].public_ip is not defined
+        or hostvars[item].public_ip | length == 0
       - hostvars[item].bootstrap_ssh_host is not defined
         or hostvars[item].bootstrap_ssh_host | length == 0
       - >
@@ -109,10 +109,10 @@
             | length
           ) == 1
     fail_msg: >-
-      {{ item }} (node_lima_guest) must set wireguard_roaming: true, omit
-      wireguard_endpoint and bootstrap_ssh_host, and appear once in
+      {{ item }} (node_lima_guest) must set roaming: true, omit
+      public_ip and bootstrap_ssh_host, and appear once in
       lima_nodes (bootstrap uses Lima-local SSH).
-  loop: "{{ groups['wireguard_nodes'] }}"
+  loop: "{{ groups['nodes'] }}"
   when: hostvars[item].node_lima_guest | default(false) | bool
 
 - name: Require encrypted WireGuard key maps from the Vault
@@ -121,7 +121,7 @@
       - vault_wireguard_private_keys is mapping
       - vault_wireguard_public_keys is mapping
       - >
-        (not (wireguard_include_controller_peer | default(true) | bool))
+        (not (node_include_controller_peer | default(true) | bool))
         or (
           vault_wireguard_private_keys.macos is string
           and vault_wireguard_public_keys.macos is string
@@ -133,14 +133,14 @@
     that:
       - vault_wireguard_private_keys[item] is string
       - vault_wireguard_public_keys[item] is string
-  loop: "{{ groups['wireguard_nodes'] }}"
+  loop: "{{ groups['nodes'] }}"
   loop_control:
     label: "{{ item }}"
   no_log: true
 
 - name: Create private WireGuard controller state
   ansible.builtin.file:
-    path: "{{ wireguard_state_dir }}"
+    path: "{{ node_state_dir }}"
     state: directory
     mode: '0700'
 
@@ -157,12 +157,12 @@
     fail_msg: >-
       Verify every public server host key out of band, then create the
       mode-0600 file {{ known_hosts_file }} with entries under the stable
-      inventory aliases before running task up PROVIDER={{ inventory_slug }}.
+      inventory aliases before running task up ENV={{ inventory_slug }}.
 
 - name: Require each stable host alias in the verified host-key file
   ansible.builtin.command:
     argv: [ssh-keygen, -F, "{{ item }}", -f, "{{ known_hosts_file }}"]
-  loop: "{{ groups['wireguard_nodes'] }}"
+  loop: "{{ groups['nodes'] }}"
   loop_control:
     label: "{{ item }}"
   changed_when: false
@@ -170,7 +170,7 @@
 - name: Render the private macOS WireGuard configuration from Vault
   ansible.builtin.template:
     src: scwg0.conf.j2
-    dest: "{{ wireguard_config_path }}"
+    dest: "{{ node_config_path }}"
     mode: '0600'
   register: wireguard_controller_config
   no_log: true
@@ -178,7 +178,7 @@
 - name: Install the root-owned macOS boot-time WireGuard service
   ansible.builtin.template:
     src: wireguard-launchd.plist.j2
-    dest: "{{ wireguard_launchd_path }}"
+    dest: "{{ node_launchd_path }}"
     owner: root
     group: wheel
     mode: '0644'
@@ -187,13 +187,13 @@
 
 - name: Validate the macOS boot-time WireGuard service definition
   ansible.builtin.command:
-    argv: [plutil, -lint, "{{ wireguard_launchd_path }}"]
+    argv: [plutil, -lint, "{{ node_launchd_path }}"]
   changed_when: false
   become: true
 
 - name: Check whether the macOS boot-time WireGuard service is loaded
   ansible.builtin.command:
-    argv: [launchctl, print, "system/{{ wireguard_launchd_label }}"]
+    argv: [launchctl, print, "system/{{ node_launchd_label }}"]
   register: wireguard_controller_launchd_loaded
   failed_when: false
   changed_when: false
@@ -205,7 +205,7 @@
       - launchctl
       - bootout
       - system
-      - "{{ wireguard_launchd_path }}"
+      - "{{ node_launchd_path }}"
   when:
     - wireguard_controller_launchd_loaded.rc == 0
     - wireguard_controller_launchd_plist.changed
@@ -218,7 +218,7 @@
       - launchctl
       - bootstrap
       - system
-      - "{{ wireguard_launchd_path }}"
+      - "{{ node_launchd_path }}"
   when: >-
     wireguard_controller_launchd_loaded.rc != 0 or
     wireguard_controller_launchd_plist.changed
@@ -230,7 +230,7 @@
     argv: [ifconfig]
   register: wireguard_controller_launchd_interfaces
   until: >-
-    'inet ' ~ wireguard_controller_address ~ ' '
+    'inet ' ~ node_controller_address ~ ' '
     in wireguard_controller_launchd_interfaces.stdout
   retries: 10
   delay: 1
@@ -248,12 +248,12 @@
 - name: Record whether the macOS mesh address is active
   ansible.builtin.set_fact:
     wireguard_controller_mesh_active: >-
-      {{ 'inet ' ~ wireguard_controller_address ~ ' '
+      {{ 'inet ' ~ node_controller_address ~ ' '
          in wireguard_controller_interfaces.stdout }}
 
 - name: Stop the previous macOS mesh before a configuration update
   ansible.builtin.command:
-    argv: [wg-quick, down, "{{ wireguard_config_path }}"]
+    argv: [wg-quick, down, "{{ node_config_path }}"]
   become: true
   when:
     - wireguard_controller_config.changed
@@ -262,7 +262,7 @@
 
 - name: Start the macOS WireGuard mesh when required
   ansible.builtin.command:
-    argv: [wg-quick, up, "{{ wireguard_config_path }}"]
+    argv: [wg-quick, up, "{{ node_config_path }}"]
   become: true
   when:
     - wireguard_controller_config.changed or not (wireguard_controller_mesh_active | bool)
@@ -273,7 +273,7 @@
     argv: [ifconfig]
   register: wireguard_controller_started_interfaces
   until: >-
-    'inet ' ~ wireguard_controller_address ~ ' '
+    'inet ' ~ node_controller_address ~ ' '
     in wireguard_controller_started_interfaces.stdout
   retries: 10
   delay: 1

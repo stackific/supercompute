@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 
 usage() {
-  echo "Usage: $0 PROVIDER present|absent" >&2
+  echo "Usage: $0 ENV present|absent" >&2
   exit 2
 }
 
@@ -60,57 +60,61 @@ case "${action}" in
       --extra-vars "@${vars_file}" \
       playbooks/gha-mesh-peer.yml
 
-    PROVIDER="${provider}" \
+    ENV="${provider}" \
     STATE_DIR="${state_dir}" \
     PRIVATE_KEY="${private_key}" \
     uv run --locked python - <<'PY'
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
 
-provider = os.environ["PROVIDER"]
+provider = os.environ["ENV"]
 root = Path.cwd()
+sys.path.insert(0, str(root / "scripts"))
+import inventory_hosts
+
 state = Path(os.environ["STATE_DIR"])
 private_key = os.environ["PRIVATE_KEY"]
 
 main_text = (root / f"inventories/{provider}/group_vars/all/main.yml").read_text(encoding="utf-8")
-ci_match = re.search(r"^wireguard_ci_address:\s*[\"']?([^\"'#\n]+)", main_text, re.M)
+ci_match = re.search(r"^node_ci_address:\s*[\"']?([^\"'#\n]+)", main_text, re.M)
 if ci_match:
   ci_address = ci_match.group(1).strip()
 else:
-  cidr_match = re.search(r"^wireguard_network_cidr:\s*([0-9.]+)/\d+", main_text, re.M)
+  cidr_match = re.search(r"^node_network_cidr:\s*([0-9.]+)/\d+", main_text, re.M)
   if not cidr_match:
-    raise SystemExit("set wireguard_ci_address in group_vars/all/main.yml")
+    raise SystemExit("set node_ci_address in group_vars/all/main.yml")
   ci_address = f"{cidr_match.group(1).rsplit('.', 1)[0]}.254"
 
-cidr = re.search(r"^wireguard_network_cidr:\s*([0-9./]+)", main_text, re.M)
+cidr = re.search(r"^node_network_cidr:\s*([0-9./]+)", main_text, re.M)
 if not cidr:
-  raise SystemExit("wireguard_network_cidr missing")
+  raise SystemExit("node_network_cidr missing")
 mesh_cidr = cidr.group(1)
 
-port_match = re.search(r"^wireguard_listen_port:\s*(\d+)", main_text, re.M)
+port_match = re.search(r"^node_listen_port:\s*(\d+)", main_text, re.M)
 port = port_match.group(1) if port_match else "51830"
 
-hosts = yaml.safe_load((root / f"inventories/{provider}/hosts.yml").read_text(encoding="utf-8"))
-deployment = hosts["all"]["children"]["deployment"]["hosts"]
+hosts_document = yaml.safe_load((root / f"inventories/{provider}/hosts.yml").read_text(encoding="utf-8"))
+nodes = inventory_hosts.node_hosts(hosts_document)
 hub_name = None
 hub_endpoint = None
-for name in sorted(deployment):
-  values = deployment[name] or {}
-  if values.get("wireguard_roaming"):
+for name in sorted(nodes):
+  values = nodes[name] or {}
+  if values.get("roaming"):
     continue
-  endpoint = values.get("wireguard_endpoint")
+  endpoint = values.get("public_ip")
   if endpoint:
     hub_name = name
     hub_endpoint = f"{endpoint}:{port}"
     break
 if not hub_name or not hub_endpoint:
-  raise SystemExit("no public static wireguard_endpoint found for CI peer Endpoint")
+  raise SystemExit("no public static public_ip found for CI peer Endpoint")
 
-project = yaml.safe_load((root / "config.yml").read_text(encoding="utf-8"))["project"]
+project = inventory_hosts.require_project(provider)
 vault = root / f"inventories/{provider}/group_vars/all/vault.yml"
 password = root / f"inventories/{provider}/.vault-pass"
 label = f"{project}-{provider}"
@@ -173,7 +177,7 @@ PY
       --extra-vars "@${vars_file}" \
       playbooks/gha-mesh-peer.yml || true
     rm -rf "${state_dir}"
-    echo "GHA mesh peer removed for PROVIDER=${provider}"
+    echo "GHA mesh peer removed for ENV=${provider}"
     ;;
   *)
     usage

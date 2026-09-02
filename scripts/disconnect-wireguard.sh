@@ -8,7 +8,7 @@ requested_provider="${1:-}"
 python_runtime="${project_dir}/.venv/bin/python"
 
 [[ -n "${requested_provider}" ]] || {
-  echo "Usage: $0 PROVIDER" >&2
+  echo "Usage: $0 ENV" >&2
   exit 2
 }
 [[ -x "${python_runtime}" ]] || {
@@ -22,21 +22,14 @@ provider_platform="$("${python_runtime}" "${project_dir}/scripts/provider_platfo
   exit 2
 }
 
-project_name="$("${python_runtime}" "${project_dir}/scripts/config_project.py")"
+project_name="$("${python_runtime}" "${project_dir}/scripts/config_project.py" --provider "${requested_provider}")"
 launchd_label="$(
   cd "${project_dir}"
   uv run --locked python - <<PY
-from pathlib import Path
-import yaml
-config = yaml.safe_load(Path("config.yml").read_text(encoding="utf-8"))
-hostname = config.get("hostname")
-project = config.get("project")
-if not isinstance(hostname, str) or not hostname.strip():
-  raise SystemExit("config.yml must contain a non-empty hostname")
-if not isinstance(project, str) or not project.strip():
-  raise SystemExit("config.yml must contain a non-empty project")
-reverse_dns = ".".join(reversed(hostname.split(".")))
-print(f"{reverse_dns}.{project}.${requested_provider}.wireguard")
+import sys
+sys.path.insert(0, "scripts")
+import inventory_hosts
+print(inventory_hosts.launchd_label("${requested_provider}"))
 PY
 )"
 launchd_path="/Library/LaunchDaemons/${launchd_label}.plist"
@@ -71,8 +64,8 @@ import yaml
 root = Path("${project_dir}")
 provider = "${requested_provider}"
 main = yaml.safe_load((root / "inventories" / provider / "group_vars/all/main.yml").read_text())
-address = main["wireguard_controller_address"]
-iface = main["wireguard_interface"]
+address = main["node_controller_address"]
+iface = main["node_interface"]
 state = root / ".state" / provider
 print(address, iface, state / "wireguard" / f"{iface}.conf", state / "known_hosts")
 PY

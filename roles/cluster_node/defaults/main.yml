@@ -53,3 +53,5 @@ cluster_pdns_packages:
   - pdns-server
   - dnsutils
 cluster_pdns_service: pdns
+cluster_pdns_dropin_dir: /etc/powerdns/pdns.d
+cluster_pdns_dropin_path: "{{ cluster_pdns_dropin_dir }}/supercompute-local.conf"

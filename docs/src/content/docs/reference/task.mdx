@@ -1,0 +1,455 @@
+---
+title: Task commands
+description: Public Task entrypoints for Supercompute — run from the repository root.
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { Kbd } from "starlight-kbd/components";
+
+All commands below run from the **project root** (the directory that contains `Taskfile.yml`).
+
+List public tasks:
+
+```sh
+task --list
+```
+
+Run `task` with no arguments for the same list plus a short reminder of required parameters.
+
+### Parameters
+
+| Parameter | Used by | Meaning |
+| --- | --- | --- |
+| `ENV` | Most environment-scoped tasks | Environment name — directory under `inventories/` (for example `dev`, `prod`) |
+| `NODE` | `task ssh` | Host name from `inventories/<env>/hosts.yml` (for example `static-1`) |
+| `CONFIRM` | Destructive tasks | Exact token required by that task (see each command) |
+
+Environment-scoped tasks require `provider.platform: public` in `inventories/<env>/group_vars/all/main.yml`. They refuse retired `lima` and `vps` platform values.
+
+Inventories with `control_plane: gha` are meant for [GitHub Actions](/start-here/deploy-with-github-actions/) — do not Mac-`task up` them.
+
+---
+
+### Setup
+
+#### `task setup`
+
+Install the locked Ansible Python environment.
+
+```sh
+task setup
+```
+
+Requires `uv` on PATH.
+
+---
+
+### Lifecycle
+
+#### `task up ENV=<env>`
+
+Bring up the WireGuard mesh and cluster stack on every node.
+
+Bring up the WireGuard mesh **and** cluster stack (gVisor, Docker, Caddy disabled, PowerDNS) on every host in the `nodes` group. Writes `/etc/supercompute/hosts.yml` and related sidecars on nodes and installs the roaming dial helper where applicable.
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```sh
+task up ENV=dev
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+task up ENV=<env>
+```
+
+</TabItem>
+</Tabs>
+
+- Syncs `.state/<env>/known_hosts` from inventory fingerprints.
+- Ensures WireGuard keypairs and `vault_database_secret` in the vault.
+- Validates `hosts.yml` `all.vars` (`project`, `hostname`) and vault secrets (`vault_database_url`, `vault_database_secret`) before playbooks run.
+- Prompts for **BECOME password** (macOS sudo) on the Mac.
+- Idempotent — safe to re-run.
+
+Requires `wg` and `uv` on PATH.
+
+#### `task down ENV=<env> CONFIRM=down-<env>`
+
+Stop the environment without deleting vault or local state.
+
+**Stop** the environment — undo cluster software, node WireGuard, and the Mac controller mesh. Keeps your vault, `.state/<env>/`, Lima guests, and inventory. Re-run `task up` to bring everything back.
+
+```sh
+task down ENV=dev CONFIRM=down-dev
+```
+
+Use this when you want a clean teardown without wiping secrets or local automation state.
+
+#### `down` vs reset
+
+| | `task down` | `task env-reset` / `dev-reset` / `dev-reset-lima` |
+| --- | --- | --- |
+| Cluster stack on nodes | Removed | Removed (via `down`, retried) |
+| Node WireGuard | Removed | Removed |
+| Mac controller mesh | Disconnected | Disconnected |
+| Encrypted vault + `.vault-pass` | **Kept** | **Deleted** |
+| `.state/<env>/` (known_hosts, WG state, …) | **Kept** | **Deleted** |
+| Lima guests (`dev-lima`) | **Kept** | **Destroyed** |
+| Remote VMs (`ops`, SSH keys, firewall) | Unchanged | Unchanged |
+| To run again | `task up` | `vault-init` (+ `lima-up` for dev-lima), then `task up` |
+
+**Mental model:** `down` = pause/stop. Reset = factory-reset **local** automation back to pre-bootstrap (like a fresh `vault-init`).
+
+#### `task env-reset ENV=<env> CONFIRM=reset-<env>`
+
+Factory-reset local automation state for an environment.
+
+Factory-reset an environment: retry `task down`, disconnect Mac mesh, destroy Lima guests when the inventory has them, delete vault, remove `.state/<env>/`.
+
+```sh
+task env-reset ENV=dev CONFIRM=reset-dev
+task env-reset ENV=dev-lima CONFIRM=reset-dev-lima
+```
+
+#### `task dev-reset CONFIRM=reset-dev`
+
+Factory-reset the dev environment.
+
+Alias for `env-reset ENV=dev`. Does **not** destroy Lima (`dev-lima` is separate).
+
+```sh
+task dev-reset CONFIRM=reset-dev
+```
+
+#### `task dev-reset-lima CONFIRM=reset-dev-lima`
+
+Factory-reset dev-lima, including Lima guests.
+
+Alias for `env-reset ENV=dev-lima` (includes Lima destroy).
+
+```sh
+task dev-reset-lima CONFIRM=reset-dev-lima
+```
+
+May prompt for macOS BECOME password when disconnecting the Mac WireGuard controller. If `down` fails, local cleanup still continues.
+
+---
+
+### Vault
+
+#### `task vault-init ENV=<env>`
+
+Create a new encrypted vault and local password file.
+
+Create a new encrypted vault and a generated password file at `inventories/<env>/.vault-pass` (gitignored). Seeds `vault_meta`, a placeholder `vault_database_url`, and an auto-generated `vault_database_secret`. The first `task up` adds WireGuard keypairs.
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```sh
+task vault-init ENV=dev
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+task vault-init ENV=<env>
+```
+
+</TabItem>
+</Tabs>
+
+Decrypted `inventories/<env>/group_vars/all/vault.yml` looks like this:
+
+<Tabs syncKey="vault-init">
+<TabItem label="dev">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: dev
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: kR7xP2mN9qL4vB8wF3hJ6tY1cZ5aD0eG_sXu
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+#### `task vault-edit ENV=<env>`
+
+Open, validate, and re-encrypt the environment vault.
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```sh
+task vault-edit ENV=dev
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+task vault-edit ENV=<env>
+```
+
+</TabItem>
+</Tabs>
+
+#### PostgreSQL database
+
+Set your external Postgres connection URL in the vault after vault-init.
+
+Supercompute needs a Postgres database with owner role hosted outside of the Supercompute cloud. Run after `vault-init`.
+
+```sh
+task vault-edit ENV=<env>
+```
+
+`task vault-edit` decrypts `inventories/<env>/group_vars/all/vault.yml` in your editor. You should see `vault_meta`, `vault_database_url`, and `vault_database_secret` (WireGuard keys appear after the first `task up`). Replace only `vault_database_url` with your connection URI (same shape as the **dev**, **dev-lima**, or **prod** tab). Leave everything else unchanged.
+
+Example after you set the database URL:
+
+<Tabs syncKey="postgres">
+<TabItem label="dev">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: dev
+vault_database_url: postgresql://app:secret@db.example.com:5432/supercompute
+vault_database_secret: kR7xP2mN9qL4vB8wF3hJ6tY1cZ5aD0eG_sXu
+```
+
+</TabItem>
+<TabItem label="dev-lima">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: dev-lima
+vault_database_url: postgresql://app:secret@db.example.com:5432/supercompute
+vault_database_secret: kR7xP2mN9qL4vB8wF3hJ6tY1cZ5aD0eG_sXu
+```
+
+</TabItem>
+<TabItem label="prod">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: prod
+vault_database_url: postgresql://app:secret@db.example.com:5432/supercompute
+vault_database_secret: mT4nQ8pL2vK6wB9xF1hJ5cY0aZ3dE7gH_rXv
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+Save and exit the editor:
+
+- **vim/vi** (default on macOS): press <Kbd mac="Esc" windows="Esc" />, type `:wq`, press <Kbd mac="Enter" windows="Enter" />
+- **nano**: press <Kbd mac="Control+O" windows="Control+O" />, <Kbd mac="Enter" windows="Enter" />, then <Kbd mac="Control+X" windows="Control+X" />
+
+`task up` rejects the vault-init placeholder in `vault_database_url`.
+
+---
+
+### WireGuard helpers
+
+#### `task wg-status ENV=<env>`
+
+Show WireGuard mesh status.
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```sh
+task wg-status ENV=dev
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+task wg-status ENV=<env>
+```
+
+</TabItem>
+</Tabs>
+
+#### `task wg-remove ENV=<env>`
+
+Disconnect the Mac WireGuard controller only.
+
+Disconnect the **Mac controller** WireGuard interface only. Leaves node mesh and cluster software unchanged.
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```sh
+task wg-remove ENV=dev
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+task wg-remove ENV=<env>
+```
+
+</TabItem>
+</Tabs>
+
+Only applies when `control_plane: mac` and controller state exists on the Mac.
+
+#### `task ssh ENV=<env> NODE=<host>`
+
+Open SSH to an inventory host over the mesh.
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```sh
+task ssh ENV=dev NODE=static-1
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+task ssh ENV=<env> NODE=<host>
+```
+
+</TabItem>
+</Tabs>
+
+Requires an up mesh and `wg` on PATH.
+
+---
+
+### Lima (`ENV=<env>` with `node_lima_guest` hosts)
+
+These tasks require `ENV=<slug>` for an inventory that defines `node_lima_guest` hosts (typically **`dev-lima`**). See [Get started locally with a roaming node](/start-here/get-started-roaming-node/).
+
+#### `task lima-up ENV=<env>`
+
+Create or start Lima guests and refresh SSH fingerprints in the inventory.
+
+Create or start Lima guests, then write `ssh_ed25519_sha256` fingerprints into `hosts.yml`.
+
+```sh
+task lima-up ENV=dev-lima
+```
+
+Requires `limactl`, `uv`, and `ssh-keyscan`.
+
+#### `task lima-status ENV=<env>`
+
+Show Lima guest CPU, RAM, and disk usage.
+
+```sh
+task lima-status ENV=dev-lima
+```
+
+---
+
+### Typical sequences
+
+**Dev (static only)** — see [Get started locally](/start-here/get-started/):
+
+```sh
+task setup
+task vault-init ENV=dev
+task vault-edit ENV=dev   # set vault_database_url
+task up ENV=dev
+task ssh ENV=dev NODE=static-1
+```
+
+**dev-lima** — see [Get started locally with a roaming node](/start-here/get-started-roaming-node/):
+
+```sh
+task setup
+task lima-up ENV=dev-lima
+task vault-init ENV=dev-lima
+task vault-edit ENV=dev-lima   # set vault_database_url
+task up ENV=dev-lima
+task ssh ENV=dev-lima NODE=roaming-1
+```
+
+**Prod environment on the Mac** — see [Deploy to production](/start-here/deploy-to-production/):
+
+<Tabs syncKey="pkg">
+<TabItem label="prod">
+
+```sh
+task vault-init ENV=prod
+task vault-edit ENV=prod   # set vault_database_url
+task up ENV=prod
+task ssh ENV=prod NODE=static-1
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+task vault-init ENV=<env>
+task vault-edit ENV=<env>   # set vault_database_url
+task up ENV=<env>
+task ssh ENV=<env> NODE=<host>
+```
+
+</TabItem>
+</Tabs>
+
+**CI-managed environment** — use the GitHub Actions [Deploy](/start-here/deploy-with-github-actions/) workflow instead of `task up` on the Mac.
+
+---
+
+### Not listed in `task --list`
+
+These tasks exist but are marked `internal: true` (hidden from `task --list`, still callable):
+
+| Command | Purpose |
+| --- | --- |
+| `task vault-secrets-ensure ENV=<env>` | Ensure WG keys + `vault_database_secret` (`up` does this automatically) |
+| `task vault-wireguard-ensure ENV=<env>` | Ensure WG keys only (`up` does this automatically) |
+| `task vault-destroy ENV=<env> CONFIRM=destroy-vault-<env>` | Delete vault without full reset |
+| `task lima-host-fingerprints ENV=<env>` | Re-capture Lima SSH fingerprints (`lima-up` refreshes them) |
+| `task lima-destroy ENV=<env> CONFIRM=destroy-lima-<env>` | Destroy Lima guests without full reset |
+| `task wg-syntax ENV=<env>` | Syntax-check WireGuard playbooks |
+
+Prefer documented public flows unless troubleshooting explicitly calls for one of these.

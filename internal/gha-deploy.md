@@ -6,7 +6,7 @@ Manual `workflow_dispatch` workflow [`.github/workflows/deploy.yml`](../.github/
 
 | Path | Entry | Mac WG peer | Lima | Mutations |
 | --- | --- | --- | --- | --- |
-| Mac | `task up PROVIDER=<slug>` | yes (`.1`) | optional | from the Mac |
+| Mac | `task up ENV=<env>` | yes (`.1`) | optional | from the Mac |
 | GHA | Actions → Deploy | no | no | from the workflow only |
 
 Do **not** run Mac `task up` against a GHA-managed inventory (`control_plane: gha`).
@@ -17,14 +17,17 @@ Set in `inventories/<slug>/group_vars/all/main.yml`:
 
 ```yaml
 control_plane: gha
-wireguard_ci_address: 10.217.79.254   # ephemeral runner mesh IP (unique in CIDR)
+node_ci_address: 10.217.79.254   # unique IP in that provider's mesh CIDR (dev often uses .254 in 10.217.80.0/24)
+node_forward_on_all_statics: true  # every public static can relay day-2 dial
 ```
 
-Commit `hosts.yml` and encrypted `group_vars/all/vault.yml`. Keep `.vault-pass` out of git.
+Commit `hosts.yml` and encrypted `group_vars/all/vault.yml`. Keep `.vault-pass` out of git. The workflow also writes `.state/<provider>/gha-extra-vars.yml` (`control_plane: gha` plus optional Mac pubkey).
+
+The encrypted vault must contain `vault_database_url` (`postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE` until replaced via `task vault-edit` before commit) and `vault_database_secret` (created by `task vault-init`). CI decrypts both with repository secret `ANSIBLE_VAULT_PASSWORD` — there is no separate `DATABASE_URL` Actions secret.
 
 ## Ephemeral runner mesh peer
 
-`up` / `verify` briefly join the GitHub-hosted **runner VM** (`ubuntu-latest`) to the mesh as `wireguard_ci_address`, then remove that peer when the job ends. That runner filesystem (including generated CI WireGuard keys under `.state/<provider>/gha-peer/`) is discarded with the runner — **not** your static/roaming/Lima nodes. A later workflow run generates a new CI keypair, re-adds the peer, works, and removes it again without tearing down the existing node mesh.
+`up` / `verify` briefly join the GitHub-hosted **runner VM** (`ubuntu-latest`) to the mesh as `node_ci_address`, then remove that peer when the job ends. That runner filesystem (including generated CI WireGuard keys under `.state/<provider>/gha-peer/`) is discarded with the runner — **not** your static/roaming/Lima nodes. A later workflow run generates a new CI keypair, re-adds the peer, works, and removes it again without tearing down the existing node mesh.
 
 ## Log hygiene
 
@@ -48,13 +51,15 @@ Nodes must allow passwordless `sudo` for `ops` (GHA cannot prompt for a become p
 ## Run
 
 1. Actions → **Deploy** → Run workflow.
-2. Inputs: `provider`, `action` (`up` / `down` / `verify`), and for `down` set `confirm` to `down-<provider>`.
+2. Inputs: `env`, `action` (`up` / `down` / `verify`), and for `down` set `confirm` to `down-<env>`.
 
-`up` flow: known-hosts → vault WG keys → `wireguard-up` with `control_plane=gha` → ephemeral CI mesh peer → `cluster-up` → remove CI peer.
+`up` flow: known-hosts → ensure-secrets → validate deployment config → `wireguard-up` → ephemeral CI mesh peer → `cluster-up` → remove CI peer.
+
+`verify` flow: known-hosts → ephemeral CI mesh peer → `verify.yml` → remove CI peer.
 
 ## Shared post-build roaming dial
 
-After WireGuard is up, every roaming node (Mac or GHA path) runs `/usr/local/sbin/supercompute-roaming-dial`, which uses `shuf` to pick one public static from `/etc/supercompute/public-endpoints.list` and `wg set` to make that peer the active Endpoint/transit. A systemd timer re-runs it periodically. Build-up still pins the first static hub for a deterministic join.
+After WireGuard is up, every roaming node (Mac or GHA path) runs `/usr/local/sbin/supercompute-roaming-dial`, which uses `shuf` to pick one public static from `/etc/supercompute/public-endpoints.list` and `wg set` to make that peer the active Endpoint/transit. A systemd timer (`roaming_dial_timer_on_calendar`, default **hourly**) re-runs it. Build-up still pins the first static hub for a deterministic join. With `node_forward_on_all_statics: true`, every public static can forward.
 
 ## Related
 

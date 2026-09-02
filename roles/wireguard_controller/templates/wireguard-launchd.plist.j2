@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>{{ wireguard_launchd_label }}</string>
+  <string>{{ node_launchd_label }}</string>
   <key>ProgramArguments</key>
   <array>
     <string>{{ wireguard_controller_wg_quick.stdout }}</string>
     <string>up</string>
-    <string>{{ wireguard_config_path }}</string>
+    <string>{{ node_config_path }}</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

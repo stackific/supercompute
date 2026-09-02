@@ -1,0 +1,55 @@
+---
+node_mesh_reachable: >-
+  {{ hostvars['localhost'].mesh_ssh_reachable[inventory_hostname] | default(false) | bool }}
+node_lima_guest: "{{ hostvars[inventory_hostname].node_lima_guest | default(false) | bool }}"
+node_lima_ssh_port: >-
+  {{
+    lima_nodes
+    | default([])
+    | selectattr('name', 'equalto', inventory_hostname)
+    | map(attribute='ssh_port')
+    | list
+    | first
+    | default(default_ssh_port)
+  }}
+ansible_host: >-
+  {%- if node_mesh_reachable -%}
+  {{ private_address }}
+  {%- elif node_lima_guest -%}
+  127.0.0.1
+  {%- elif roaming | default(false) | bool -%}
+  {{ bootstrap_ssh_host }}
+  {%- else -%}
+  {{ public_ip }}
+  {%- endif -%}
+ansible_port: >-
+  {%- if (not node_mesh_reachable) and node_lima_guest -%}
+  {{ node_lima_ssh_port }}
+  {%- else -%}
+  {{ hostvars[inventory_hostname].ansible_port | default(default_ssh_port) }}
+  {%- endif -%}
+ansible_user: >-
+  {%- if node_lima_guest -%}
+  {{ lima_guest_user }}
+  {%- else -%}
+  {{ hostvars[inventory_hostname].ansible_user | default(default_ssh_user) }}
+  {%- endif -%}
+ansible_ssh_private_key_file: >-
+  {%- if node_lima_guest -%}
+  {{ lima_home_dir }}/_config/user
+  {%- else -%}
+  {{ hostvars[inventory_hostname].ansible_ssh_private_key_file | default(ssh_private_key_file) }}
+  {%- endif -%}
+ansible_ssh_common_args: >-
+  -F /dev/null -o BatchMode=yes -o ControlMaster=no -o ControlPath=none
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=30
+  -o ConnectTimeout={{ 120 if ((not node_mesh_reachable) and node_lima_guest) else 30 }}
+  -o ConnectionAttempts={{ 5 if ((not node_mesh_reachable) and node_lima_guest) else 1 }}
+  -o HostKeyAlias={{ inventory_hostname }} -o StrictHostKeyChecking=yes
+  -o UserKnownHostsFile={{ known_hosts_file }}
+  -o IdentitiesOnly=yes
+  {% if (not node_mesh_reachable)
+        and (roaming | default(false) | bool)
+        and (not node_lima_guest) %}
+  -o ProxyCommand="{{ lookup('ansible.builtin.pipe', 'command -v cloudflared') }} access ssh --hostname %h"
+  {% endif %}

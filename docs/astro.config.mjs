@@ -28,16 +28,21 @@ export default defineConfig({
           label: "Start Here",
           items: [
             { label: "Get started locally", slug: "start-here/get-started" },
+            { label: "Get started locally with a roaming node", slug: "start-here/get-started-roaming-node" },
             { label: "Deploy to production", slug: "start-here/deploy-to-production" },
+            { label: "Deploy with GitHub Actions", slug: "start-here/deploy-with-github-actions" },
           ],
         },
         {
           label: "Guides",
-          items: [{ label: "Adding a public node", slug: "guides/adding-public-node" }],
+          items: [
+            { label: "Adding a public node", slug: "guides/adding-public-node" },
+            { label: "Adding a roaming node", slug: "guides/adding-roaming-node" },
+          ],
         },
         {
           label: "Reference",
-          items: [{ autogenerate: { directory: "reference" } }],
+          items: [{ label: "Task commands", slug: "reference/task" }],
         },
       ],
     }),

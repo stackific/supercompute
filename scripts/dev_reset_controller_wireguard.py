@@ -11,7 +11,12 @@ import sys
 import time
 from pathlib import Path
 
+import sys
+
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inventory_hosts  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,23 +56,10 @@ def load_main(provider: str) -> dict:
 
 
 def launchd_path(provider: str) -> Path:
-  config_path = ROOT / "config.yml"
   try:
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-  except FileNotFoundError as error:
-    raise ResetError(f"Cloud configuration does not exist: {config_path}") from error
-  except yaml.YAMLError as error:
-    raise ResetError(f"Cloud configuration is not valid YAML: {error}") from error
-  if not isinstance(config, dict):
-    raise ResetError("config.yml must contain a YAML mapping")
-  hostname = config.get("hostname")
-  project = config.get("project")
-  if not isinstance(hostname, str) or not hostname.strip():
-    raise ResetError("config.yml must contain a non-empty hostname")
-  if not isinstance(project, str) or not project.strip():
-    raise ResetError("config.yml must contain a non-empty project")
-  reverse_dns = ".".join(reversed(hostname.split(".")))
-  label = f"{reverse_dns}.{project}.{provider}.wireguard"
+    label = inventory_hosts.launchd_label(provider)
+  except inventory_hosts.InventoryError as error:
+    raise ResetError(str(error)) from error
   return LAUNCHD_DIR / f"{label}.plist"
 
 
@@ -238,12 +230,12 @@ def wait_for_address_inactive(address: str, seconds: int = 10) -> bool:
 
 def disconnect_orphan_controller(provider: str) -> None:
   main = load_main(provider)
-  address = main.get("wireguard_controller_address")
-  interface = main.get("wireguard_interface")
+  address = main.get("node_controller_address")
+  interface = main.get("node_interface")
   if not isinstance(address, str) or not address.strip():
-    raise ResetError("wireguard_controller_address must be a non-empty string")
+    raise ResetError("node_controller_address must be a non-empty string")
   if not isinstance(interface, str) or not interface.strip():
-    raise ResetError("wireguard_interface must be a non-empty string")
+    raise ResetError("node_interface must be a non-empty string")
 
   tracked_config = tracked_config_path(provider, interface)
   launchd = launchd_path(provider)
@@ -281,9 +273,9 @@ def disconnect_orphan_controller(provider: str) -> None:
 
 
 def provider_from_environment() -> str:
-  provider = os.environ.get("PROVIDER", "").strip()
+  provider = os.environ.get("ENV", "").strip()
   if not provider:
-    raise ResetError("PROVIDER must be set")
+    raise ResetError("ENV must be set")
   return provider
 
 

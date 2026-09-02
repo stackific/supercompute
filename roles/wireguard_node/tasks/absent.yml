@@ -13,7 +13,7 @@
     daemon_reload: true
   become: true
   failed_when: false
-  when: wireguard_roaming | default(false) | bool
+  when: roaming | default(false) | bool
 
 - name: Remove roaming dial helper units and script
   ansible.builtin.file:
@@ -24,11 +24,11 @@
     - /etc/systemd/system/supercompute-roaming-dial.timer
     - /etc/systemd/system/supercompute-roaming-dial.service
     - /usr/local/sbin/supercompute-roaming-dial
-  when: wireguard_roaming | default(false) | bool
+  when: roaming | default(false) | bool
 
 - name: Stop and disable this server's WireGuard interface
   ansible.builtin.systemd_service:
-    name: "wg-quick@{{ wireguard_interface }}.service"
+    name: "wg-quick@{{ node_interface }}.service"
     enabled: false
     state: stopped
   become: true
@@ -36,7 +36,7 @@
 
 - name: Remove this server's private WireGuard configuration
   ansible.builtin.file:
-    path: "/etc/wireguard/{{ wireguard_interface }}.conf"
+    path: "/etc/wireguard/{{ node_interface }}.conf"
     state: absent
   become: true
 
@@ -46,23 +46,23 @@
     state: absent
   become: true
   when:
-    - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
-    - not (wireguard_roaming | default(false) | bool)
+    - hostvars['localhost'].roaming_nodes | default([]) | length > 0
+    - not (roaming | default(false) | bool)
     - >-
-      (wireguard_forward_on_all_statics | default(true) | bool)
-      or inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
+      (node_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].static_hub | default(''))
 
 - name: Remove WireGuard peer forwarding rule on public static relays
   ansible.builtin.iptables:
     chain: FORWARD
-    in_interface: "{{ wireguard_interface }}"
-    out_interface: "{{ wireguard_interface }}"
+    in_interface: "{{ node_interface }}"
+    out_interface: "{{ node_interface }}"
     jump: ACCEPT
     state: absent
   become: true
   when:
-    - hostvars['localhost'].wireguard_roaming_nodes | default([]) | length > 0
-    - not (wireguard_roaming | default(false) | bool)
+    - hostvars['localhost'].roaming_nodes | default([]) | length > 0
+    - not (roaming | default(false) | bool)
     - >-
-      (wireguard_forward_on_all_statics | default(true) | bool)
-      or inventory_hostname == (hostvars['localhost'].wireguard_hub | default(''))
+      (node_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].static_hub | default(''))

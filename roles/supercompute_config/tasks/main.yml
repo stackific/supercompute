@@ -1,3 +1,6 @@
 ---
-- name: Apply supercompute project config lifecycle
-  ansible.builtin.include_tasks: "{{ supercompute_config_lifecycle }}.yml"
+- ansible.builtin.import_tasks: present.yml
+  when: supercompute_config_lifecycle | default('present') == 'present'
+
+- ansible.builtin.import_tasks: absent.yml
+  when: supercompute_config_lifecycle | default('present') == 'absent'

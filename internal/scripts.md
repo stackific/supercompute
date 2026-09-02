@@ -7,13 +7,13 @@ Python helpers use **`uv run --locked`** from the worktree root. Shell scripts a
 | Script | Role |
 | --- | --- |
 | `scripts/ansible-playbook.sh` | Runs `ansible-playbook` with inventory, vault password, locked venv |
+| `scripts/config_project.py` | Prints `project` from `inventories/<provider>/hosts.yml` all.vars (`--provider` or `ENV`) |
 
 ## Provider / inventory
 
 | Script | Role |
 | --- | --- |
 | `scripts/provider_platform.py` | Prints `provider.platform`; refuses `vps` / `lima` |
-| `scripts/config_project.py` | Prints `project` from `config.yml` |
 
 ## WireGuard / SSH
 
@@ -36,7 +36,7 @@ Python helpers use **`uv run --locked`** from the worktree root. Shell scripts a
 | `scripts/lima_release_host_ports.py` | Terminate orphan `limactl` UDP forwards for inventory ports |
 | `scripts/lima_nodes.py` | Map inventory hosts to Lima node definitions |
 | `scripts/lima_instances.py` | Lima instance metadata |
-| `scripts/lima-host-fingerprints.py` | Scan guests; write `ssh_host_ed25519_sha256` to `hosts.yml` (`--force` after recreate) |
+| `scripts/lima-host-fingerprints.py` | Scan guests; write `ssh_ed25519_sha256` to `hosts.yml` (`--force` after recreate) |
 
 ## Vault
 

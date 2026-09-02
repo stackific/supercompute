@@ -1,0 +1,344 @@
+---
+title: Adding a roaming node
+description: Step-by-step tutorial to add a home-lab Ubuntu node with Cloudflare Tunnel bootstrap SSH—no public IP, no inbound WireGuard.
+---
+
+import { Kbd } from 'starlight-kbd/components'
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
+This guide walks through adding a **roaming** node: Ubuntu at home (or anywhere with a changing public IP), bootstrap SSH through **Cloudflare Tunnel**, and WireGuard that **always dials out** to your public static hub(s).
+
+The example uses the **prod environment**, host name **`roaming-1`**, and hostname **`roaming-1.example.com`**.
+
+Where you see `ENV=<env>`, replace with your environment name (for example `prod`).
+
+:::note[What this guide does not cover]
+
+- **Lima guests** (`node_lima_guest: true`) — Apple Silicon Lima `roaming-1` uses [Get started locally with a roaming node](/start-here/get-started-roaming-node/) instead.
+- **DynDNS or port-forwarding UDP 51830** on your home router — roaming nodes never publish a WireGuard dial-in address.
+
+:::
+
+### Before you start
+
+You need a working static environment, operator SSH access, a Cloudflare zone, an Ubuntu roaming VM, and an external Postgres instance for that environment (configured in the vault before the first deploy).
+
+You need:
+
+1. A working environment (for example **prod**) with at least **one public static node** ([Adding a public node](/guides/adding-public-node/) or [Deploy to production](/start-here/deploy-to-production/)).
+2. The same **operator SSH key** already installed on your static nodes (`~/.ssh/<project>-<env>`).
+3. A **domain on Cloudflare** (same account you will use for Zero Trust).
+4. An Ubuntu **26.04** amd64 machine for the roaming node (VM, NUC, NAS, etc.).
+5. An external Postgres instance with owner role hosted outside of the Supercompute cloud.
+
+Prove SSH to a static node in your environment first:
+
+```sh
+task ssh ENV=prod NODE=static-1
+```
+
+Add a block like this under `nodes.hosts` in `inventories/<env>/hosts.yml`:
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```yaml
+    roaming-1:
+      roaming: true
+      bootstrap_ssh_host: "roaming-1.example.com"
+      ssh_ed25519_sha256: "SHA256:pRR2cezc6UOTGq+vTrVwPFCFKlHRKuuV/OL/9/c3e+M"
+      private_address: 10.217.79.21
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+    roaming-1:
+      roaming: true
+      bootstrap_ssh_host: "roaming-1.example.com"
+      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT"
+      private_address: 10.217.79.21
+```
+
+</TabItem>
+</Tabs>
+
+No `public_ip`. No `node_lima_guest`.
+
+### Step 1: Prepare the roaming VM (console)
+
+Install Ubuntu, create the ops user, and confirm SSH listens on port 22.
+
+On the roaming machine (local console or temporary LAN SSH):
+
+1. Install **Ubuntu 26.04** amd64.
+2. Create user **`ops`**, install your Mac operator public key, passwordless sudo — same commands as [Adding a public node](/guides/adding-public-node/) Step 3.
+3. Confirm `sshd` listens on **port 22**:
+
+```sh
+sudo ss -tlnp | grep ':22'
+```
+
+4. Confirm outbound internet works (especially **UDP** — WireGuard needs it). **Do not** forward inbound UDP **51830** on your router.
+
+### Step 2: Create a Cloudflare Tunnel (dashboard)
+
+Create a Zero Trust tunnel that will carry bootstrap SSH to the roaming VM.
+
+Do this in a browser while logged into Cloudflare.
+
+1. Open **[Cloudflare One](https://one.dash.cloudflare.com/)** → **Networks** → **Connectors** → **Cloudflare Tunnels** (menu label may appear as **Tunnels** under **Networks**).
+2. Click **Create a tunnel**.
+3. Choose connector type **Cloudflared** → **Next**.
+4. **Tunnel name**: pick something durable (example `home-lab-ssh`). Click **Save tunnel**.
+5. On **Install connector**, select **Debian/Ubuntu** (or your OS). Cloudflare shows an install command with a **token**. Copy that full command — you will run it on the roaming VM in Step 3.
+
+**Save in your password manager:**
+
+| Item | Where it lives |
+| --- | --- |
+| Tunnel name | Cloudflare dashboard |
+| Install command / token | Shown once on the install step; also ends up in `/etc/cloudflared/` on the VM after install |
+
+6. Leave the browser tab open; you will return to add a **Published application** route after the connector is healthy.
+
+Official reference: [Connect to SSH with client-side cloudflared](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-cloudflared-authentication/).
+
+### Step 3: Install cloudflared on the roaming VM
+
+Run the tunnel install command on the roaming VM and confirm it connects.
+
+SSH or console on the roaming VM. Paste the **exact** install command from Step 2 (it includes your tunnel token).
+
+Example shape (yours will differ):
+
+```sh
+sudo cloudflared service install eyJhIjoi…
+```
+
+Then:
+
+```sh
+sudo systemctl enable --now cloudflared
+sudo systemctl status cloudflared
+```
+
+Back in the Cloudflare dashboard, the tunnel should show **Healthy** / connected. Click **Next** until you reach route configuration (or open the tunnel → **Routes** tab).
+
+On the VM you can also verify:
+
+```sh
+cloudflared tunnel list
+cloudflared tunnel info home-lab-ssh
+```
+
+**Save:** note the tunnel **UUID** if shown (`cloudflared tunnel list`) — useful for DNS CLI later.
+
+### Step 4: Publish SSH on a hostname (Published application)
+
+Route a public hostname to SSH on the roaming VM through the tunnel.
+
+Still in **[Cloudflare One → Tunnels](https://one.dash.cloudflare.com/)** → select your tunnel.
+
+1. Open the **Routes** tab (older UI: **Public Hostname**).
+2. Click **Add route** → **Published application** (wording may be **Add published application**).
+3. Fill the form:
+
+| Field | Example | Notes |
+| --- | --- | --- |
+| Subdomain | `roaming-1` | Becomes `roaming-1.example.com` |
+| Domain | `example.com` | Must be a zone in this account |
+| Path | *(leave empty)* | |
+| Type / Service | **SSH** | Not HTTP |
+| URL / Service URL | `localhost:22` | SSH on **this** machine where `cloudflared` runs |
+
+If the UI asks for a full URI, use `ssh://localhost:22`.
+
+Wrong: Service URL = `22` alone. Right: type **SSH** + `localhost:22`.
+
+4. Click **Add route** / **Save route**.
+
+Cloudflare usually creates a **proxied CNAME** for `roaming-1.example.com` → `<tunnel-id>.cfargotunnel.com`. Confirm under your zone **DNS** → **Records**.
+
+If DNS is missing, from a machine with tunnel credentials:
+
+```sh
+cloudflared tunnel route dns home-lab-ssh roaming-1.example.com
+```
+
+### Step 5: Cloudflare Access (recommended)
+
+Restrict who can reach the tunnel hostname before SSH reaches the VM.
+
+Access controls **who** can use the hostname before SSH reaches your VM.
+
+1. **[Cloudflare One](https://one.dash.cloudflare.com/)** → **Access controls** → **Applications**.
+2. **Add an application** → **Self-hosted**.
+3. **Application domain**: `roaming-1.example.com` (same hostname as Step 4).
+4. **Policies** → add a rule:
+   - **Action**: Allow
+   - **Include**: your email (or an IdP group you use)
+5. **Save**.
+
+First SSH from the Mac may open a browser for Access login. Complete login until `ssh … true` works without a password prompt (key-based `ops` login after Access).
+
+**Save:** nothing goes into the Supercompute repo for Access — credentials are your Cloudflare account / IdP. Optional later: [service tokens](https://developers.cloudflare.com/cloudflare-one/identity/service-tokens/) for non-interactive automation (not required for `task up` from your Mac).
+
+### Step 6: Mac — cloudflared and SSH config
+
+Configure your Mac to reach the roaming VM through the tunnel.
+
+On your Mac:
+
+```sh
+command -v cloudflared
+```
+
+If missing, run `task setup` (installs `cloudflared` on macOS via Homebrew) or `brew install cloudflared`.
+
+Add to `~/.ssh/config` (adjust key path to match your provider):
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```text
+Host roaming-1.example.com
+  User ops
+  IdentityFile ~/.ssh/sc-prod
+  IdentitiesOnly yes
+  ProxyCommand cloudflared access ssh --hostname %h
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```text
+Host roaming-1.example.com
+  User ops
+  IdentityFile ~/.ssh/<project>-<env>
+  IdentitiesOnly yes
+  ProxyCommand cloudflared access ssh --hostname %h
+```
+
+</TabItem>
+</Tabs>
+
+`bootstrap_ssh_host` in `hosts.yml` must be **exactly** this hostname (the `Host` name / DNS name, not an alias).
+
+### Step 7: Prove bootstrap SSH
+
+Confirm tunnel SSH from your Mac works and record the VM host-key fingerprint.
+
+```sh
+ssh roaming-1.example.com true
+```
+
+Fix Access policy, DNS, or the published SSH route until this succeeds.
+
+Record the VM **host key** fingerprint for `hosts.yml`:
+
+```sh
+ssh roaming-1.example.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+```
+
+Copy the full `SHA256:…` value into your password manager.
+
+#### Checklist before updating the environment
+
+| Check | OK? |
+| --- | --- |
+| Tunnel **Healthy** in Cloudflare | |
+| Published route: **SSH** → `localhost:22` | |
+| DNS record for `roaming-1.example.com` | |
+| Access application allows your identity | |
+| `ssh roaming-1.example.com true` from Mac | |
+| Host key fingerprint recorded | |
+
+### Step 8: Fill the environment inventory
+
+Add the roaming host, tunnel hostname, and fingerprint to your hosts inventory.
+
+Edit `inventories/<env>/hosts.yml`. Add `roaming-1` under `nodes.hosts` with the **next free** mesh IP in your CIDR (example prod `10.217.79.0/24` → `.21` if `.11` and `.12` are statics):
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+
+```yaml
+    roaming-1:
+      roaming: true
+      bootstrap_ssh_host: "roaming-1.example.com"
+      ssh_ed25519_sha256: "SHA256:pRR2cezc6UOTGq+vTrVwPFCFKlHRKuuV/OL/9/c3e+M"
+      private_address: 10.217.79.21
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+    roaming-1:
+      roaming: true
+      bootstrap_ssh_host: "roaming-1.example.com"
+      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT"
+      private_address: 10.217.79.21
+```
+
+</TabItem>
+</Tabs>
+
+To add `roaming-2`, repeat this guide with a new hostname and mesh IP.
+
+### Step 9: Static hub firewall (UDP 51830)
+
+Open inbound UDP 51830 on static hubs so roaming nodes can dial out to them.
+
+Roaming nodes dial **out** to public statics. Each static VM must allow **inbound UDP 51830** from the internet (or wide enough sources) — not only your Mac `/32`, because the roaming public IP changes.
+
+TCP **22** on statics is separate (Mac bootstrap to statics). Roaming bootstrap uses Cloudflare only.
+
+### Step 10: Vault and bring up
+
+Initialize secrets if this is a new environment, then join the roaming node to the mesh.
+
+If this is a new environment, run `task vault-init ENV=<env>`, then set `vault_database_url` with `task vault-edit ENV=<env>` before the first `task up`. Supercompute needs a Postgres database with owner role hosted outside of the Supercompute cloud. Existing prod: update `hosts.yml` only, then `task up ENV=prod`.
+
+```sh
+task up ENV=prod
+```
+
+`up` reaches `roaming-1` via Cloudflare when the mesh is down, then over WireGuard after join. Roaming always initiates to the static hub; Mac↔roaming traffic relays through **static-1** (first static by name).
+
+### Step 11: SSH over the mesh
+
+Confirm you can reach the roaming node over WireGuard.
+
+```sh
+task ssh ENV=prod NODE=roaming-1
+```
+
+Optional latency check from a node to the Mac mesh peer:
+
+```sh
+ping -c 10 -I scwg0 10.217.79.1
+```
+
+Optional on the roaming node:
+
+```sh
+systemctl status supercompute-roaming-dial.timer
+```
+
+### What to store off-repo
+
+| Secret / artifact | Purpose |
+| --- | --- |
+| Operator SSH private key | Mac → nodes (same as static nodes) |
+| Cloudflare tunnel install token / credentials on VM | Keeps tunnel connected after reboot |
+| `ssh_ed25519_sha256` for `roaming-1` | Inventory + known_hosts contract |
+| Vault password + encrypted `vault.yml` | Mesh keys |
+
+Supercompute does **not** store Cloudflare API tokens or tunnel credentials in the repository.
+
+### Next steps
+
+Go back to [Deploy to production](/start-here/deploy-to-production/) if you started there, or add another roaming host by repeating this guide with `roaming-2`.

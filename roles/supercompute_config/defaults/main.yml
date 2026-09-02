@@ -1,6 +1,6 @@
 ---
 supercompute_config_dir: /etc/supercompute
-supercompute_config_path: "{{ supercompute_config_dir }}/config.yml"
+supercompute_config_path: "{{ supercompute_config_dir }}/hosts.yml"
 supercompute_public_endpoints_path: "{{ supercompute_config_dir }}/public-endpoints.list"
 supercompute_roaming_transit_path: "{{ supercompute_config_dir }}/roaming-transit.ips"
 supercompute_config_lifecycle: present

@@ -1,27 +1,57 @@
 ---
-- name: Require project identity from config.yml extra-vars
+- name: Require project identity from inventory all.vars
   ansible.builtin.assert:
     that:
       - project is string
       - project | length > 0
       - hostname is string
       - hostname | length > 0
-      - nameserver_hostname is string
-      - nameserver_hostname | length > 0
+      - hostname is not search('REPLACE_WITH_')
+      - hostname is not search('<')
+      - "'.' in hostname"
+      - dns_prefix_ns is string
+      - dns_prefix_ns | length > 0
+      - dns_prefix_api is string
+      - dns_prefix_api | length > 0
+      - dns_prefix_app is string
+      - dns_prefix_app | length > 0
+      - dns_prefix_apps is string
+      - dns_prefix_apps | length > 0
+      - vault_database_url is string
+      - vault_database_url | length > 0
+      - vault_database_url is match('^postgres(ql)?://')
+      - vault_database_url is not search('REPLACE_WITH_')
+      - vault_database_url is not search('@HOST:5432/DATABASE')
+      - vault_database_secret is string
+      - vault_database_secret | length > 0
     fail_msg: >-
-      config.yml must define project, hostname, and nameserver_hostname before
-      nodes can receive {{ supercompute_config_path }}.
+      inventories/{{ inventory_slug }}/hosts.yml all.vars must define project
+      and hostname, and group_vars/all/main.yml must define dns_prefix_ns,
+      dns_prefix_api, dns_prefix_app, and dns_prefix_apps, before nodes can
+      receive {{ supercompute_config_path }}.
+      Nameserver, API, app, and apps hostnames are derived from those
+      prefixes plus hostname.
+      The encrypted vault must contain vault_database_url and
+      vault_database_secret (set the URL with task vault-edit;
+      run task up or task vault-init for the database secret).
+
+- name: Derive DNS names from hostname
+  ansible.builtin.set_fact:
+    nameserver_hostname: "{{ dns_prefix_ns }}.{{ hostname }}"
+    sc_api: "{{ dns_prefix_api }}.{{ hostname }}"
+    sc_app: "{{ dns_prefix_app }}.{{ hostname }}"
+    sc_apps: "{{ dns_prefix_apps }}.{{ hostname }}"
 
 - name: Require WireGuard mesh hosts for the node config file
   ansible.builtin.assert:
     that:
-      - groups['wireguard_nodes'] | length > 0
-      - hostvars[item].wireguard_address is defined
-      - hostvars[item].wireguard_address | string | length > 0
+      - groups['nodes'] | length > 0
+      - hostvars[item].private_address is defined
+      - hostvars[item].private_address | string | length > 0
     fail_msg: >-
-      Every wireguard_nodes host must define wireguard_address before
+      Every nodes host must define private_address before
       {{ supercompute_config_path }} can list mesh hosts.
-  loop: "{{ groups['wireguard_nodes'] | sort }}"
+  loop: "{{ groups['nodes'] | sort }}"
   loop_control:
     label: "{{ item }}"
 
@@ -34,14 +64,15 @@
     mode: '0755'
   become: true
 
-- name: Install project config on this server
+- name: Install project hosts file on this server
   ansible.builtin.template:
-    src: config.yml.j2
+    src: hosts.yml.j2
     dest: "{{ supercompute_config_path }}"
     owner: root
     group: root
-    mode: '0644'
+    mode: '0600'
   become: true
+  no_log: true
 
 - name: Install public static dial list for roaming Endpoint rotation
   ansible.builtin.template:
@@ -59,21 +90,21 @@
       {{
         (
           (
-            hostvars['localhost'].wireguard_roaming_nodes | default([])
+            hostvars['localhost'].roaming_nodes | default([])
             | difference([inventory_hostname])
-            | map('extract', hostvars, 'wireguard_address')
+            | map('extract', hostvars, 'private_address')
             | map('regex_replace', '^(.*)$', '\\1/32')
             | list
           )
           + (
-            [wireguard_controller_address ~ '/32']
-            if (wireguard_include_controller_peer | default(true) | bool) else []
+            [node_controller_address ~ '/32']
+            if (node_include_controller_peer | default(true) | bool) else []
           )
         )
         | unique
         | list
       }}
-  when: wireguard_roaming | default(false) | bool
+  when: roaming | default(false) | bool
 
 - name: Install roaming transit AllowedIPs sidecar
   ansible.builtin.copy:
@@ -83,4 +114,4 @@
     mode: '0600'
     content: "{{ (supercompute_roaming_transit_ips | default([])) | join(',') }}\n"
   become: true
-  when: wireguard_roaming | default(false) | bool
+  when: roaming | default(false) | bool

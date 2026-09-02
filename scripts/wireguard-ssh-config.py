@@ -8,7 +8,12 @@ from pathlib import Path
 import re
 import sys
 
+import sys
+
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import inventory_hosts  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,14 +32,8 @@ def read_mapping(path: Path) -> dict:
   return document
 
 
-def config_project() -> str:
-  document = read_mapping(ROOT / "config.yml")
-  project = document.get("project")
-  if not isinstance(project, str) or not project.strip():
-    raise ValueError("config.yml must contain a non-empty project")
-  if Path(project).name != project or project in {".", ".."} or not SLUG.fullmatch(project):
-    raise ValueError("project must be a lowercase DNS-label name")
-  return project
+def config_project(inventory_slug: str) -> str:
+  return inventory_hosts.require_project(inventory_slug)
 
 
 def scalar(value: object, description: str) -> str:
@@ -45,31 +44,11 @@ def scalar(value: object, description: str) -> str:
   raise ValueError(f"{description} must be a non-empty, whitespace-free scalar.")
 
 
-def wireguard_host_vars(hosts_document: dict) -> dict[str, dict]:
-  children = hosts_document.get("all", {}).get("children", {})
-  if not isinstance(children, dict):
-    raise ValueError("hosts.yml is missing all.children")
-  wireguard = children.get("wireguard_nodes")
-  if not isinstance(wireguard, dict):
-    raise ValueError("hosts.yml is missing all.children.wireguard_nodes")
-
-  result: dict[str, dict] = {}
-  direct = wireguard.get("hosts")
-  if isinstance(direct, dict):
-    for name, values in direct.items():
-      result[name] = values if isinstance(values, dict) else {}
-  nested = wireguard.get("children")
-  if isinstance(nested, dict):
-    for child_name in nested:
-      child = children.get(child_name)
-      if not isinstance(child, dict):
-        raise ValueError(f"wireguard_nodes child group {child_name} is missing")
-      child_hosts = child.get("hosts")
-      if not isinstance(child_hosts, dict):
-        raise ValueError(f"Group {child_name} must define hosts")
-      for name, values in child_hosts.items():
-        result[name] = values if isinstance(values, dict) else {}
-  return result
+def node_host_vars(hosts_document: dict) -> dict[str, dict]:
+  try:
+    return inventory_hosts.node_hosts(hosts_document)
+  except inventory_hosts.InventoryError as error:
+    raise ValueError(str(error)) from error
 
 
 def resolve_private_key_file(
@@ -88,7 +67,7 @@ def resolve_private_key_file(
     raise ValueError("HOME must be set to resolve ssh_private_key_file")
 
   resolved = HOME_LOOKUP.sub(home, value)
-  resolved = PROJECT_VAR.sub(config_project(), resolved)
+  resolved = PROJECT_VAR.sub(config_project(inventory_slug), resolved)
   resolved = INVENTORY_SLUG_VAR.sub(inventory_slug, resolved)
   if "{{" in resolved or "{%" in resolved:
     raise ValueError(
@@ -109,14 +88,14 @@ def resolve(inventory_slug: str, node: str) -> tuple[str, str, str, str]:
   main = read_mapping(inventory / "group_vars/all/main.yml")
   hosts = read_mapping(inventory / "hosts.yml")
 
-  manager_hosts = wireguard_host_vars(hosts)
+  manager_hosts = node_host_vars(hosts)
   if node not in manager_hosts:
     raise ValueError(f"{node} is not a production WireGuard node in hosts.yml.")
 
   overrides = manager_hosts[node]
   address = scalar(
-    overrides.get("wireguard_address"),
-    f"{node}.wireguard_address",
+    overrides.get("private_address"),
+    f"{node}.private_address",
   )
   lima_guest = overrides.get("node_lima_guest") is True
   if lima_guest:
@@ -129,7 +108,7 @@ def resolve(inventory_slug: str, node: str) -> tuple[str, str, str, str]:
       home = os.environ.get("HOME", "")
       if not home:
         raise ValueError("HOME must be set to resolve the Lima SSH identity")
-      lima_home = str(Path(home) / ".lima" / f".{config_project()}-{inventory_slug}")
+      lima_home = str(Path(home) / ".lima" / f".{config_project(inventory_slug)}-{inventory_slug}")
     private_key = str(Path(lima_home) / "_config" / "user")
   else:
     user = scalar(
