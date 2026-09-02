@@ -24,11 +24,23 @@ You need Apple Silicon, Lima, a completed [Get started locally](/start-here/get-
 - macOS on **Apple Silicon**
 - [Lima](https://lima-vm.io/docs/installation/)
 - Completed [Get started locally](/start-here/get-started/) (`task setup`, prepared `static-1`, familiar with the `dev` flow)
+- Operator SSH key at `~/.ssh/<project>-dev-lima` (inventory path `ssh_private_key_file`)
 - External Postgres instance (not installed by this automation)
 
 ```sh
 brew install lima
 ```
+
+`task up ENV=dev-lima` uses `~/.ssh/example-dev-lima`, not the get-started `example-dev` key. If **static-1** already has `example-dev.pub` in `ops` authorized_keys, copy that pair:
+
+```sh
+cp ~/.ssh/example-dev ~/.ssh/example-dev-lima
+cp ~/.ssh/example-dev.pub ~/.ssh/example-dev-lima.pub
+chmod 600 ~/.ssh/example-dev-lima
+ssh-add ~/.ssh/example-dev-lima
+```
+
+Otherwise create a new Ed25519 key and install the public key on **static-1** (`ops` user) as in [Adding a public node](/guides/adding-public-node/).
 
 :::caution[Resetting the dev-lima environment]
 

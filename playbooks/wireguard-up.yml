@@ -13,6 +13,24 @@
           wireguard-up requires provider.platform=public for
           ENV={{ inventory_slug }}.
 
+    - name: Require the operator SSH private key for public static bootstrap
+      ansible.builtin.stat:
+        path: "{{ ssh_private_key_file }}"
+      register: operator_ssh_private_key
+      when: control_plane | default('mac') != 'gha'
+
+    - name: Fail clearly when the operator SSH private key is missing
+      ansible.builtin.assert:
+        that:
+          - operator_ssh_private_key.stat.exists | default(false)
+          - operator_ssh_private_key.stat.isreg | default(false)
+        fail_msg: >-
+          Missing {{ ssh_private_key_file }}. Create that Ed25519 key and install
+          the public key on every public static (ops user). When ENV=dev-lima
+          shares the get-started static-1 VM, copy ~/.ssh/{{ project }}-dev to
+          this path if that public key is already authorized.
+      when: control_plane | default('mac') != 'gha'
+
     - name: Reset classified WireGuard node lists
       ansible.builtin.set_fact:
         static_nodes: []
