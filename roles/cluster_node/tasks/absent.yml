@@ -1,6 +1,14 @@
+- name: Remove application containers
+  ansible.builtin.command:
+    argv: [docker, rm, -f, "{{ item.name }}"]
+  loop: "{{ cluster_app_containers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  failed_when: false
+
 - name: Remove Caddy package before the cluster stack
   ansible.builtin.apt:
-    name: caddy
+    name: "{{ cluster_caddy_package }}"
     state: absent
     purge: true
 

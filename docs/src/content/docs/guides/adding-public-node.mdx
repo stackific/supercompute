@@ -36,7 +36,7 @@ Our objective is to complete `inventories/<env>/hosts.yml` — for `dev`, that i
 all:
   vars:
     project: example
-    hostname: sc.example.com
+    hostname: example.com
 
 nodes:
   hosts:
@@ -219,7 +219,8 @@ On the cloud provider (or host) firewall for this VM:
 | Phase | Rule |
 | --- | --- |
 | Before setup | Allow inbound **TCP 22** from your Mac’s current public `/32` |
-| After setup | Allow inbound **UDP 51830** from peers that will dial this hub (if you will add roaming nodes later, open UDP 51830 broadly—not only the Mac `/32`) |
+| After setup | Allow inbound **UDP 51830** from peers that will dial this hub (if roaming nodes are added later, open UDP 51830 broadly—not only the Mac `/32`) |
+| After setup | Allow inbound **TCP 80** and **TCP 443** |
 
 Your Mac does **not** need further configuration for this step.
 

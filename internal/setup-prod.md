@@ -169,8 +169,8 @@ will not stay in a fixed peer `/32` list. See
 
 During initial bootstrap or recovery, also allow inbound TCP **22** from the
 controller `/32`; remove that rule after every stable node answers `ssh`.
-Allow TCP **80** and **443** when you deliberately publish HTTP(S) for other
-workloads. If you manage public authoritative DNS outside this repository,
+Allow TCP **80** and **443** so Caddy can serve `sc-app.` and `sc-api.` (and obtain
+certificates on public statics). If you manage public authoritative DNS outside this repository,
 open UDP/TCP **53** only where that separate DNS design requires it. Leave all
 other unsolicited inbound traffic denied. Confirm the provider firewall is
 stateful. The Mac does not need inbound UDP **51830**
@@ -212,7 +212,7 @@ Controller-only disconnect (does not change servers):
 task wg-remove ENV=prod
 ```
 
-## Cluster services (gVisor, Docker Engine, PowerDNS)
+## Cluster services (gVisor, Docker Engine, Caddy, PowerDNS)
 
 Cluster software is installed by the **same** `task up ENV=prod` that
 brings up the mesh (not a second step).
@@ -221,8 +221,8 @@ brings up the mesh (not a second step).
 `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin` from Docker’s apt
 repo), and **PowerDNS** (`pdns-server`). It does not create DNS zones,
 configure application hostnames, or verify website records. Set
-`hostname` in `hosts.yml` all.vars (for example `sc.example.com`); Supercompute
-prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. Caddy is installed with its systemd service disabled and stopped.
+`hostname` in `hosts.yml` all.vars (for example `example.com`); Supercompute
+prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. Caddy is enabled and reverse-proxies `sc-app.` to the `sc` container and `sc-api.` to the `supercompute` container. Each `up` pulls `:latest` for those images and recreates the containers when they already exist (`unless-stopped`).
 
 When using multiple public statics with roaming, allow **inbound UDP 51830** on
 **every** dialable static (not only `static-1`) so post-build random dial works.
@@ -232,6 +232,8 @@ When using multiple public statics with roaming, allow **inbound UDP 51830** on
 ```sh
 runsc --version
 docker version
+docker inspect --format '{{.State.Running}}' sc supercompute
+systemctl is-active caddy
 ```
 
 Undo with:

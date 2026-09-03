@@ -22,8 +22,8 @@ reverse_dns: "{{ hostname.split('.') | reverse | join('.') }}"
 
 # Labels prepended to hosts.yml all.vars hostname.
 dns_prefix_ns: ns
-dns_prefix_api: api
-dns_prefix_app: app
+dns_prefix_api: sc-api
+dns_prefix_app: sc-app
 dns_prefix_apps: apps
 
 # mac = local Mac controller peer + LaunchDaemon; gha = runner-only control plane (no Mac peer).

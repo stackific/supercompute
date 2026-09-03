@@ -39,7 +39,7 @@ task wg-status ENV=dev
 task ssh ENV=dev NODE=static-1
 ```
 
-`task up` brings up WireGuard **and** installs the cluster stack (gVisor, Docker, Caddy disabled, PowerDNS), writes `/etc/supercompute/*` on nodes. See [cluster.md](cluster.md) and [wireguard.md](wireguard.md).
+`task up` brings up WireGuard **and** installs the cluster stack (gVisor, Docker, Caddy reverse-proxying `sc-app.`→`sc` and `sc-api.`→`supercompute`, PowerDNS), writes `/etc/supercompute/*` on nodes. See [cluster.md](cluster.md) and [wireguard.md](wireguard.md).
 
 ## Reset dev
 

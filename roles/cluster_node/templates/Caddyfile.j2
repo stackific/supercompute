@@ -1,0 +1,13 @@
+{{ dns_prefix_app }}.{{ hostname }} {
+{% if (node_lima_guest | default(false) | bool) or (roaming | default(false) | bool) %}
+  tls internal
+{% endif %}
+  reverse_proxy 127.0.0.1:{{ cluster_sc_port }}
+}
+
+{{ dns_prefix_api }}.{{ hostname }} {
+{% if (node_lima_guest | default(false) | bool) or (roaming | default(false) | bool) %}
+  tls internal
+{% endif %}
+  reverse_proxy 127.0.0.1:{{ cluster_supercompute_port }}
+}

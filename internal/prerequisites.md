@@ -27,7 +27,7 @@ GHA-managed inventories do **not** require a Mac for mutations — see [gha-depl
 | Key | Purpose |
 | --- | --- |
 | `project` | Stable id (currently `example`) |
-| `hostname` | Cloud DNS suffix (for example `sc.example.com`); seeds Mac LaunchDaemon reverse-DNS. Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
+| `hostname` | Cloud DNS suffix (for example `example.com`); seeds Mac LaunchDaemon reverse-DNS. Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
 
 `project` prefixes:
 

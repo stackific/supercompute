@@ -154,7 +154,7 @@ def derived_dns_names(hostname: str, prefixes: dict[str, str]) -> dict[str, str]
 def validate_hostname(hostname: str, *, path: str) -> str:
   if "REPLACE_WITH_" in hostname or "<" in hostname or ">" in hostname:
     raise InventoryError(
-      f"{path}: set hostname to your cloud DNS name (for example sc.example.com)"
+      f"{path}: set hostname to your cloud DNS name (for example example.com)"
     )
   if "." not in hostname:
     raise InventoryError(f"{path}: hostname must be a DNS name with a dot")

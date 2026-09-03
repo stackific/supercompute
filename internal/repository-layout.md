@@ -25,7 +25,7 @@ Operator source of truth per environment. Required shape:
 all:
   vars:
     project: example
-    hostname: sc.example.com
+    hostname: example.com
 
 nodes:
   hosts:
@@ -38,7 +38,7 @@ nodes:
 | Key (under `all.vars`) | Purpose |
 | --- | --- |
 | `project` | Stable id; vault label, SSH key path, Lima home, LaunchDaemon |
-| `hostname` | Cloud DNS suffix (for example `sc.example.com`); Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
+| `hostname` | Cloud DNS suffix (for example `example.com`); Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
 
 During WireGuard reconcile, `supercompute_config` renders identity plus a mesh `hosts` list to **`/etc/supercompute/hosts.yml`** on every deployment node, with sidecars `public-endpoints.list` and (on roaming) `roaming-transit.ips`.
 

@@ -9,13 +9,15 @@
 | **gVisor** | `runsc` from gvisor.dev apt repo |
 | **Docker Engine** | `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin` from Docker’s Ubuntu repo |
 | **PowerDNS** | `pdns-server`, `dnsutils` |
-| **Caddy** | `caddy` package only; its systemd service remains disabled and stopped |
+| **Caddy** | Reverse proxy: `sc-app.` → `sc` container, `sc-api.` → `supercompute` container |
+| **sc** | `ghcr.io/stackific/sc/sc:latest`, restart `unless-stopped`; `SC_API` = `https://` + `dns_prefix_api` + `hostname` |
+| **supercompute** | `ghcr.io/stackific/sc/supercompute:latest`, restart `unless-stopped`; `SC_DASH` = `https://` + `dns_prefix_app` + `hostname` |
 
 ## DNS boundary
 
 PowerDNS listens on the node mesh address only (`pdns.d/supercompute-local.conf`) so host DNS stays on `systemd-resolved`. Teardown removes that drop-in and restarts `systemd-resolved`.
 
-Set `hostname` in `hosts.yml` → `all.vars` (for example `sc.example.com`). Prefixes come from `group_vars/all/main.yml` (`dns_prefix_ns`, `api`, `app`, `apps`). Parent DNS: A for `ns.`, CNAME `api.` and `app.` to the nameserver hostname, and NS-delegate `apps.` to it. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. PowerDNS currently listens on the mesh address only.
+Set `hostname` in `hosts.yml` → `all.vars` (for example `example.com`). Prefixes come from `group_vars/all/main.yml` (`dns_prefix_ns`, `dns_prefix_api`, `dns_prefix_app`, `dns_prefix_apps`; defaults `ns`, `sc-api`, `sc-app`, `apps`). Parent DNS: A for `ns.`, CNAME `sc-api.` and `sc-app.` to the nameserver hostname, and NS-delegate `apps.` to it. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. PowerDNS currently listens on the mesh address only.
 
 ## Architecture mapping
 

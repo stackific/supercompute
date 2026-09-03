@@ -40,7 +40,7 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 
 Controlled by `cluster_lifecycle`:
 
-- **`present`** — Install gVisor, Docker, PowerDNS, and the disabled Caddy service.
+- **`present`** — Install gVisor, Docker, PowerDNS, and Caddy; pull and run the `sc` and `supercompute` containers (`unless-stopped`; recreate from `:latest` when already present); set `SC_API` on `sc` and `SC_DASH` on `supercompute`; point `sc-app.` at `sc` and `sc-api.` at `supercompute`.
 - **`absent`** — Remove cluster software; leave WireGuard intact.
 
 The nameserver hostname is `dns_prefix_ns` from `group_vars/all/main.yml` plus `hostname` from `inventories/<provider>/hosts.yml` → `all.vars`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.

@@ -3,8 +3,8 @@
 - Search web for latest info and do not rely on your knowledge on this 
 - Remember this setup needs to work in someone else's new computer, too, 100% reproducible
 - Most importantly, this is not a toy project as we are building a production software in this solution
-- Git pushing or merging to remote on your own is fully banned
-- Git commit when the operator explicitly asks so
+- Git merging to remote on your own is fully banned
+- Git commit or push when the operator explicitly asks so
 - Must use DCO and cryptographic commits
 - AI trailers like Co-authored-by <random-AI> in PR description or commits is fully banned
 

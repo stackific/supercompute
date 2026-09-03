@@ -19,7 +19,7 @@ Typical structure in `hosts.yml`:
 all:
   vars:
     project: example
-    hostname: sc.example.com
+    hostname: example.com
 
 nodes:
   hosts:
@@ -38,7 +38,7 @@ Required in every inventory before `task up` (`scripts/validate-deployment.py`):
 | Variable | Example | Notes |
 | --- | --- | --- |
 | `project` | `example` | Stable id |
-| `hostname` | `sc.example.com` | Cloud DNS suffix. Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
+| `hostname` | `example.com` | Cloud DNS suffix. Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
 
 | Vault key | Example | Notes |
 | --- | --- | --- |
@@ -87,6 +87,19 @@ provider:
 | `node_forward_on_all_statics` | `true` | Every public static forwards for day-2 random dial |
 | `roaming_dial_timer_on_calendar` | `hourly` | systemd timer for roaming dial helper |
 | `mac_operator_ssh_public_key` | from env | Optional; GHA installs into `ops` authorized_keys |
+
+### DNS prefixes (`main.yml`)
+
+Labels prepended to `hosts.yml` `all.vars.hostname` (example results assume `hostname: example.com`):
+
+| Variable | Default | Result |
+| --- | --- | --- |
+| `dns_prefix_ns` | `ns` | `ns.example.com` |
+| `dns_prefix_api` | `sc-api` | `sc-api.example.com` |
+| `dns_prefix_app` | `sc-app` | `sc-app.example.com` |
+| `dns_prefix_apps` | `apps` | `apps.example.com` |
+
+Operators may override any `dns_prefix_*` in `group_vars/all/main.yml`. Matching parent DNS records and a re-run of `task up` are required after a change.
 
 When `control_plane: gha`, see [gha-deploy.md](gha-deploy.md).
 

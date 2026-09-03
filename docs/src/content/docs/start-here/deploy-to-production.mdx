@@ -25,7 +25,7 @@ Set `hostname` and fill public IPs and SSH fingerprints for both static nodes.
 
 Edit `inventories/prod/hosts.yml`:
 
-1. Set `all.vars.hostname` (for example `sc.example.com`). Nameserver, API, app, and app URLs are derived from that name.
+1. Set `all.vars.hostname` (for example `example.com`). Nameserver, API, app, and app URLs are derived from that name.
 2. Fill placeholders for **static-1** and **static-2** (public IP and SSH host-key fingerprint). Install this public key on each VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
 
 <Tabs syncKey="pkg">
@@ -36,7 +36,7 @@ Edit `inventories/prod/hosts.yml`:
 all:
   vars:
     project: example
-    hostname: sc.example.com
+    hostname: example.com
 
 nodes:
   hosts:
@@ -81,18 +81,20 @@ Create records for the hostname you set in Step 1. Supercompute derives the rest
 
 | Prefix | Name | Type | Value |
 | --- | --- | --- | --- |
-| `ns` | `ns.sc.example.com` | A | **static-1** public IPv4 |
-| `ns` | `ns.sc.example.com` | A | **static-2** public IPv4 |
-| `api` | `api.sc.example.com` | CNAME | `ns.sc.example.com` |
-| `app` | `app.sc.example.com` | CNAME | `ns.sc.example.com` |
+| `ns` | `ns.example.com` | A | **static-1** public IPv4 |
+| `ns` | `ns.example.com` | A | **static-2** public IPv4 |
+| `sc-api` | `sc-api.example.com` | CNAME | `ns.example.com` |
+| `sc-app` | `sc-app.example.com` | CNAME | `ns.example.com` |
 
 Later, dynamic app URLs use the same nameserver:
 
 | Prefix | Name | Type | Value |
 | --- | --- | --- | --- |
-| `apps` | `apps.sc.example.com` | NS | `ns.sc.example.com` |
+| `apps` | `apps.example.com` | NS | `ns.example.com` |
 
-Supercompute's Nameserver then serves `*.apps.sc.example.com`. If the VM IPs are not ready yet, add the A records before bring-up.
+Supercompute's Nameserver then serves `*.apps.example.com`. If the VM IPs are not ready yet, add the A records before bring-up.
+
+To use different API or app hostnames, edit `dns_prefix_api` and `dns_prefix_app` (and other `dns_prefix_*` values if needed) in `inventories/<env>/group_vars/all/main.yml`, then create matching DNS records and re-run `task up`.
 
 ### Step 3: Prepare the two public VMs
 
@@ -236,7 +238,7 @@ If you can access both nodes, you are done with this guide.
 
 | Item | Done |
 | --- | --- |
-| `hostname` set in `hosts.yml` (for example `sc.example.com`) | |
+| `hostname` set in `hosts.yml` (for example `example.com`) | |
 | Parent DNS: `ns` A per static + `api`/`app` CNAME to ns + `apps` NS (Cloudflare proxy off) | |
 | `static-1` + `static-2` public IPs + fingerprints in `hosts.yml` | |
 | `~/.ssh/example-prod` on both VMs (`ops` user) | |
