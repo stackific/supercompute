@@ -1,0 +1,22 @@
+# Managed by supercompute_config — edit inventories/<provider>/hosts.yml and re-run task up.
+project: {{ project }}
+hostname: {{ hostname }}
+nameserver_hostname: {{ nameserver_hostname }}
+database_url: "{{ vault_database_url }}"
+database_secret: "{{ vault_database_secret }}"
+sc_api: {{ sc_api }}
+sc_app: {{ sc_app }}
+sc_apps: {{ sc_apps }}
+hosts:
+{% for node in groups['nodes'] | sort %}
+{% set node_vars = hostvars[node] %}
+{% set node_lima = node_vars.node_lima_guest | default(false) | bool %}
+{% set node_roaming = node_vars.roaming | default(false) | bool %}
+{% set node_type = 'lima' if node_lima else ('roaming' if node_roaming else 'public') %}
+  - name: {{ node }}
+    private_address: "{{ node_vars.private_address }}"
+    type: {{ node_type }}
+{% if node_type == 'public' and node_vars.public_ip is defined and (node_vars.public_ip | string | length) > 0 %}
+    public_ip: "{{ node_vars.public_ip }}:{{ node_listen_port }}"
+{% endif %}
+{% endfor %}

@@ -1,12 +1,12 @@
 ---
-import FluidGrid from '@/components/fluid-grid.astro';
-import YoutubeCard, { type Props as CardProps } from '@/components/youtube-card.astro';
+import FluidGrid from "@/components/fluid-grid.astro";
+import YoutubeCard, { type Props as CardProps } from "@/components/youtube-card.astro";
 
 interface Props {
-	videos: CardProps[];
+  videos: CardProps[];
 }
 ---
 
 <FluidGrid minColumnWidth="16rem">
-	{Astro.props.videos.map((video) => <YoutubeCard {...video} />)}
+  {Astro.props.videos.map((video) => <YoutubeCard {...video} />)}
 </FluidGrid>

@@ -1,0 +1,84 @@
+---
+# Install or remove an ephemeral GitHub Actions WireGuard peer on every node.
+# Runner-local interface bring-up is handled by scripts/gha-mesh-peer.sh.
+- name: Require GHA control plane for ephemeral mesh peer
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Assert control_plane is gha
+      ansible.builtin.assert:
+        that:
+          - control_plane | default('mac') == 'gha'
+          - node_ci_address is string
+          - node_ci_address | length > 0
+        fail_msg: >-
+          gha-mesh-peer requires control_plane=gha and node_ci_address
+          in inventories/{{ inventory_slug }}/group_vars.
+
+- name: Reconcile ephemeral CI peer on every mesh node
+  hosts: nodes
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  no_log: true
+  vars:
+    gha_mesh_peer_lifecycle: present
+    # Reach nodes over bootstrap/public SSH — the runner is not on-mesh yet.
+    ansible_host: >-
+      {{
+        (roaming | default(false) | bool)
+        | ternary(bootstrap_ssh_host, public_ip)
+      }}
+    ansible_user: "{{ default_ssh_user }}"
+    ansible_port: "{{ default_ssh_port }}"
+    ansible_ssh_private_key_file: "{{ ssh_private_key_file }}"
+    ansible_ssh_common_args: >-
+      -F /dev/null -o BatchMode=yes -o ControlMaster=no -o ControlPath=none
+      -o HostKeyAlias={{ inventory_hostname }} -o StrictHostKeyChecking=yes
+      -o UserKnownHostsFile={{ known_hosts_file }}
+      -o IdentitiesOnly=yes
+      {% if roaming | default(false) | bool %}
+      -o ProxyCommand="{{ lookup('ansible.builtin.pipe', 'command -v cloudflared') }} access ssh --hostname %h"
+      {% endif %}
+  tasks:
+    - name: Require CI peer public key when installing
+      ansible.builtin.assert:
+        that:
+          - gha_wg_public_key is string
+          - gha_wg_public_key | length > 0
+      when: gha_mesh_peer_lifecycle == 'present'
+
+    - name: Add ephemeral CI peer on this node
+      ansible.builtin.command:
+        argv:
+          - wg
+          - set
+          - "{{ node_interface }}"
+          - peer
+          - "{{ gha_wg_public_key }}"
+          - allowed-ips
+          - "{{ node_ci_address }}/32"
+          - persistent-keepalive
+          - "25"
+      become: true
+      when: gha_mesh_peer_lifecycle == 'present'
+
+    - name: Remove ephemeral CI peer on this node
+      ansible.builtin.shell:
+        cmd: >-
+          set -euo pipefail;
+          pubkey="$(wg show {{ node_interface | quote }} peers | while read -r p; do
+            allowed="$(wg show {{ node_interface | quote }} allowed-ips "$p")";
+            case "${allowed}" in
+              *"{{ node_ci_address }}/32"*) echo "$p"; break ;;
+            esac;
+          done)";
+          if [[ -n "${pubkey}" ]]; then
+            wg set {{ node_interface | quote }} peer "${pubkey}" remove;
+          fi
+      args:
+        executable: /bin/bash
+      become: true
+      when: gha_mesh_peer_lifecycle == 'absent'
+      changed_when: true

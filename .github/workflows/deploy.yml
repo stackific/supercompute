@@ -1,0 +1,163 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Environment slug under inventories/
+        required: true
+        type: string
+      action:
+        description: Lifecycle action
+        required: true
+        type: choice
+        options:
+          - up
+          - down
+          - verify
+      confirm:
+        description: Required for down — must equal down-<env>
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      ENV: ${{ inputs.env }}
+      CONFIRM: ${{ inputs.confirm }}
+      ANSIBLE_STDOUT_CALLBACK: default
+      ANSIBLE_DISPLAY_ARGS_TO_STDOUT: "False"
+      ANSIBLE_VERBOSITY: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+
+      - name: Sync Python / Ansible toolchain
+        run: |
+          uv lock --check
+          uv sync --locked
+
+      - name: Materialize vault password
+        env:
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+        run: |
+          test -n "${ANSIBLE_VAULT_PASSWORD}" || {
+            echo "Set repository secret ANSIBLE_VAULT_PASSWORD" >&2
+            exit 1
+          }
+          umask 077
+          printf '%s\n' "${ANSIBLE_VAULT_PASSWORD}" >"inventories/${ENV}/.vault-pass"
+          chmod 600 "inventories/${ENV}/.vault-pass"
+
+      - name: Materialize ops SSH key
+        env:
+          OPS_SSH_PRIVATE_KEY: ${{ secrets.OPS_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "${OPS_SSH_PRIVATE_KEY}" || {
+            echo "Set repository secret OPS_SSH_PRIVATE_KEY" >&2
+            exit 1
+          }
+          project="$(uv run --locked python scripts/config_project.py --provider "${ENV}")"
+          key_path="${HOME}/.ssh/${project}-${ENV}"
+          mkdir -p "${HOME}/.ssh"
+          umask 077
+          printf '%s\n' "${OPS_SSH_PRIVATE_KEY}" >"${key_path}"
+          chmod 600 "${key_path}"
+
+      - name: Write GHA Ansible extra-vars file
+        env:
+          MAC_OPERATOR_SSH_PUBLIC_KEY: ${{ secrets.MAC_OPERATOR_SSH_PUBLIC_KEY }}
+        run: |
+          umask 077
+          mkdir -p ".state/${ENV}"
+          export VARS_FILE=".state/${ENV}/gha-extra-vars.yml"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["VARS_FILE"])
+          key = (os.environ.get("MAC_OPERATOR_SSH_PUBLIC_KEY") or "").strip()
+          lines = ["control_plane: gha"]
+          if key:
+            print(f"::add-mask::{key}", flush=True)
+            escaped = key.replace("'", "''")
+            lines.append(f"mac_operator_ssh_public_key: '{escaped}'")
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          path.chmod(0o600)
+          PY
+
+      - name: Known hosts
+        if: inputs.action != 'verify'
+        run: |
+          uv run --locked python scripts/known-hosts.py \
+            --inventory "inventories/${ENV}/hosts.yml" \
+            --known-hosts ".state/${ENV}/known_hosts" \
+            --reuse-existing
+
+      - name: Ensure vault secrets
+        if: inputs.action == 'up'
+        run: ENV="${ENV}" uv run --locked python scripts/vault.py ensure-secrets
+
+      - name: Validate deployment config
+        if: inputs.action == 'up'
+        run: ENV="${ENV}" uv run --locked python scripts/validate-deployment.py
+
+      - name: WireGuard + cluster up
+        if: inputs.action == 'up'
+        run: |
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
+            playbooks/wireguard-up.yml
+          bash scripts/gha-mesh-peer.sh "${ENV}" present
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
+            playbooks/cluster-up.yml
+
+      - name: Down
+        if: inputs.action == 'down'
+        run: |
+          test "${CONFIRM}" = "down-${ENV}" || {
+            echo "Set confirm=down-${ENV} for destructive down" >&2
+            exit 2
+          }
+          bash scripts/gha-mesh-peer.sh "${ENV}" absent || true
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
+            playbooks/cluster-down.yml
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
+            playbooks/wireguard-down.yml
+
+      - name: Verify
+        if: inputs.action == 'verify'
+        run: |
+          uv run --locked python scripts/known-hosts.py \
+            --inventory "inventories/${ENV}/hosts.yml" \
+            --known-hosts ".state/${ENV}/known_hosts" \
+            --reuse-existing
+          bash scripts/gha-mesh-peer.sh "${ENV}" present
+          bash scripts/ansible-playbook.sh "${ENV}" \
+            --extra-vars "@.state/${ENV}/gha-extra-vars.yml" \
+            playbooks/verify.yml
+
+      - name: Remove ephemeral mesh peer
+        if: always() && (inputs.action == 'up' || inputs.action == 'verify')
+        run: bash scripts/gha-mesh-peer.sh "${ENV}" absent || true

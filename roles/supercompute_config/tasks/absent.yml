@@ -1,0 +1,24 @@
+---
+- name: Remove project hosts file from this server
+  ansible.builtin.file:
+    path: "{{ supercompute_config_path }}"
+    state: absent
+  become: true
+
+- name: Remove public static dial list sidecar
+  ansible.builtin.file:
+    path: "{{ supercompute_public_endpoints_path }}"
+    state: absent
+  become: true
+
+- name: Remove roaming transit AllowedIPs sidecar
+  ansible.builtin.file:
+    path: "{{ supercompute_roaming_transit_path }}"
+    state: absent
+  become: true
+
+- name: Remove supercompute configuration directory when empty
+  ansible.builtin.file:
+    path: "{{ supercompute_config_dir }}"
+    state: absent
+  become: true

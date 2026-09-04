@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 PROVIDER [ansible-playbook arguments...]" >&2
+  echo "Usage: $0 ENV [ansible-playbook arguments...]" >&2
   exit 2
 fi
 
@@ -10,7 +10,6 @@ requested_provider="$1"
 shift
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cloud_vars="${project_dir}/cloud.yml"
 python_runtime="${project_dir}/.venv/bin/python"
 provider_dir="${project_dir}/inventories/${requested_provider}"
 
@@ -18,11 +17,6 @@ provider_dir="${project_dir}/inventories/${requested_provider}"
   echo "Run task setup before invoking a playbook." >&2
   exit 2
 }
-
-if [[ ! -f "${cloud_vars}" ]]; then
-  echo "Cloud configuration does not exist: ${cloud_vars}" >&2
-  exit 1
-fi
 
 if [[ ! -d "${provider_dir}" || ! -f "${provider_dir}/hosts.yml" ]]; then
   echo "Provider inventory does not exist: ${provider_dir}/hosts.yml" >&2
@@ -60,25 +54,20 @@ fi
 vault_args=()
 provider_vault_file="${provider_dir}/group_vars/all/vault.yml"
 provider_vault_password_file="${provider_dir}/.vault-pass"
-cloud_name="$("${python_runtime}" "${project_dir}/scripts/cloud_name.py")"
+cloud_name="$("${python_runtime}" "${project_dir}/scripts/config_project.py" --provider "${requested_provider}")"
 provider_vault_id="${cloud_name}-${requested_provider}"
 
 if [[ -e "${provider_vault_file}" || -e "${provider_vault_password_file}" ]]; then
   if [[ ! -f "${provider_vault_file}" || ! -f "${provider_vault_password_file}" ]]; then
-    echo "Provider Vault state is incomplete. Keep ${provider_vault_file} and ${provider_vault_password_file} together, or run task vault-init PROVIDER=${requested_provider}." >&2
+    echo "Vault state is incomplete. Keep ${provider_vault_file} and ${provider_vault_password_file} together, or run task vault-init ENV=${requested_provider}." >&2
     exit 1
   fi
   vault_args=(--vault-id "${provider_vault_id}@${provider_vault_password_file}")
 fi
 
-if [[ -f "${provider_vault_file}" && -f "${provider_vault_password_file}" ]]; then
-  PROVIDER="${requested_provider}" uv run --locked python scripts/vault.py migrate >/dev/null
-fi
-
 cd "${project_dir}"
 exec uv run --locked ansible-playbook \
   -i "${provider_dir}" \
-  --extra-vars "@${cloud_vars}" \
   --extra-vars "inventory_slug=${requested_provider}" \
   "${vault_args[@]}" \
   "$@"

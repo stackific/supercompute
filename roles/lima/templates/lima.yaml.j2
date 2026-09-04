@@ -27,8 +27,8 @@ hostResolver:
   ipv6: false
 portForwards:
   # Keep this dynamic: Lima's gRPC forwarder carries UDP; static forwarding does not.
-  - guestPort: {{ wireguard_listen_port }}
-    hostPort: {{ item.wg_host_port }}
+  - guestPort: {{ node_listen_port }}
+    hostPort: {{ item.host_port }}
     hostIP: 127.0.0.1
     proto: udp
   # Do not automatically expose any other guest listener on macOS.

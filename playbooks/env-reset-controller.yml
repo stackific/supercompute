@@ -1,0 +1,39 @@
+---
+- name: Disconnect controller WireGuard before environment reset
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Require the environment reset confirmation
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'CONFIRM') == 'reset-' ~ inventory_slug
+        fail_msg: >-
+          env-reset controller cleanup requires CONFIRM=reset-{{ inventory_slug }}.
+
+    - name: Check for tracked controller WireGuard state
+      ansible.builtin.stat:
+        path: "{{ node_config_path }}"
+      register: env_reset_controller_config
+
+    - name: Disconnect orphaned controller WireGuard when tracked state is absent
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir | dirname }}/scripts/dev_reset_controller_wireguard.py"
+          - --provider
+          - "{{ inventory_slug }}"
+      environment:
+        CONFIRM: "reset-{{ inventory_slug }}"
+        ENV: "{{ inventory_slug }}"
+      become: true
+      when: not env_reset_controller_config.stat.exists
+
+    - name: Disconnect the tracked controller WireGuard interface
+      ansible.builtin.command:
+        argv:
+          - bash
+          - "{{ playbook_dir | dirname }}/scripts/disconnect-wireguard.sh"
+          - "{{ inventory_slug }}"
+      become: true
+      when: env_reset_controller_config.stat.exists

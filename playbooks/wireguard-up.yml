@@ -1,54 +1,157 @@
 ---
-- name: Bootstrap WireGuard through ordinary Lima access
+- name: Classify static vs roaming nodes and pick the static hub
   hosts: localhost
   gather_facts: true
   any_errors_fatal: true
-  environment:
-    LIMA_HOME: "{{ lima_home_dir }}"
-    LIMA_SSH_PORT_FORWARDER: "false"
-  pre_tasks:
-    - name: Refuse non-Lima providers for this WireGuard slice
+  tasks:
+    - name: Require a public-endpoint provider for WireGuard
       ansible.builtin.assert:
         that:
-          - provider.platform == 'lima'
-          - provider.mode == 'local'
+          - provider.platform == 'public'
+          - provider.mode == 'remote'
         fail_msg: >-
-          WireGuard wg-up for PROVIDER={{ inventory_slug }} requires a Lima
-          local provider. Public-endpoint WireGuard is the next slice.
-  roles:
-    - wireguard_controller
+          wireguard-up requires provider.platform=public for
+          ENV={{ inventory_slug }}.
 
-- name: Activate restricted management access through WireGuard
-  hosts: wireguard_nodes
-  gather_facts: false
-  serial: 1
-  any_errors_fatal: true
-  roles:
-    - wireguard_lockdown
+    - name: Require the operator SSH private key for public static bootstrap
+      ansible.builtin.stat:
+        path: "{{ ssh_private_key_file }}"
+      register: operator_ssh_private_key
+      when: control_plane | default('mac') != 'gha'
 
-- name: Verify post-WireGuard guest services and mesh
-  hosts: wireguard_nodes
-  gather_facts: false
-  serial: 1
-  any_errors_fatal: true
-  tasks:
-    - name: Wait for WireGuard SSH access
-      ansible.builtin.wait_for_connection:
-        timeout: 30
-    - name: Run post-WireGuard guest acceptance checks
-      ansible.builtin.include_role:
-        name: wireguard_verify
-        tasks_from: after-guest
+    - name: Fail clearly when the operator SSH private key is missing
+      ansible.builtin.assert:
+        that:
+          - operator_ssh_private_key.stat.exists | default(false)
+          - operator_ssh_private_key.stat.isreg | default(false)
+        fail_msg: >-
+          Missing {{ ssh_private_key_file }}. Create that Ed25519 key and install
+          the public key on every public static (ops user). When ENV=dev-lima
+          shares the get-started static-1 VM, copy ~/.ssh/{{ project }}-dev to
+          this path if that public key is already authorized.
+      when: control_plane | default('mac') != 'gha'
 
-- name: Verify post-WireGuard controller acceptance checks
+    - name: Reset classified WireGuard node lists
+      ansible.builtin.set_fact:
+        static_nodes: []
+        roaming_nodes: []
+
+    - name: Classify each WireGuard inventory node
+      ansible.builtin.set_fact:
+        static_nodes: >-
+          {{
+            static_nodes
+            + ([] if (hostvars[item].roaming | default(false) | bool) else [item])
+          }}
+        roaming_nodes: >-
+          {{
+            roaming_nodes
+            + ([item] if (hostvars[item].roaming | default(false) | bool) else [])
+          }}
+      loop: "{{ groups['nodes'] | sort }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Record roaming presence and the static hub hostname
+      ansible.builtin.set_fact:
+        has_roaming: "{{ roaming_nodes | length > 0 }}"
+        static_hub: "{{ static_nodes | first | default('') }}"
+
+    - name: Require at least one static public host when roaming nodes are present
+      ansible.builtin.assert:
+        that:
+          - static_hub | length > 0
+        fail_msg: >-
+          Roaming nodes need a static public endpoint hub for Mac↔roaming mesh traffic.
+          Add a non-roaming static-N host before roaming-N.
+      when: has_roaming | bool
+
+    - name: Explain Mac↔roaming routing through the static hub
+      ansible.builtin.debug:
+        msg: >-
+          Roaming mesh path uses static hub {{ static_hub }}
+          (no inbound UDP {{ node_listen_port }} required on the Mac).
+          Roaming nodes: {{ roaming_nodes | join(', ') }}.
+      when: has_roaming | bool
+
+- name: Configure the macOS controller side of the WireGuard mesh
   hosts: localhost
-  gather_facts: true
+  gather_facts: false
   any_errors_fatal: true
-  environment:
-    LIMA_HOME: "{{ lima_home_dir }}"
-    LIMA_SSH_PORT_FORWARDER: "false"
   tasks:
-    - name: Run post-WireGuard controller acceptance checks
+    - name: Install macOS WireGuard controller when using the Mac control plane
       ansible.builtin.include_role:
-        name: wireguard_verify
-        tasks_from: after-controller
+        name: wireguard_controller
+      when: control_plane | default('mac') != 'gha'
+
+- ansible.builtin.import_playbook: node-transport.yml
+
+- name: Reconcile each server through WireGuard or bootstrap recovery SSH
+  hosts: nodes
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    ansible_pipelining: true
+  vars_files:
+    - vars/node_recovery_ssh.yml
+  roles:
+    - wireguard_node
+
+- name: Prove macOS can reach every server through the mesh
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Wait for WireGuard SSH access to each server
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].private_address }}"
+        port: "{{ hostvars[item].ansible_port | default(default_ssh_port) }}"
+        timeout: "{{ 90 if (hostvars[item].roaming | default(false) | bool) else 30 }}"
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['nodes'] }}"
+      loop_control:
+        label: "macOS -> {{ item }}"
+      register: mesh_ssh_proof
+      failed_when: false
+
+    - name: Fail clearly when Mac cannot reach a node through the mesh
+      ansible.builtin.fail:
+        msg: >-
+          macOS could not open TCP {{ hostvars[item.item].ansible_port | default(default_ssh_port) }}
+          on {{ hostvars[item.item].private_address }} ({{ item.item }}) through WireGuard.
+          {% if hostvars[item.item].roaming | default(false) | bool %}
+          Mac↔roaming is routed via static hub {{ static_hub | default('(unset)') }}.
+          Confirm hub IP forwarding, static-host UDP {{ node_listen_port }}, and that roaming
+          has an Endpoint to the hub, then re-run up.
+          {% else %}
+          Confirm the public endpoint/firewall and re-run up.
+          {% endif %}
+      when: item.state | default('') != 'started'
+      loop: "{{ mesh_ssh_proof.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+- name: Prove every server can reach every peer through the mesh
+  hosts: nodes
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  tasks:
+    - name: Wait for WireGuard SSH access to each peer
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].private_address }}"
+        port: "{{ hostvars[item].ansible_port | default(default_ssh_port) }}"
+        timeout: 30
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['nodes'] | difference([inventory_hostname]) }}"
+      loop_control:
+        label: "{{ inventory_hostname }} -> {{ item }}"
+
+    - name: Show the healthy server WireGuard interface without private keys
+      ansible.builtin.command:
+        argv: [wg, show, "{{ node_interface }}"]
+      become: true
+      changed_when: false

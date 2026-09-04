@@ -1,0 +1,288 @@
+---
+title: Deploy with GitHub Actions
+description: Run mesh and cluster lifecycle from GitHub Actions without a Mac controller peer.
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { Kbd } from "starlight-kbd/components";
+
+This guide configures the **prod** environment so **GitHub Actions** runs deploy and verify—not your Mac. Use it when you want CI-driven lifecycle and do not need a permanent Mac WireGuard peer at `node_controller_address`. CI uses the **Deploy** workflow, not `task up`.
+
+| Host | Role |
+| --- | --- |
+| **static-1** | Ubuntu 26.04 public endpoint (mesh hub, `x86_64`) |
+| **static-2** | Second Ubuntu 26.04 public endpoint (`x86_64`) |
+
+Add a home-lab roaming node later with [Adding a roaming node](/guides/adding-roaming-node/)—after statics are up.
+
+:::note[Prerequisites]
+Finish [Get started locally](/start-here/get-started/) first (`task setup` complete). You need **two** Ubuntu 26.04 amd64 VMs with stable public IPs, an external Postgres instance with owner role hosted outside of the Supercompute cloud, and the committed **`inventories/prod/`** inventory with `control_plane: gha`. Do **not** run `task up` on your Mac for prod once you choose the GHA control plane.
+:::
+
+### Mac path vs GHA path
+
+The same prod inventory works from your Mac or from GitHub Actions—the control plane differs.
+
+Both paths use the same **`prod`** inventory shape. They differ by **control plane**.
+
+| | Mac | GitHub Actions |
+| --- | --- | --- |
+| Guide | [Deploy to production](/start-here/deploy-to-production/) | This guide |
+| Entry | `task up ENV=prod` | Actions → **Deploy** workflow |
+| Who runs Ansible | Your Mac | GitHub-hosted runner |
+| Permanent mesh peer | Mac at `node_controller_address` (usually `.1`) | None |
+| During a job | — | Ephemeral runner at `node_ci_address` (e.g. `.254`) |
+| Lima guests | **dev** only | Not supported |
+
+Keep **`dev`** for local Mac development. Use **`prod`** for production—either from your Mac or from GitHub Actions, not both at once on the same inventory.
+
+Keep a backup of `inventories/prod/.vault-pass` and the encrypted vault off-repo.
+
+Read `project` from `inventories/prod/hosts.yml` → `all.vars.project` (currently `example`). In examples below, `<project>` is that value.
+
+### Step 1: Configure prod hosts
+
+Replace template DNS names, public IPs, and SSH fingerprints for both static nodes.
+
+Edit `inventories/prod/hosts.yml` the same way as [Deploy to production — Step 1](/start-here/deploy-to-production/#step-1-configure-prod-hosts): set `hostname`, then fill `public_ip` and `ssh_ed25519_sha256` for **static-1** and **static-2**. Install this public key on each VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
+
+### Step 2: Configure DNS
+
+Create records for the hostname you set in Step 1. Supercompute derives the rest by adding the hostname as a common suffix. Leave `example.com` at your registrar. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+
+| Prefix | Name | Type | Value |
+| --- | --- | --- | --- |
+| `ns` | `ns.example.com` | A | **static-1** public IPv4 |
+| `ns` | `ns.example.com` | A | **static-2** public IPv4 |
+| `sc-api` | `sc-api.example.com` | CNAME | `ns.example.com` |
+| `sc-app` | `sc-app.example.com` | CNAME | `ns.example.com` |
+
+Later, dynamic app URLs use the same nameserver:
+
+| Prefix | Name | Type | Value |
+| --- | --- | --- | --- |
+| `apps` | `apps.example.com` | NS | `ns.example.com` |
+
+Supercompute's Nameserver then serves `*.apps.example.com`. If the VM IPs are not ready yet, add the A records before bring-up.
+
+To use different API or app hostnames, edit `dns_prefix_api` and `dns_prefix_app` (and other `dns_prefix_*` values if needed) in `inventories/<env>/group_vars/all/main.yml`, then create matching DNS records and re-run `task up`.
+
+### Step 3: Set GHA control plane
+
+Tell the inventory that GitHub Actions—not your Mac—will run deploys.
+
+Edit `inventories/prod/group_vars/all/main.yml` and set:
+
+```yaml
+control_plane: gha
+```
+
+Mesh CIDR (`10.217.79.0/24`), `node_ci_address` (`.254`), Ubuntu 26.04 amd64 image (`template:ubuntu-26.04`), and production resources are already set in the committed prod inventory. `node_include_controller_peer` becomes `false` automatically when `control_plane: gha`.
+
+### Step 4: Prepare the two public VMs
+
+Install this public key on both production VMs (`ops` user)—follow [Adding a public node](/guides/adding-public-node/) for each host.
+
+Use an **empty passphrase**—the runner cannot unlock a passphrase-protected key. The private key is GitHub secret `OPS_SSH_PRIVATE_KEY` later.
+
+Install Ubuntu on each VM, create the ops user, and open bootstrap firewall ports.
+
+For **static-1** and **static-2**:
+
+1. Ubuntu 26.04 amd64 + public IP.
+2. Create `ops`, install `~/.ssh/example-prod.pub`, passwordless sudo.
+3. Record each host’s `SHA256:…` from `/etc/ssh/ssh_host_ed25519_key.pub`.
+4. Fill `public_ip` and `ssh_ed25519_sha256` in `hosts.yml`.
+5. Firewall: TCP **22** open for bootstrap (runner egress IPs change; plan accordingly). Open **UDP 51830** broadly if you add roaming nodes later.
+
+Prove SSH from your Mac before the first workflow run:
+
+<Tabs syncKey="pkg">
+<TabItem label="prod">
+
+```sh
+ssh -i ~/.ssh/example-prod -o IdentitiesOnly=yes ops@203.0.113.11 true
+ssh -i ~/.ssh/example-prod -o IdentitiesOnly=yes ops@203.0.113.12 true
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+ssh -i ~/.ssh/<project>-prod -o IdentitiesOnly=yes ops@STATIC_1_IP true
+ssh -i ~/.ssh/<project>-prod -o IdentitiesOnly=yes ops@STATIC_2_IP true
+```
+
+</TabItem>
+</Tabs>
+
+### Step 5: Initialize the vault
+
+Create the encrypted vault locally and back up the password for CI.
+
+Initialize vault locally—even though deploys run in CI, you create secrets from a trusted machine:
+
+```sh
+task vault-init ENV=prod
+```
+
+Creates `inventories/prod/.vault-pass` and encrypted `vault.yml` with `vault_meta`, placeholder `vault_database_url`, and auto-generated `vault_database_secret`. The Deploy workflow's `ensure-secrets` step adds WireGuard keypairs on first `up`.
+
+Decrypted `inventories/prod/group_vars/all/vault.yml` looks like this:
+
+<Tabs syncKey="vault-init">
+<TabItem label="prod">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: prod
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: mT4nQ8pL2vK6wB9xF1hJ5cY0aZ3dE7gH_rXv
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+Keep `inventories/prod/.vault-pass` **out of git** (store the same value in GitHub secret `ANSIBLE_VAULT_PASSWORD`).
+
+#### PostgreSQL database
+
+Point the vault at your external Postgres before committing it for CI.
+
+Supercompute needs a Postgres database with owner role hosted outside of the Supercompute cloud.
+
+```sh
+task vault-edit ENV=prod
+```
+
+`task vault-edit` decrypts `inventories/prod/group_vars/all/vault.yml` in your editor. You should see `vault_meta`, `vault_database_url`, and `vault_database_secret` (WireGuard keys appear after the first `task up`). Replace only `vault_database_url` with your connection URI (same shape as the **prod** tab). Leave everything else unchanged.
+
+Example after you set the database URL:
+
+<Tabs syncKey="postgres">
+<TabItem label="prod">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: prod
+vault_database_url: postgresql://app:secret@db.example.com:5432/supercompute
+vault_database_secret: mT4nQ8pL2vK6wB9xF1hJ5cY0aZ3dE7gH_rXv
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+Save and exit the editor:
+
+- **vim/vi** (default on macOS): press <Kbd mac="Esc" windows="Esc" />, type `:wq`, press <Kbd mac="Enter" windows="Enter" />
+- **nano**: press <Kbd mac="Control+O" windows="Control+O" />, <Kbd mac="Enter" windows="Enter" />, then <Kbd mac="Control+X" windows="Control+X" />
+
+Deploy workflow validation rejects the vault-init placeholder in `vault_database_url`.
+
+Commit the encrypted vault; CI decrypts with `ANSIBLE_VAULT_PASSWORD` (no separate database URL GitHub secret).
+
+Commit `inventories/prod/hosts.yml`, `inventories/prod/group_vars/all/main.yml` (with `control_plane: gha`), and encrypted `inventories/prod/group_vars/all/vault.yml` in the repository where Actions runs. Never commit `.vault-pass`.
+
+### Step 6: Repository secrets
+
+Add the vault password and operator SSH key to GitHub Actions secrets.
+
+In GitHub → **Settings** → **Secrets and variables** → **Actions**, add:
+
+| Secret | Required | Value |
+| --- | --- | --- |
+| `ANSIBLE_VAULT_PASSWORD` | yes | Exact contents of `inventories/prod/.vault-pass` |
+| `OPS_SSH_PRIVATE_KEY` | yes | Full private key file (same as `~/.ssh/example-prod`; must be passphrase-less) |
+| `MAC_OPERATOR_SSH_PUBLIC_KEY` | no | Your Mac Ed25519 public key; if set, installed into `ops` authorized_keys on nodes |
+
+Every node must allow passwordless `sudo` for `ops` (the runner cannot answer a become password).
+
+### Step 7: Run the workflow
+
+Trigger the Deploy workflow to bring up production from CI.
+
+1. GitHub → **Actions** → **Deploy** → **Run workflow**.
+2. **env**: `prod`.
+3. **action**: `up`, `verify`, or `down`.
+4. For **down**, set **confirm** to exactly `down-prod`.
+
+What **`up`** does on the runner:
+
+1. Sync known_hosts from inventory fingerprints.
+2. Ensure vault secrets (WireGuard keypairs + `vault_database_secret` if missing).
+3. Validate `hosts.yml` (`hostname`) and vault (`vault_database_url`, `vault_database_secret`).
+4. Run mesh reconcile (`wireguard-up`) — **no** Mac LaunchDaemon.
+5. Briefly join the runner to the mesh at `node_ci_address`, install cluster software on nodes, then remove the runner peer.
+
+The runner VM is discarded after the job; your static nodes stay up.
+
+### Step 8: Verify
+
+Confirm the workflow succeeded and nodes are reachable.
+
+Re-run the workflow with **action** `verify`, or after an `up` job completes, SSH from your Mac if you installed `MAC_OPERATOR_SSH_PUBLIC_KEY`:
+
+```sh
+task ssh ENV=prod NODE=static-1
+```
+
+(Only works once your Mac can reach the mesh—typically after a successful `up` and if you rely on public bootstrap or an operator key on nodes.)
+
+### Do not mix control planes
+
+- **Do not** run `task up ENV=prod` on your Mac after setting `control_plane: gha`.
+- **Do not** run the Deploy workflow against **`dev`** (`control_plane: mac`) unless you understand it skips the Mac peer.
+- Pick **one** control plane for **`prod`**: Mac ([Deploy to production](/start-here/deploy-to-production/)) **or** GHA (this guide), not both.
+
+### Checklist
+
+| Item | Done |
+| --- | --- |
+| `control_plane: gha` set in `inventories/prod/group_vars/all/main.yml` | |
+| `hostname` set in `hosts.yml` (for example `example.com`) | |
+| Parent DNS: `ns` A per static + `api`/`app` CNAME to ns + `apps` NS (Cloudflare proxy off) | |
+| `static-1` + `static-2` public IPs + fingerprints in `hosts.yml` | |
+| `~/.ssh/example-prod` created (empty passphrase); public key on both statics | |
+| `ssh … true` works for both static IPs | |
+| `vault_database_url` set in encrypted `vault.yml`; `vault_database_secret` from `vault-init` | |
+| GitHub secrets `ANSIBLE_VAULT_PASSWORD` + `OPS_SSH_PRIVATE_KEY` set | |
+| Workflow **up** completed successfully | |
+
+### Backup
+
+Store off-repo: `~/.ssh/example-prod` (+ `.pub`), `inventories/prod/.vault-pass`, and a copy of `inventories/prod/group_vars/all/vault.yml`.
+
+### Next steps
+
+- [Get started locally](/start-here/get-started/) — Mac-managed **`dev`** (static hub)
+- [Get started locally with a roaming node](/start-here/get-started-roaming-node/) — **`dev-lima`** with Lima guest
+- [Deploy to production](/start-here/deploy-to-production/) — same **`prod`** inventory with Mac control plane
+- [Adding a roaming node](/guides/adding-roaming-node/)

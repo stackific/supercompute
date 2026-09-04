@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "Usage: $0 PROVIDER [ensure|existing|path|remove]" >&2
+  echo "Usage: $0 ENV [ensure|existing|path|remove]" >&2
   exit 2
 fi
 
@@ -11,7 +11,7 @@ operation="${2:-ensure}"
 case "${operation}" in
   ensure|existing|path|remove) ;;
   *)
-    echo "Usage: $0 PROVIDER [ensure|existing|path|remove]" >&2
+    echo "Usage: $0 ENV [ensure|existing|path|remove]" >&2
     exit 2
     ;;
 esac
@@ -23,7 +23,7 @@ python_runtime="${project_dir}/.venv/bin/python"
   exit 2
 }
 
-cloud_name="$("${python_runtime}" "${project_dir}/scripts/cloud_name.py")"
+cloud_name="$("${python_runtime}" "${project_dir}/scripts/config_project.py" --provider "${provider_name}")"
 node_names="$("${python_runtime}" "${project_dir}/scripts/lima_nodes.py" --provider "${provider_name}")"
 
 lima_system_home="${HOME}/.lima"

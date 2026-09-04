@@ -1,0 +1,54 @@
+---
+- name: Classify static vs roaming nodes and pick the static hub
+  hosts: localhost
+  gather_facts: true
+  any_errors_fatal: true
+  tasks:
+    - name: Require a public-endpoint provider for WireGuard teardown
+      ansible.builtin.assert:
+        that:
+          - provider.platform == 'public'
+          - provider.mode == 'remote'
+        fail_msg: >-
+          wireguard-down requires provider.platform=public for
+          ENV={{ inventory_slug }}.
+
+    - name: Reset classified WireGuard node lists
+      ansible.builtin.set_fact:
+        static_nodes: []
+        roaming_nodes: []
+
+    - name: Classify each WireGuard inventory node
+      ansible.builtin.set_fact:
+        static_nodes: >-
+          {{
+            static_nodes
+            + ([] if (hostvars[item].roaming | default(false) | bool) else [item])
+          }}
+        roaming_nodes: >-
+          {{
+            roaming_nodes
+            + ([item] if (hostvars[item].roaming | default(false) | bool) else [])
+          }}
+      loop: "{{ groups['nodes'] | sort }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Record roaming presence and the static hub hostname
+      ansible.builtin.set_fact:
+        has_roaming: "{{ roaming_nodes | length > 0 }}"
+        static_hub: "{{ static_nodes | first | default('') }}"
+
+- ansible.builtin.import_playbook: node-transport.yml
+
+- name: Tear down WireGuard on every server through mesh or bootstrap SSH
+  hosts: nodes
+  gather_facts: false
+  any_errors_fatal: true
+  serial: 1
+  vars_files:
+    - vars/node_recovery_ssh.yml
+  roles:
+    - role: wireguard_node
+      vars:
+        wireguard_lifecycle: absent

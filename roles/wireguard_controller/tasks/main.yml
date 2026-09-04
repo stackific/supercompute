@@ -1,419 +1,287 @@
-- name: Require macOS on Apple Silicon for WireGuard control
+---
+- name: Require macOS as the mesh controller
   ansible.builtin.assert:
     that:
       - ansible_facts.system == 'Darwin'
-      - ansible_facts.architecture == 'arm64'
-    fail_msg: "Lima provider WireGuard requires macOS on Apple Silicon."
+    fail_msg: >-
+      {{ inventory_slug }} WireGuard control runs on the macOS controller. Run this task
+      from the Mac that will operate and access this mesh.
 
-- name: Require WireGuard tools on the controller
+- name: Require WireGuard and SSH tools on the controller
   ansible.builtin.command:
     argv: [which, "{{ item }}"]
-  loop: [wg, wg-quick]
+  loop: [wg, wg-quick, ssh, ssh-keygen]
   loop_control:
     label: "{{ item }}"
   changed_when: false
 
-- name: Require the controller utilities used for acceptance checks
+- name: Resolve the absolute macOS wg-quick path for the boot-time mesh service
   ansible.builtin.command:
-    argv: [which, "{{ item }}"]
-  loop: [lsof, ssh]
+    argv: [which, wg-quick]
+  register: wireguard_controller_wg_quick
+  changed_when: false
+
+- name: Require a complete WireGuard topology
+  ansible.builtin.assert:
+    that:
+      - groups['nodes'] | length > 0
+      - node_controller_address is string
+      - node_network_cidr is string
+      - node_prefix_length | int > 0
+      - node_prefix_length | int < 32
+      - node_listen_port | int > 0
+      - node_listen_port | int < 65536
+    fail_msg: >-
+      {{ inventory_slug }} requires at least one nodes host and a
+      valid controller mesh CIDR/listen port.
+
+- name: Require per-host mesh addresses from hosts.yml
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].private_address is defined
+      - hostvars[item].private_address is string
+      - hostvars[item].private_address | length > 0
+      - hostvars[item].private_address != node_controller_address
+    fail_msg: >-
+      {{ item }} must set private_address in
+      inventories/{{ inventory_slug }}/hosts.yml to a unique mesh IP in
+      {{ node_network_cidr }} (not the controller address).
+  loop: "{{ groups['nodes'] }}"
   loop_control:
     label: "{{ item }}"
-  changed_when: false
 
-- name: Verify the pinned Lima profiles
-  ansible.builtin.include_role:
-    name: lima
-  vars:
-    lima_lifecycle: verify
-
-- name: Require user-v2 and WireGuard UDP forwards on every Lima instance
-  ansible.builtin.command:
-    argv:
-      - limactl
-      - template
-      - yq
-      - "{{ lima_home_dir }}/{{ item.name }}/lima.yaml"
-      - >-
-        (.networks | length) >= 1 and .networks[0].lima == "user-v2" and
-        .networks[0].macAddress == "{{ item.mac_address }}" and
-        (.portForwards | length) >= 1 and
-        .portForwards[0].guestPort == {{ wireguard_listen_port }} and
-        .portForwards[0].hostPort == {{ item.wg_host_port }} and
-        .portForwards[0].proto == "udp"
-  loop: "{{ lima_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
-  register: wireguard_controller_lima_network_contract
-  changed_when: false
-
-- name: Refuse WireGuard bootstrap on Lima guests without user-v2
+- name: Require unique mesh addresses across servers
   ansible.builtin.assert:
     that:
-      - item.stdout | trim == 'true'
+      - >
+        (
+          groups['nodes']
+          | map('extract', hostvars, 'private_address')
+          | list
+          | unique
+          | length
+        ) == (groups['nodes'] | length)
     fail_msg: >-
-      {{ item.item.name }} is not on Lima user-v2 with UDP
-      {{ wireguard_listen_port }} forwarded to host port {{ item.item.wg_host_port }}.
-      Guest WireGuard endpoints use lima-<name>.internal, which only resolves on
-      user-v2. Recreate VMs:
-      task wg-remove PROVIDER={{ inventory_slug }} (if mesh state exists);
-      task lima-destroy PROVIDER={{ inventory_slug }} CONFIRM=destroy-lima-{{ inventory_slug }};
-      task lima-up PROVIDER={{ inventory_slug }};
-      then task up PROVIDER={{ inventory_slug }}.
-  loop: "{{ wireguard_controller_lima_network_contract.results }}"
-  loop_control:
-    label: "{{ item.item.name }}"
+      private_address values in hosts.yml must be unique across
+      nodes.
 
-- name: Check for an existing private macOS WireGuard configuration
-  ansible.builtin.stat:
-    path: "{{ wireguard_state_dir }}/wg.conf"
-  register: wireguard_controller_existing_macos_wireguard_config
+- name: Require public WireGuard endpoints for every stable server
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].public_ip is string
+      - hostvars[item].public_ip | length > 0
+      - hostvars[item].public_ip is not match('^REPLACE_WITH_')
+    fail_msg: >-
+      {{ item }} must set public_ip in
+      inventories/{{ inventory_slug }}/hosts.yml to its public IPv4 address or DNS name.
+  loop: "{{ groups['nodes'] }}"
+  when: not (hostvars[item].roaming | default(false) | bool)
 
-- name: Wait for existing Lima WireGuard UDP forwards before controller recovery
-  ansible.builtin.command:
-    argv: [lsof, -nP, -a, -c, limactl, "-iUDP:{{ item.wg_host_port }}"]
-  register: wireguard_controller_existing_lima_udp_forward
-  until: wireguard_controller_existing_lima_udp_forward.rc == 0
-  retries: 5
-  delay: 1
-  failed_when: false
-  changed_when: false
-  loop: "{{ lima_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when: wireguard_controller_existing_macos_wireguard_config.stat.exists
+- name: Require Cloudflare bootstrap hosts for non-Lima roaming nodes
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].bootstrap_ssh_host is string
+      - hostvars[item].bootstrap_ssh_host | length > 0
+      - hostvars[item].bootstrap_ssh_host is not match('^REPLACE_WITH_')
+      - hostvars[item].public_ip is not defined
+        or hostvars[item].public_ip | length == 0
+    fail_msg: >-
+      {{ item }} (roaming, non-Lima) must set bootstrap_ssh_host and
+      must not set public_ip in inventories/{{ inventory_slug }}/hosts.yml.
+  loop: "{{ groups['nodes'] }}"
+  when:
+    - hostvars[item].roaming | default(false) | bool
+    - not (hostvars[item].node_lima_guest | default(false) | bool)
 
-- name: Decide whether every existing Lima UDP forward is ready
-  ansible.builtin.set_fact:
-    wireguard_controller_existing_lima_udp_ready: >-
-      {{
-        wireguard_controller_existing_macos_wireguard_config.stat.exists
-        and (
-        wireguard_controller_existing_lima_udp_forward.results | default([])
-        | rejectattr('skipped', 'defined')
-        | selectattr('rc', 'defined')
-        | selectattr('rc', 'equalto', 0)
-        | list | length == lima_nodes | length
+- name: Require Lima guests to roam without Cloudflare bootstrap hosts
+  ansible.builtin.assert:
+    that:
+      - hostvars[item].roaming | default(false) | bool
+      - hostvars[item].public_ip is not defined
+        or hostvars[item].public_ip | length == 0
+      - hostvars[item].bootstrap_ssh_host is not defined
+        or hostvars[item].bootstrap_ssh_host | length == 0
+      - >
+          (
+            lima_nodes | default([])
+            | selectattr('name', 'equalto', item)
+            | list
+            | length
+          ) == 1
+    fail_msg: >-
+      {{ item }} (node_lima_guest) must set roaming: true, omit
+      public_ip and bootstrap_ssh_host, and appear once in
+      lima_nodes (bootstrap uses Lima-local SSH).
+  loop: "{{ groups['nodes'] }}"
+  when: hostvars[item].node_lima_guest | default(false) | bool
+
+- name: Require encrypted WireGuard key maps from the Vault
+  ansible.builtin.assert:
+    that:
+      - vault_wireguard_private_keys is mapping
+      - vault_wireguard_public_keys is mapping
+      - >
+        (not (node_include_controller_peer | default(true) | bool))
+        or (
+          vault_wireguard_private_keys.macos is string
+          and vault_wireguard_public_keys.macos is string
         )
-      }}
+  no_log: true
 
-- name: Test ordinary Lima access only to identify recreated unlocked guests
-  ansible.builtin.command:
-    argv: [limactl, shell, "{{ item.name }}", --, 'true']
-  register: wireguard_controller_recreated_lima_paths
-  failed_when: false
-  changed_when: false
-  loop: "{{ lima_nodes }}"
+- name: Require encrypted WireGuard material for every server
+  ansible.builtin.assert:
+    that:
+      - vault_wireguard_private_keys[item] is string
+      - vault_wireguard_public_keys[item] is string
+  loop: "{{ groups['nodes'] }}"
   loop_control:
-    label: "{{ item.name }}"
-  when:
-    - wireguard_controller_existing_macos_wireguard_config.stat.exists
-    - not (wireguard_controller_existing_lima_udp_ready | bool)
-
-- name: Decide whether existing controller state points to recreated unlocked guests
-  ansible.builtin.set_fact:
-    wireguard_controller_rebootstrap_required: >-
-      {{
-        wireguard_controller_existing_macos_wireguard_config.stat.exists
-        and not (wireguard_controller_existing_lima_udp_ready | bool)
-        and (
-          wireguard_controller_recreated_lima_paths.results | default([])
-          | rejectattr('skipped', 'defined')
-          | selectattr('rc', 'defined')
-          | selectattr('rc', 'equalto', 0)
-          | list | length == lima_nodes | length
-        )
-      }}
-
-- name: Refuse controller recovery from legacy locked guests
-  ansible.builtin.assert:
-    that:
-      - >-
-        not wireguard_controller_existing_macos_wireguard_config.stat.exists or
-        (wireguard_controller_existing_lima_udp_ready | bool) or
-        (wireguard_controller_rebootstrap_required | bool)
-    fail_msg: >-
-      Lima did not create every project WireGuard UDP forward. The existing
-      guests contain the legacy manual-wg-firewall.service that
-      locks SSH before Lima can connect its guest agent and create dynamic UDP
-      forwarding. This controller cannot bypass that guest firewall. Recover
-      the unit from each VM's serial console, or recreate disposable local VMs
-      with `task lima-destroy CONFIRM=destroy-lima-{{ inventory_slug }}`,
-      `task lima-up`, and `task up PROVIDER={{ inventory_slug }}`. Existing
-      Vault and controller configuration will be reused while the tracked
-      startup gate is installed before lockdown.
-  when: wireguard_controller_existing_macos_wireguard_config.stat.exists
-
-- name: Derive the generated controller WireGuard public key
-  ansible.builtin.command:
-    argv: [wg, pubkey]
-    stdin: "{{ vault_wireguard_private_keys.macos }}"
-  register: wireguard_controller_public_key
-  changed_when: false
+    label: "{{ item }}"
   no_log: true
 
-- name: Read controller interfaces before recovery
-  ansible.builtin.command:
-    argv: [ifconfig]
-  register: wireguard_controller_interfaces_before_recovery
-  changed_when: false
-
-- name: Read the generated controller WireGuard runtime name before recovery
-  ansible.builtin.command:
-    argv: [cat, /var/run/wireguard/wg.name]
-  register: wireguard_controller_runtime_name_before_recovery
-  become: true
-  failed_when: false
-  changed_when: false
-  no_log: true
-
-- name: Read the generated controller WireGuard runtime public key before recovery
-  ansible.builtin.command:
-    argv:
-      - wg
-      - show
-      - "{{ wireguard_controller_runtime_name_before_recovery.stdout | trim }}"
-      - public-key
-  register: wireguard_controller_runtime_public_key_before_recovery
-  become: true
-  failed_when: false
-  changed_when: false
-  no_log: true
-  when:
-    - wireguard_controller_runtime_name_before_recovery.rc == 0
-    - wireguard_controller_runtime_name_before_recovery.stdout | trim is match('^utun[0-9]+$')
-
-- name: Read the generated controller WireGuard runtime address before recovery
-  ansible.builtin.command:
-    argv:
-      - ifconfig
-      - "{{ wireguard_controller_runtime_name_before_recovery.stdout | trim }}"
-  register: wireguard_controller_runtime_address_before_recovery
-  failed_when: false
-  changed_when: false
-  no_log: true
-  when:
-    - wireguard_controller_runtime_name_before_recovery.rc == 0
-    - wireguard_controller_runtime_name_before_recovery.stdout | trim is match('^utun[0-9]+$')
-
-- name: Determine whether the exact generated controller WireGuard runtime is active
-  ansible.builtin.set_fact:
-    wireguard_controller_config_active: >-
-      {{
-        wireguard_controller_runtime_name_before_recovery.rc == 0
-        and (wireguard_controller_runtime_name_before_recovery.stdout | trim
-          is match('^utun[0-9]+$'))
-        and (wireguard_controller_runtime_public_key_before_recovery.rc | default(1)) == 0
-        and (wireguard_controller_runtime_public_key_before_recovery.stdout | default('') | trim)
-          == (wireguard_controller_public_key.stdout | trim)
-        and (wireguard_controller_runtime_address_before_recovery.rc | default(1)) == 0
-        and ('inet ' ~ wireguard_macos_address ~ ' '
-          in (wireguard_controller_runtime_address_before_recovery.stdout | default('')))
-      }}
-  no_log: true
-
-- name: Refuse an unrelated WireGuard interface at the provider project address
-  ansible.builtin.assert:
-    that:
-      - >-
-        wireguard_controller_config_active | bool or
-        ('inet ' ~ wireguard_macos_address ~ ' '
-        not in wireguard_controller_interfaces_before_recovery.stdout)
-    fail_msg: >-
-      {{ wireguard_macos_address }} is active on macOS, but it does not belong
-      to this project's generated wg.conf. Stop the previous provider WireGuard
-      interface before rerunning task up. This task will not stop an
-      unknown interface automatically.
-
-- name: Restore an existing macOS WireGuard interface before any Lima access
-  ansible.builtin.command:
-    argv: [wg-quick, up, "{{ wireguard_state_dir }}/wg.conf"]
-  become: true
-  when:
-    - wireguard_controller_existing_macos_wireguard_config.stat.exists
-    - not (wireguard_controller_config_active | bool)
-  changed_when: true
-
-- name: Record the restored controller WireGuard configuration as active
-  ansible.builtin.set_fact:
-    wireguard_controller_config_active: true
-  when:
-    - wireguard_controller_existing_macos_wireguard_config.stat.exists
-    - not (wireguard_controller_config_active | bool)
-
-- name: Read controller interfaces after recovery
-  ansible.builtin.command:
-    argv: [ifconfig]
-  register: wireguard_controller_interfaces_after_recovery
-  changed_when: false
-
-- name: Test existing WireGuard management paths before using Lima
-  ansible.builtin.command:
-    argv:
-      - ssh
-      - -F
-      - /dev/null
-      - -i
-      - "{{ lima_home_dir }}/_config/user"
-      - -o
-      - IdentitiesOnly=yes
-      - -o
-      - BatchMode=yes
-      - -o
-      - ControlMaster=no
-      - -o
-      - ControlPath=none
-      - -o
-      - StrictHostKeyChecking=accept-new
-      - -o
-      - "UserKnownHostsFile={{ wireguard_known_hosts }}"
-      - -o
-      - ConnectTimeout=5
-      - "{{ wireguard_guest_user }}@{{ item.wg_address }}"
-      - 'true'
-  register: wireguard_controller_existing_paths
-  until: wireguard_controller_existing_paths.rc == 0
-  retries: 30
-  delay: 1
-  failed_when: false
-  changed_when: false
-  loop: "{{ lima_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
-  when:
-    - wireguard_controller_existing_macos_wireguard_config.stat.exists
-    - wireguard_controller_config_active | bool
-    - wireguard_controller_existing_lima_udp_ready | bool
-
-- name: Decide whether WireGuard is already a healthy management path
-  ansible.builtin.set_fact:
-    wireguard_controller_overlay_healthy: >-
-      {{
-        wireguard_controller_existing_macos_wireguard_config.stat.exists
-        and (wireguard_controller_config_active | bool)
-        and (
-          wireguard_controller_existing_paths.results | default([])
-          | selectattr('rc', 'defined') | selectattr('rc', 'equalto', 0) | list | length
-          == lima_nodes | length
-        )
-      }}
-
-- name: Require the Lima SSH identity
-  ansible.builtin.stat:
-    path: "{{ lima_home_dir }}/_config/user"
-  register: wireguard_controller_lima_identity
-
-- name: Refuse to configure without the Lima SSH identity
-  ansible.builtin.assert:
-    that:
-      - wireguard_controller_lima_identity.stat.exists
-      - wireguard_controller_lima_identity.stat.mode == '0600'
-    fail_msg: "The project-local Lima SSH identity is missing or has unsafe permissions: {{ lima_home_dir }}/_config/user."
-
-- name: Refuse unsafe ordinary Lima fallback for an existing WireGuard installation
-  ansible.builtin.assert:
-    that:
-      - >-
-        not wireguard_controller_existing_macos_wireguard_config.stat.exists or
-        (wireguard_controller_overlay_healthy | bool) or
-        (wireguard_controller_rebootstrap_required | bool)
-    fail_msg: >-
-      The project already has {{ wireguard_state_dir }}/wg.conf, but one or
-      more WireGuard SSH paths did not recover. Refusing to fall back to
-      ordinary Lima SSH because locked-down guests reject that path. Ensure
-      task lima-up has started every guest and its UDP forward, then check the
-      controller interface and WireGuard handshakes before rerunning up.
-
-- name: Require encrypted WireGuard keys from Ansible Vault
-  ansible.builtin.assert:
-    that:
-      - vault_wireguard_private_keys is defined
-      - vault_wireguard_public_keys is defined
-      - vault_wireguard_private_keys.macos is string
-      - vault_wireguard_public_keys.macos is string
-  no_log: true
-
-- name: Require encrypted WireGuard material for every VM
-  ansible.builtin.assert:
-    that:
-      - vault_wireguard_private_keys[item.name] is string
-      - vault_wireguard_public_keys[item.name] is string
-  loop: "{{ lima_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
-  no_log: true
-
-- name: Create private controller WireGuard state directories
+- name: Create private WireGuard controller state
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ node_state_dir }}"
     state: directory
     mode: '0700'
-  loop:
-    - "{{ wireguard_state_dir }}"
-    - "{{ wireguard_state_dir }}/rendered"
 
-- name: Create the private WireGuard known-hosts file
-  ansible.builtin.file:
-    path: "{{ wireguard_known_hosts }}"
-    state: touch
-    access_time: preserve
-    modification_time: preserve
-    mode: '0600'
+- name: Require the verified SSH host-key file
+  ansible.builtin.stat:
+    path: "{{ known_hosts_file }}"
+  register: wireguard_controller_known_hosts
 
-- name: Clear stale WireGuard host keys only for proven recreated local guests
-  ansible.builtin.copy:
-    content: ''
-    dest: "{{ wireguard_known_hosts }}"
-    mode: '0600'
-  when: wireguard_controller_rebootstrap_required | bool
+- name: Refuse unverified or unsafe SSH host-key state
+  ansible.builtin.assert:
+    that:
+      - wireguard_controller_known_hosts.stat.exists
+      - wireguard_controller_known_hosts.stat.mode == '0600'
+    fail_msg: >-
+      Verify every public server host key out of band, then create the
+      mode-0600 file {{ known_hosts_file }} with entries under the stable
+      inventory aliases before running task up ENV={{ inventory_slug }}.
 
-- name: Render the macOS WireGuard configuration from Vault
-  ansible.builtin.template:
-    src: wg.conf.j2
-    dest: "{{ wireguard_state_dir }}/wg.conf"
-    mode: '0600'
-  no_log: true
-
-- name: Render each VM WireGuard configuration from Vault
-  ansible.builtin.template:
-    src: wg0.conf.j2
-    dest: "{{ wireguard_state_dir }}/rendered/{{ item.name }}.conf"
-    mode: '0600'
-  loop: "{{ lima_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
-  no_log: true
-
-- name: Bootstrap WireGuard into each VM through ordinary Lima access
-  ansible.builtin.include_tasks: bootstrap-node.yml
-  loop: "{{ lima_nodes }}"
-  loop_control:
-    loop_var: node
-    label: "{{ node.name }}"
-  when:
-    - not (wireguard_controller_overlay_healthy | bool)
-    - >-
-      not wireguard_controller_existing_macos_wireguard_config.stat.exists or
-      (wireguard_controller_rebootstrap_required | bool)
-
-- name: Wait for Lima's UDP forwards after first WireGuard bootstrap
+- name: Require each stable host alias in the verified host-key file
   ansible.builtin.command:
-    argv: [lsof, -nP, -a, -c, limactl, "-iUDP:{{ item.wg_host_port }}"]
-  register: wireguard_controller_first_install_lima_udp_forward
-  until: wireguard_controller_first_install_lima_udp_forward.rc == 0
-  retries: 30
+    argv: [ssh-keygen, -F, "{{ item }}", -f, "{{ known_hosts_file }}"]
+  loop: "{{ groups['nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+- name: Render the private macOS WireGuard configuration from Vault
+  ansible.builtin.template:
+    src: scwg0.conf.j2
+    dest: "{{ node_config_path }}"
+    mode: '0600'
+  register: wireguard_controller_config
+  no_log: true
+
+- name: Install the root-owned macOS boot-time WireGuard service
+  ansible.builtin.template:
+    src: wireguard-launchd.plist.j2
+    dest: "{{ node_launchd_path }}"
+    owner: root
+    group: wheel
+    mode: '0644'
+  register: wireguard_controller_launchd_plist
+  become: true
+
+- name: Validate the macOS boot-time WireGuard service definition
+  ansible.builtin.command:
+    argv: [plutil, -lint, "{{ node_launchd_path }}"]
+  changed_when: false
+  become: true
+
+- name: Check whether the macOS boot-time WireGuard service is loaded
+  ansible.builtin.command:
+    argv: [launchctl, print, "system/{{ node_launchd_label }}"]
+  register: wireguard_controller_launchd_loaded
+  failed_when: false
+  changed_when: false
+  become: true
+
+- name: Unload the macOS boot-time WireGuard service before updating it
+  ansible.builtin.command:
+    argv:
+      - launchctl
+      - bootout
+      - system
+      - "{{ node_launchd_path }}"
+  when:
+    - wireguard_controller_launchd_loaded.rc == 0
+    - wireguard_controller_launchd_plist.changed
+  become: true
+  changed_when: true
+
+- name: Load the macOS boot-time WireGuard service when absent or updated
+  ansible.builtin.command:
+    argv:
+      - launchctl
+      - bootstrap
+      - system
+      - "{{ node_launchd_path }}"
+  when: >-
+    wireguard_controller_launchd_loaded.rc != 0 or
+    wireguard_controller_launchd_plist.changed
+  become: true
+  changed_when: true
+
+- name: Wait for the boot-time WireGuard service to assign the controller mesh address
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: wireguard_controller_launchd_interfaces
+  until: >-
+    'inet ' ~ node_controller_address ~ ' '
+    in wireguard_controller_launchd_interfaces.stdout
+  retries: 10
   delay: 1
   changed_when: false
-  loop: "{{ lima_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
   when: >-
-    not wireguard_controller_existing_macos_wireguard_config.stat.exists or
-    (wireguard_controller_rebootstrap_required | bool)
+    wireguard_controller_launchd_loaded.rc != 0 or
+    wireguard_controller_launchd_plist.changed
 
-- name: Bring up the macOS WireGuard interface when absent
+- name: Read macOS interfaces before reconciling the mesh
   ansible.builtin.command:
-    argv: [wg-quick, up, "{{ wireguard_state_dir }}/wg.conf"]
+    argv: [ifconfig]
+  register: wireguard_controller_interfaces
+  changed_when: false
+
+- name: Record whether the macOS mesh address is active
+  ansible.builtin.set_fact:
+    wireguard_controller_mesh_active: >-
+      {{ 'inet ' ~ node_controller_address ~ ' '
+         in wireguard_controller_interfaces.stdout }}
+
+- name: Stop the previous macOS mesh before a configuration update
+  ansible.builtin.command:
+    argv: [wg-quick, down, "{{ node_config_path }}"]
   become: true
-  when: not (wireguard_controller_config_active | bool)
+  when:
+    - wireguard_controller_config.changed
+    - wireguard_controller_mesh_active | bool
   changed_when: true
+
+- name: Start the macOS WireGuard mesh when required
+  ansible.builtin.command:
+    argv: [wg-quick, up, "{{ node_config_path }}"]
+  become: true
+  when:
+    - wireguard_controller_config.changed or not (wireguard_controller_mesh_active | bool)
+  changed_when: true
+
+- name: Require the macOS mesh address after a manual start
+  ansible.builtin.command:
+    argv: [ifconfig]
+  register: wireguard_controller_started_interfaces
+  until: >-
+    'inet ' ~ node_controller_address ~ ' '
+    in wireguard_controller_started_interfaces.stdout
+  retries: 10
+  delay: 1
+  changed_when: false
+  when: wireguard_controller_config.changed or not (wireguard_controller_mesh_active | bool)
+
+- name: Show macOS WireGuard peers without private keys
+  ansible.builtin.command:
+    argv: [wg, show]
+  become: true
+  changed_when: false

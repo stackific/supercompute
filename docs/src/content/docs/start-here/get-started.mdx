@@ -1,95 +1,271 @@
 ---
 title: Get started locally
-description: Install the toolchain and bring up a Supercompute dev mesh on your Mac.
+description: Install the toolchain and bring up the Supercompute dev environment on your Mac.
 ---
 
-import { Card, CardGrid } from '@astrojs/starlight/components';
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { Card, CardGrid } from "@astrojs/starlight/components";
+import { Kbd } from "starlight-kbd/components";
 
 Supercompute is a free geo-replicated purpose-built cloud for AI-first workloads that you can self-host on own commodity hardware, inside of your laptop's VM, inside of your NAS. You can achieve high availability even with just _two_ nodes. It was created by Stackific Inc.
 
-All you need is a static IP (because users need to reach you) and an external Postgres.
+All you need is a static IP (because users need to reach your cloud) and a Postgres database with owner role hosted outside of the Supercompute cloud.
 
-This guide gets you from a fresh clone to a working local **`dev`** instance: one public static hub plus an optional Lima roaming guest on Apple Silicon.
-
-## Quick Start
+This guide gets you from a fresh clone to a working **`dev`** environment: one public static VM.
 
 ### Prerequisites
 
-- macOS on Apple Silicon
+Install the core tools on your Mac, provision one Ubuntu VM with a static public IP, and have a Postgres database with owner role hosted outside of the Supercompute cloud.
+
+- macOS
 - [Task](https://taskfile.dev/installation/)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- [Lima](https://lima-vm.io/docs/installation/) (for the `dev` roaming guest)
 - WireGuard tools (`wg`, `wg-quick`)
 - 1 x VM/droplet/VPS/root server/EC2 instance with static IP
+- External Postgres instance (not installed by this automation)
 
 ```sh
-brew install go-task/tap/go-task uv wireguard-tools lima
+brew install go-task/tap/go-task uv wireguard-tools
 ```
 
-### Step 1 - Install dependencies
-
-From the project root directory:
+Clone the repository:
 
 ```sh
-task setup
+git clone https://github.com/stackific/supercompute.git
+cd supercompute
 ```
 
-`task setup` installs the locked Ansible venv. On macOS it also ensures `cloudflared` is on PATH when missing (needed only for non-Lima roaming nodes, not Lima guests).
+:::caution[Resetting the dev environment]
 
-### Prepare inventory
-
-The default `dev` inventory is for local development on a macOS computer:
-
-- **static-1** — Ubuntu 26.04 public endpoint (`x86_64`)
-- **roaming-1** — Lima guest
-
-Edit `inventories/dev/hosts.yml` and fill placeholders for `static-1` (public IP and SSH host-key fingerprint). Install this public key on the VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/).
-
-### Create the Lima guest
-
-```sh
-task lima-up
-```
-
-### Vault and bring up
-
-```sh
-task vault-init PROVIDER=dev
-task up PROVIDER=dev
-task ssh PROVIDER=dev NODE=static-1
-task ssh PROVIDER=dev NODE=roaming-1
-```
-
-### Reset local dev
-
-To discard the local Lima guest, controller WireGuard state, `.state/dev`, and
-the dev vault, run:
+If you already have a working dev environment you set up successfully or otherwise, you must reset it before continuing.
 
 ```sh
 task dev-reset CONFIRM=reset-dev
 ```
 
-This is destructive and prompts for the macOS become password. It does not
-change the remote `static-1` server or delete the dedicated Lima runtime home.
-Because it deletes `inventories/dev/group_vars/all/vault.yml` and
-`inventories/dev/.vault-pass`, recreate the vault before bringing dev back up:
+`dev-reset` may ask for **BECOME password** (macOS sudo) when disconnecting the Mac WireGuard controller. It retries `task down ENV=dev` up to three times (15 seconds apart) so bootstrap SSH can reach nodes when the mesh is flaky, then continues with local cleanup even if remote teardown still fails.
+
+`dev-reset` tears down cluster and WireGuard on dev nodes, disconnects the Mac mesh, removes `.state/dev`, and deletes the dev vault. The VM itself is unchanged (`ops` user, SSH keys, firewall).
+
+To **stop** without wiping vault or local state, use `task down ENV=dev CONFIRM=down-dev` instead — then `task up` brings everything back. See [Task commands](/reference/task/) (`down` vs reset).
+
+After reset, recreate the dev environment:
 
 ```sh
-task vault-init PROVIDER=dev
-task lima-up
-task up PROVIDER=dev
+task vault-init ENV=dev
+task vault-edit ENV=dev   # set vault_database_url
+task up ENV=dev
 ```
 
-## Next steps
+:::
+
+### Step 1: Install dependencies
+
+Run `task setup` from the project root to install the locked Ansible environment.
+
+```sh
+task setup
+```
+
+`task setup` installs the locked Ansible venv.
+
+### Step 2: Prepare the dev environment
+
+Set `hostname` for this cloud, then fill the static node's public IP and SSH fingerprint.
+
+Edit `inventories/dev/hosts.yml` — one file for project identity and every node. Set `all.vars.hostname` (for example `example.com`). This is going to be the common suffix for Nameserver (`ns.`), app (`sc-app.`), API (`sc-api.`), and app URLs (`*.apps.`).
+
+Fill placeholders for `static-1` (public IP and SSH host-key fingerprint). Install this public key on the VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
+
+A completed `inventories/dev/hosts.yml` file looks like this:
+
+<Tabs syncKey="pkg">
+<TabItem label="dev">
+```yaml
+---
+all:
+  vars:
+    project: example
+    hostname: example.com
+
+nodes:
+  hosts:
+    static-1:
+      public_ip: "159.203.27.69" # Public IP of the VM with static IP
+      ssh_ed25519_sha256: "SHA256:pRR...e+M" # Server fingerprint
+      private_address: 10.217.80.11
+```
+</TabItem>
+<TabItem label="Template">
+```yaml
+---
+all:
+  vars:
+    project: <project>
+    hostname: <your-prefix>.<project>.com
+
+nodes:
+  hosts:
+    static-1:
+      public_ip: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4" # Public IP of the VM/server with static IP
+      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1" # VM/server fingerprint
+      private_address: 10.217.80.11
+```
+</TabItem>
+</Tabs>
+
+### Step 3: Configure DNS
+
+Create records for the hostname you set in Step 2. Supercompute derives the rest by adding the hostname as a common suffix. Leave `example.com` at your registrar. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+
+| Prefix | Name | Type | Value |
+| --- | --- | --- | --- |
+| `ns` | `ns.example.com` | A | **static-1** public IPv4 |
+| `sc-api` | `sc-api.example.com` | CNAME | `ns.example.com` |
+| `sc-app` | `sc-app.example.com` | CNAME | `ns.example.com` |
+
+Later, dynamic app URLs use the same nameserver:
+
+| Prefix | Name | Type | Value |
+| --- | --- | --- | --- |
+| `apps` | `apps.example.com` | NS | `ns.example.com` |
+
+Supercompute's Nameserver then serves `*.apps.example.com`.
+
+To use different API or app hostnames, edit `dns_prefix_api` and `dns_prefix_app` (and other `dns_prefix_*` values if needed) in `inventories/<env>/group_vars/all/main.yml`, then create matching DNS records and re-run `task up`.
+
+### Step 4: Initialize the vault
+
+Create the encrypted vault and local password file for dev.
+
+Each environment has its own encrypted vault and local password file. `vault-init` creates both:
+
+```sh
+task vault-init ENV=dev
+```
+
+This writes `inventories/dev/.vault-pass` (gitignored) and `inventories/dev/group_vars/all/vault.yml` with `vault_meta`, a placeholder `vault_database_url`, and an auto-generated `vault_database_secret`. The first `task up` adds WireGuard keypairs to the vault.
+
+Decrypted `inventories/dev/group_vars/all/vault.yml` looks like this:
+
+<Tabs syncKey="vault-init">
+<TabItem label="dev">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: dev
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: kR7xP2mN9qL4vB8wF3hJ6tY1cZ5aD0eG_sXu
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+#### PostgreSQL database
+
+Point the vault at your external Postgres before the first deploy.
+
+Supercompute needs a Postgres database with owner role hosted outside of the Supercompute cloud.
+
+```sh
+task vault-edit ENV=dev
+```
+
+`task vault-edit` decrypts `inventories/dev/group_vars/all/vault.yml` in your editor. You should see `vault_meta`, `vault_database_url`, and `vault_database_secret` (WireGuard keys appear after the first `task up`). Replace only `vault_database_url` with your connection URI (same shape as the **dev** tab). Leave everything else unchanged.
+
+Example after you set the database URL:
+
+<Tabs syncKey="postgres">
+<TabItem label="dev">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: dev
+vault_database_url: postgresql://app:secret@db.example.com:5432/supercompute
+vault_database_secret: kR7xP2mN9qL4vB8wF3hJ6tY1cZ5aD0eG_sXu
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+Save and exit the editor:
+
+- **vim/vi** (default on macOS): press <Kbd mac="Esc" windows="Esc" />, type `:wq`, press <Kbd mac="Enter" windows="Enter" />
+- **nano**: press <Kbd mac="Control+O" windows="Control+O" />, <Kbd mac="Enter" windows="Enter" />, then <Kbd mac="Control+X" windows="Control+X" />
+
+`task up` rejects the vault-init placeholder in `vault_database_url`.
+
+### Step 5: Bring up the cloud
+
+Deploy the WireGuard mesh and cluster stack to your node.
+
+```sh
+task up ENV=dev
+```
+
+When it asks for `BECOME password`, enter your macOS password. You can run `task up` multiple times to retry if you have issues, made mistakes, or just want to be sure, because this is a rather long operation yet an idempotent one.
+
+Please note that the speed of operations heavily depends on the network connection between the Mac and the VM and the performance of the VM/server.
+
+### Step 6: SSH to the node
+
+Confirm you can log in to the node over the mesh.
+
+```sh
+task ssh ENV=dev NODE=static-1
+```
+
+Optional latency check from a node to the Mac mesh peer:
+
+```sh
+ping -c 10 -I scwg0 10.217.80.1
+```
+
+If you can access the node, you are done with this guide.
+
+Public Task entrypoints are listed with `task --list`. Full reference: [Task commands](/reference/task/).
+
+### Next steps
 
 <CardGrid stagger>
-	<Card title="Deploy to production" icon="rocket">
-		Copy `dev` → `prod` with two public nodes and one Cloudflare roaming host: [Deploy to production](/start-here/deploy-to-production/).
-	</Card>
-	<Card title="Adding a public node" icon="add-document">
-		Single public VM walkthrough: [Adding a public node](/guides/adding-public-node/).
-	</Card>
-	<Card title="Operator runbooks" icon="open-book">
-		Index: `internal/README.md` (includes roaming via Cloudflare Tunnel).
-	</Card>
+  <Card title="Roaming node on Apple Silicon" icon="laptop">
+    Add a Lima guest with `dev-lima`: [Get started locally with a roaming node](/start-here/get-started-roaming-node/).
+  </Card>
+  <Card title="Deploy to production" icon="rocket">
+    Configure the committed **prod** inventory with two public static nodes: [Deploy to production](/start-here/deploy-to-production/).
+  </Card>
+  <Card title="Deploy via GitHub Actions" icon="setting">
+    Run mesh lifecycle from CI—no permanent Mac WireGuard peer: [Deploy with GitHub Actions](/start-here/deploy-with-github-actions/).
+  </Card>
+  <Card title="Adding a public node" icon="add-document">
+    Single public VM walkthrough: [Adding a public node](/guides/adding-public-node/).
+  </Card>
 </CardGrid>

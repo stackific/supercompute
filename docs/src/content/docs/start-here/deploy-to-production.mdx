@@ -1,212 +1,256 @@
 ---
 title: Deploy to production
-description: Copy the dev inventory into prod and configure two public nodes plus one Cloudflare roaming node—no Lima.
+description: Configure the prod environment and bring up two public static nodes on your Mac.
 ---
 
-This tutorial takes a working local **`dev`** setup and turns it into an operator **`prod`** mesh:
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { Kbd } from "starlight-kbd/components";
+
+This guide brings up the committed **`prod`** environment on your Mac: **two public static nodes**, no Lima, no roaming hosts in the inventory.
 
 | Host | Role |
 | --- | --- |
 | **static-1** | Ubuntu 26.04 public endpoint (mesh hub, `x86_64`) |
-| **static-2** | Second Ubuntu 26.04 public endpoint (`x86_64`) |
-| **roaming-1** | Home-lab / dynamic-IP Ubuntu 26.04 (`x86_64`) — **no Lima**; Cloudflare Tunnel for bootstrap SSH |
+| **static-2** | Ubuntu 26.04 public endpoint (`x86_64`) |
 
-`inventories/prod/` is **gitignored**. Keep a backup of the vault password and encrypted vault off-repo.
+Optionally, add a roaming node later with [Adding a roaming node](/guides/adding-roaming-node/)—after statics are up.
 
 :::note[Prerequisites]
-Finish [Get started locally](/start-here/get-started/) first (or at least have `inventories/dev/` and `task setup` working). You will also need two VMs with stable public IPs and one Ubuntu machine for roaming (outbound UDP ok; **no** inbound UDP 51830 on the home router).
+You have already tried and run [Get started locally](/start-here/get-started/) locally.
 :::
 
-## Step 1 — Copy the inventory
+### Step 1: Configure prod hosts
 
-From the **worktree root**:
+Set `hostname` and fill public IPs and SSH fingerprints for both static nodes.
 
-```sh
-cp -R inventories/dev inventories/prod
-rm -f inventories/prod/.vault-pass
-rm -f inventories/prod/group_vars/all/vault.yml
-```
+Edit `inventories/prod/hosts.yml`:
 
-Prod must get its **own** vault (`task vault-init PROVIDER=prod` later). Do not reuse the `dev` vault password or encrypted file.
+1. Set `all.vars.hostname` (for example `example.com`). Nameserver, API, app, and app URLs are derived from that name.
+2. Fill placeholders for **static-1** and **static-2** (public IP and SSH host-key fingerprint). Install this public key on each VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
 
-## Step 2 — Operator SSH key for prod
-
-Use a **separate** key from `dev` (path embeds the provider slug):
-
-```sh
-ssh-keygen -t ed25519 -a 100 \
-  -f ~/.ssh/sc-prod \
-  -C "sc prod"
-ssh-add ~/.ssh/sc-prod
-pbcopy < ~/.ssh/sc-prod.pub
-```
-
-Install this public key on every production VM (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/).
-
-## Step 3 — Strip Lima from group vars
-
-Edit `inventories/prod/group_vars/all/main.yml`.
-
-1. Change the comment at the top to describe prod (two public + one Cloudflare roaming).
-2. Switch the mesh CIDR so it does **not** overlap `dev` (`10.217.80.0/24`):
-
-```yaml
-cloud_wireguard_network_cidr: 10.217.79.0/24
-cloud_wireguard_controller_address: 10.217.79.1
-```
-
-3. Keep `provider.platform: public` and `provider.mode: remote`.
-4. Prefer amd64 image metadata for public VMs (Lima’s arm64 template is not used for prod nodes):
-
-```yaml
-provider:
-  slug: "{{ inventory_dir | ansible.builtin.basename }}"
-  mode: remote
-  platform: public
-  image:
-    distribution: ubuntu
-    release: "26.04"
-    architecture: amd64
-    source: REPLACE_WITH_PROVIDER_IMAGE_ID
-  resources:
-    cpus: 2
-    memory_gib: 4
-    disk_gib: 40
-```
-
-5. **Remove** the Lima-only block (`lima_runtime_home`, `lima_home_dir`, `lima_state_dir`, `lima_version`, `lima_guest_user`, `lima_nodes`, and any Lima comments). Prod roaming is Cloudflare, not Lima.
-
-Leave SSH defaults as-is; they already expand to `~/.ssh/sc-prod` when `PROVIDER=prod`:
-
-```yaml
-cloud_default_ssh_user: ops
-cloud_ssh_private_key_file: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/{{ cloud_name }}-{{ inventory_slug }}"
-```
-
-`node_host_architecture: x86_64` stays the inventory default (all three hosts are amd64).
-
-## Step 4 — Rewrite `hosts.yml`
-
-Replace `inventories/prod/hosts.yml` with two static public hosts and one **non-Lima** roaming host:
+<Tabs syncKey="pkg">
+<TabItem label="prod">
 
 ```yaml
 ---
 all:
-  children:
-    controller:
-      hosts:
-        localhost:
-          ansible_connection: local
-    deployment:
-      hosts:
-        static-1:
-          cloud_wireguard_endpoint: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4"
-          cloud_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1"
-          cloud_wireguard_address: 10.217.79.11
-        static-2:
-          cloud_wireguard_endpoint: "REPLACE_WITH_STATIC_2_PUBLIC_IPV4"
-          cloud_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_2"
-          cloud_wireguard_address: 10.217.79.12
-        roaming-1:
-          wireguard_roaming: true
-          cloud_bootstrap_ssh_host: "roaming-1.example.com"
-          cloud_ssh_host_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_ROAMING_1"
-          cloud_wireguard_address: 10.217.79.21
-    wireguard_nodes:
-      children:
-        deployment: {}
+  vars:
+    project: example
+    hostname: example.com
+
+nodes:
+  hosts:
+    static-1:
+      public_ip: "203.0.113.11"
+      ssh_ed25519_sha256: "SHA256:pRR...e+M"
+      private_address: 10.217.79.11
+    static-2:
+      public_ip: "203.0.113.12"
+      ssh_ed25519_sha256: "SHA256:0f37...2ed230"
+      private_address: 10.217.79.12
 ```
 
-Important differences from `dev`:
+</TabItem>
+<TabItem label="Template">
 
-| Field | static hosts | roaming-1 |
-| --- | --- | --- |
-| `cloud_wireguard_endpoint` | Public IPv4 | **omit** |
-| `wireguard_roaming` | omit / false | `true` |
-| `node_lima_guest` | omit | **omit** (no Lima) |
-| `node_host_architecture` | default `x86_64` | default `x86_64` |
-| `cloud_bootstrap_ssh_host` | omit | Cloudflare published hostname |
+```yaml
+---
+all:
+  vars:
+    project: <project>
+    hostname: <your-prefix>.<project>.com
 
-Do **not** set `cloud_wireguard_endpoint` on `roaming-1`. Do **not** set `node_lima_guest: true`.
+nodes:
+  hosts:
+    static-1:
+      public_ip: "REPLACE_WITH_STATIC_1_PUBLIC_IPV4"
+      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_1"
+      private_address: 10.217.79.11
+    static-2:
+      public_ip: "REPLACE_WITH_STATIC_2_PUBLIC_IPV4"
+      ssh_ed25519_sha256: "SHA256:REPLACE_WITH_COMPLETE_FINGERPRINT_STATIC_2"
+      private_address: 10.217.79.12
+```
 
-## Step 5 — Prepare the two public VMs
+</TabItem>
+</Tabs>
 
-For **static-1** and **static-2**, follow [Adding a public node](/guides/adding-public-node/) twice:
+### Step 2: Configure DNS
 
-1. Ubuntu 26.04 amd64 + public IP.
-2. Create `ops`, install `~/.ssh/sc-prod.pub`, passwordless sudo.
+Create records for the hostname you set in Step 1. Supercompute derives the rest by adding the hostname as a common suffix. Leave `example.com` at your registrar. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+
+| Prefix | Name | Type | Value |
+| --- | --- | --- | --- |
+| `ns` | `ns.example.com` | A | **static-1** public IPv4 |
+| `ns` | `ns.example.com` | A | **static-2** public IPv4 |
+| `sc-api` | `sc-api.example.com` | CNAME | `ns.example.com` |
+| `sc-app` | `sc-app.example.com` | CNAME | `ns.example.com` |
+
+Later, dynamic app URLs use the same nameserver:
+
+| Prefix | Name | Type | Value |
+| --- | --- | --- | --- |
+| `apps` | `apps.example.com` | NS | `ns.example.com` |
+
+Supercompute's Nameserver then serves `*.apps.example.com`. If the VM IPs are not ready yet, add the A records before bring-up.
+
+To use different API or app hostnames, edit `dns_prefix_api` and `dns_prefix_app` (and other `dns_prefix_*` values if needed) in `inventories/<env>/group_vars/all/main.yml`, then create matching DNS records and re-run `task up`.
+
+### Step 3: Prepare the two public VMs
+
+Install this public key on both production VMs (`ops` user)—follow [Adding a public node](/guides/adding-public-node/) for each host.
+
+Install Ubuntu on each VM, create the ops user, and open bootstrap firewall ports.
+
+For **static-1** and **static-2**:
+
+1. Ubuntu 26.04 **amd64** + public IP (matches `provider.image` in `main.yml`).
+2. Create `ops`, install `~/.ssh/example-prod.pub`, passwordless sudo.
 3. Record each host’s `SHA256:…` from `/etc/ssh/ssh_host_ed25519_key.pub`.
-4. Fill `cloud_wireguard_endpoint` and `cloud_ssh_host_ed25519_sha256` in `hosts.yml`.
-5. Firewall: TCP **22** from your Mac `/32` during bootstrap; UDP **51830** wide enough for roaming egress (not only the Mac `/32`).
+4. Fill `public_ip` and `ssh_ed25519_sha256` in `hosts.yml`.
+5. Firewall: TCP **22** from your Mac `/32` during bootstrap. Open **UDP 51830** broadly if you plan to add roaming nodes later ([Adding a roaming node](/guides/adding-roaming-node/)).
 
 Prove SSH:
 
 ```sh
-ssh -i ~/.ssh/sc-prod -o IdentitiesOnly=yes ops@STATIC_1_IP true
-ssh -i ~/.ssh/sc-prod -o IdentitiesOnly=yes ops@STATIC_2_IP true
+ssh -i ~/.ssh/example-prod -o IdentitiesOnly=yes ops@STATIC_1_IP true
+ssh -i ~/.ssh/example-prod -o IdentitiesOnly=yes ops@STATIC_2_IP true
 ```
 
-## Step 6 — Prepare the roaming VM (Cloudflare, no Lima)
+### Step 4: Initialize the vault
 
-On the roaming Ubuntu 26.04 amd64 machine:
-
-1. Same `ops` user + `sc-prod` public key + passwordless sudo.
-2. Install and connect **cloudflared** (tunnel already healthy).
-3. Publish SSH for a hostname (example `roaming-1.example.com`) → `ssh://localhost:22`.
-4. **Do not** port-forward inbound UDP 51830 on the home router.
-
-On the Mac, ensure `cloudflared` is installed (`task setup` does this on macOS) and add SSH config:
-
-```text
-Host roaming-1.example.com
-  User ops
-  IdentityFile ~/.ssh/sc-prod
-  IdentitiesOnly yes
-  ProxyCommand cloudflared access ssh --hostname %h
-```
-
-Prove bootstrap SSH **before** `up`:
+Create the encrypted vault and local password file for prod.
 
 ```sh
-ssh roaming-1.example.com true
-ssh roaming-1.example.com 'sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub'
+task vault-init ENV=prod
 ```
 
-Paste the fingerprint into `roaming-1.cloud_ssh_host_ed25519_sha256` and set `cloud_bootstrap_ssh_host` to the same hostname.
+Creates `inventories/prod/.vault-pass` and encrypted `vault.yml` with `vault_meta`, placeholder `vault_database_url`, and auto-generated `vault_database_secret`. The first `task up` adds WireGuard keypairs.
 
-Full tunnel / Access detail: `internal/roaming-nodes.md` in the repository.
+Decrypted `inventories/prod/group_vars/all/vault.yml` looks like this:
 
-## Step 7 — Vault and mesh
+<Tabs syncKey="vault-init">
+<TabItem label="prod">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: prod
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: mT4nQ8pL2vK6wB9xF1hJ5cY0aZ3dE7gH_rXv
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+#### PostgreSQL database
+
+Point the vault at your external Postgres before the first deploy.
+
+Supercompute needs a Postgres database with owner role hosted outside of the Supercompute cloud.
 
 ```sh
-task vault-init PROVIDER=prod
-task up PROVIDER=prod
-task wg-status PROVIDER=prod
-task ssh PROVIDER=prod NODE=static-1
-task ssh PROVIDER=prod NODE=static-2
-task ssh PROVIDER=prod NODE=roaming-1
+task vault-edit ENV=prod
 ```
 
-`up` uses public SSH for static hosts and Cloudflare (`cloud_bootstrap_ssh_host`) for `roaming-1`. After the mesh is up, day-2 SSH goes over WireGuard. Roaming always **initiates** to the static hub; Mac↔roaming and spoke↔spoke go through **static-1** as hub.
+`task vault-edit` decrypts `inventories/prod/group_vars/all/vault.yml` in your editor. You should see `vault_meta`, `vault_database_url`, and `vault_database_secret` (WireGuard keys appear after the first `task up`). Replace only `vault_database_url` with your connection URI (same shape as the **prod** tab). Leave everything else unchanged.
 
-## Step 8 — Optional cluster stack
+Example after you set the database URL:
+
+<Tabs syncKey="postgres">
+<TabItem label="prod">
+
+```yaml
+---
+vault_meta:
+  project: example
+  provider: prod
+vault_database_url: postgresql://app:secret@db.example.com:5432/supercompute
+vault_database_secret: mT4nQ8pL2vK6wB9xF1hJ5cY0aZ3dE7gH_rXv
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```yaml
+---
+vault_meta:
+  project: <project>
+  provider: <env>
+vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
+vault_database_secret: <auto-generated at vault-init>
+```
+
+</TabItem>
+</Tabs>
+
+Save and exit the editor:
+
+- **vim/vi** (default on macOS): press <Kbd mac="Esc" windows="Esc" />, type `:wq`, press <Kbd mac="Enter" windows="Enter" />
+- **nano**: press <Kbd mac="Control+O" windows="Control+O" />, <Kbd mac="Enter" windows="Enter" />, then <Kbd mac="Control+X" windows="Control+X" />
+
+`task up` rejects the vault-init placeholder in `vault_database_url`.
+
+### Step 5: Bring up the cloud
+
+Deploy the WireGuard mesh and cluster stack to both static nodes.
 
 ```sh
-task up PROVIDER=prod
+task up ENV=prod
 ```
 
-## Checklist
+When it asks for **BECOME password**, enter your macOS password. You can run `task up` multiple times to retry; it is idempotent.
+
+`inventories/prod/group_vars/all/main.yml` already sets `control_plane: mac`, `provider.platform: public`, Ubuntu 26.04 amd64 (`source: template:ubuntu-26.04`), and production-sized resources. Change `provider.image.source` only if your provider automation requires a different image identifier.
+
+### Step 6: SSH to the nodes
+
+Confirm you can reach both nodes over the mesh.
+
+```sh
+task wg-status ENV=prod
+task ssh ENV=prod NODE=static-1
+task ssh ENV=prod NODE=static-2
+```
+
+Optional latency check from a node to the Mac mesh peer:
+
+```sh
+ping -c 10 -I scwg0 10.217.79.1
+```
+
+If you can access both nodes, you are done with this guide.
+
+### Checklist
 
 | Item | Done |
 | --- | --- |
-| `inventories/prod/` copied from `dev`; vault files removed | |
-| Lima keys / `lima_nodes` removed from prod `main.yml` | |
-| Mesh CIDR `10.217.79.0/24` (disjoint from `dev`) | |
-| `static-1` + `static-2` public IPs + fingerprints | |
-| `roaming-1` has `wireguard_roaming: true`, Cloudflare hostname, **no** `node_lima_guest` | |
-| `ssh … true` works for both static IPs and the roaming hostname | |
-| `task ssh PROVIDER=prod NODE=…` works for all three | |
+| `hostname` set in `hosts.yml` (for example `example.com`) | |
+| Parent DNS: `ns` A per static + `api`/`app` CNAME to ns + `apps` NS (Cloudflare proxy off) | |
+| `static-1` + `static-2` public IPs + fingerprints in `hosts.yml` | |
+| `~/.ssh/example-prod` on both VMs (`ops` user) | |
+| `vault_database_url` set in prod vault (not placeholder) | |
+| `ssh … true` works for both static IPs | |
+| `task ssh ENV=prod NODE=…` works for both statics | |
 
-## Backup
+### Backup
 
-Store off-repo: `~/.ssh/sc-prod` (+ `.pub`), `inventories/prod/.vault-pass`, and a copy of `inventories/prod/group_vars/all/vault.yml`. See `internal/setup-prod.md` for the full recovery list.
+Store off-repo: `~/.ssh/example-prod` (+ `.pub`), `inventories/prod/.vault-pass`, and a copy of `inventories/prod/group_vars/all/vault.yml`.
+
+### Next steps
+
+- [Adding a roaming node](/guides/adding-roaming-node/)
+- [Deploy with GitHub Actions](/start-here/deploy-with-github-actions/) — same **`prod`** inventory with `control_plane: gha`

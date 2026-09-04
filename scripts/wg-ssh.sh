@@ -3,11 +3,11 @@ set -Eeuo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 node="${NODE:-}"
-requested_provider="${PROVIDER:-}"
+requested_provider="${ENV:-}"
 python_runtime="${project_dir}/.venv/bin/python"
 
 [[ -n "${requested_provider}" ]] || {
-  echo "PROVIDER must be set." >&2
+  echo "ENV must be set." >&2
   exit 2
 }
 [[ -n "${node}" ]] || {
@@ -34,11 +34,11 @@ fi
 macos_config="${project_dir}/.state/${requested_provider}/wireguard/scwg0.conf"
 known_hosts="${project_dir}/.state/${requested_provider}/known_hosts"
 [[ -r "${macos_config}" ]] || {
-  echo "Missing ${macos_config}; run task up PROVIDER=${requested_provider} first." >&2
+  echo "Missing ${macos_config}; run task up ENV=${requested_provider} first." >&2
   exit 1
 }
 [[ -r "${known_hosts}" ]] || {
-  echo "Missing ${known_hosts}; record verified host keys and run task up PROVIDER=${requested_provider} first." >&2
+  echo "Missing ${known_hosts}; record verified host keys and run task up ENV=${requested_provider} first." >&2
   exit 1
 }
 
@@ -54,7 +54,7 @@ fi
 
 connection_values="$(
   cd "${project_dir}"
-  uv run --locked python scripts/cloud-wireguard-ssh-config.py "${requested_provider}" "${node}"
+  uv run --locked python scripts/wireguard-ssh-config.py "${requested_provider}" "${node}"
 )"
 IFS=$'\t' read -r node_address node_user node_port private_key <<<"${connection_values}"
 if [[ -z "${node_address}" || -z "${node_user}" || -z "${node_port}" ]]; then
@@ -65,7 +65,7 @@ fi
 ssh_identity_args=()
 if [[ -n "${private_key}" ]]; then
   [[ -r "${private_key}" ]] || {
-    echo "cloud_ssh_private_key_file must name a readable private key: ${private_key}" >&2
+    echo "ssh_private_key_file must name a readable private key: ${private_key}" >&2
     exit 1
   }
   ssh_identity_args=(-i "${private_key}" -o IdentitiesOnly=yes)

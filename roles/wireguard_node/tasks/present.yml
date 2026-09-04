@@ -1,0 +1,334 @@
+---
+- name: Require Ubuntu 26.04 with the declared host architecture before bootstrap
+  ansible.builtin.assert:
+    that:
+      - node_ubuntu_version == '26.04'
+      - node_ubuntu_codename == 'resolute'
+      - >
+          node_host_architecture == (
+            'aarch64' if (node_lima_guest | default(false) | bool) else 'x86_64'
+          )
+      - ansible_facts['distribution'] == 'Ubuntu'
+      - ansible_facts['distribution_version'] == node_ubuntu_version
+      - ansible_facts['distribution_release'] == node_ubuntu_codename
+      - ansible_facts['architecture'] == node_host_architecture
+    fail_msg: >-
+      Bootstrap requires Ubuntu {{ node_ubuntu_version }}
+      ({{ node_ubuntu_codename }})
+      {{ 'aarch64 (node_lima_guest)' if (node_lima_guest | default(false) | bool) else 'x86_64' }};
+      {{ inventory_hostname }} declares {{ node_host_architecture | default('unknown') }}
+      and reports
+      {{ ansible_facts['distribution'] | default('unknown') }}
+      {{ ansible_facts['distribution_version'] | default('unknown') }}
+      {{ ansible_facts['distribution_release'] | default('unknown') }}
+      {{ ansible_facts['architecture'] | default('unknown') }}.
+
+- name: Require a WireGuard identity for this server
+  ansible.builtin.assert:
+    that:
+      - private_address is defined
+      - private_address is string
+      - private_address | length > 0
+      - private_address != node_controller_address
+      - vault_wireguard_private_keys[inventory_hostname] is string
+      - vault_wireguard_public_keys[inventory_hostname] is string
+      - >
+        (not (node_include_controller_peer | default(true) | bool))
+        or (
+          vault_wireguard_private_keys.macos is string
+          and vault_wireguard_public_keys.macos is string
+        )
+      - >
+        (roaming | default(false) | bool)
+        or (
+          public_ip is string
+          and public_ip | length > 0
+          and public_ip is not match('^REPLACE_WITH_')
+        )
+      - >
+        (not (roaming | default(false) | bool))
+        or (node_lima_guest | default(false) | bool)
+        or (
+          bootstrap_ssh_host is string
+          and bootstrap_ssh_host | length > 0
+          and bootstrap_ssh_host is not match('^REPLACE_WITH_')
+        )
+      - >
+        (not (node_lima_guest | default(false) | bool))
+        or (
+          (roaming | default(false) | bool)
+          and (
+            bootstrap_ssh_host is not defined
+            or bootstrap_ssh_host | length == 0
+          )
+          and (
+            public_ip is not defined
+            or public_ip | length == 0
+          )
+        )
+    fail_msg: >-
+      This server lacks hosts.yml private_address, a complete
+      Vault-managed WireGuard identity, or the correct bootstrap dial target
+      (public_ip for a static public host; Lima-local SSH for
+      node_lima_guest; bootstrap_ssh_host for non-Lima roaming).
+  no_log: true
+
+- name: Require WireGuard material for every server
+  ansible.builtin.assert:
+    that:
+      - vault_wireguard_private_keys[item] is string
+      - vault_wireguard_public_keys[item] is string
+  loop: "{{ groups['nodes'] }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+
+- name: Install project config on this server
+  ansible.builtin.include_role:
+    name: supercompute_config
+
+- name: Refresh apt metadata before WireGuard package install
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  become: true
+  register: wireguard_apt_cache
+  until: wireguard_apt_cache is succeeded
+  retries: "{{ 5 if (node_lima_guest | default(false) | bool) else 1 }}"
+  delay: "{{ 20 if (node_lima_guest | default(false) | bool) else 5 }}"
+  vars:
+    ansible_command_timeout: "{{ 600 if (node_lima_guest | default(false) | bool) else 120 }}"
+
+- name: Install the pinned WireGuard package
+  ansible.builtin.apt:
+    name: "wireguard-tools={{ node_tools_version }}"
+    state: present
+    allow_downgrade: true
+  become: true
+  register: wireguard_apt_install
+  until: wireguard_apt_install is succeeded
+  retries: "{{ 5 if (node_lima_guest | default(false) | bool) else 1 }}"
+  delay: "{{ 20 if (node_lima_guest | default(false) | bool) else 5 }}"
+  vars:
+    ansible_command_timeout: "{{ 600 if (node_lima_guest | default(false) | bool) else 120 }}"
+
+- name: Load the kernel WireGuard module
+  ansible.builtin.command:
+    argv: [modprobe, wireguard]
+  become: true
+  changed_when: false
+
+- name: Create the private WireGuard configuration directory
+  ansible.builtin.file:
+    path: /etc/wireguard
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  become: true
+
+- name: Render this server's private WireGuard configuration
+  ansible.builtin.template:
+    src: scwg0.conf.j2
+    dest: "/etc/wireguard/{{ node_interface }}.conf"
+    owner: root
+    group: root
+    mode: '0600'
+  register: wireguard_node_config
+  become: true
+  no_log: true
+
+- name: Persist IPv4 forwarding drop-in on public static relays
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-scwg-forward.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by wireguard_node — roaming transit via public statics.
+      net.ipv4.ip_forward = 1
+  become: true
+  when:
+    - hostvars['localhost'].roaming_nodes | default([]) | length > 0
+    - not (roaming | default(false) | bool)
+    - >-
+      (node_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].static_hub | default(''))
+
+- name: Apply IPv4 forwarding on public static relays now
+  ansible.builtin.command:
+    argv: [sysctl, -w, net.ipv4.ip_forward=1]
+  become: true
+  register: static_hub_sysctl_apply
+  changed_when: >-
+    'net.ipv4.ip_forward = 1' in (static_hub_sysctl_apply.stdout | default(''))
+  failed_when: static_hub_sysctl_apply.rc != 0
+  when:
+    - hostvars['localhost'].roaming_nodes | default([]) | length > 0
+    - not (roaming | default(false) | bool)
+    - >-
+      (node_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].static_hub | default(''))
+
+- name: Enable and start this server's WireGuard interface
+  ansible.builtin.systemd_service:
+    name: "wg-quick@{{ node_interface }}.service"
+    enabled: true
+    state: "{{ 'restarted' if wireguard_node_config.changed else 'started' }}"
+  become: true
+  when: >-
+    not (
+      (node_mesh_reachable | default(false) | bool)
+      and (wireguard_node_config.changed | default(false) | bool)
+    )
+
+- name: Restart WireGuard without holding the mesh SSH session open
+  ansible.builtin.systemd_service:
+    name: "wg-quick@{{ node_interface }}.service"
+    enabled: true
+    state: restarted
+  become: true
+  async: 45
+  poll: 0
+  ignore_unreachable: true
+  when:
+    - node_mesh_reachable | default(false) | bool
+    - wireguard_node_config.changed | default(false) | bool
+
+- name: Wait for SSH after restarting WireGuard over the mesh path
+  ansible.builtin.wait_for_connection:
+    delay: 3
+    timeout: 90
+  when:
+    - node_mesh_reachable | default(false) | bool
+    - wireguard_node_config.changed | default(false) | bool
+
+- name: Sync live WireGuard peers from the rendered config
+  ansible.builtin.shell:
+    cmd: >-
+      set -euo pipefail;
+      wg-quick strip {{ node_interface | quote }}
+      | wg syncconf {{ node_interface | quote }} /dev/stdin
+  args:
+    executable: /bin/bash
+  become: true
+  changed_when: true
+  # The conf file can be unchanged while the running interface still lacks new
+  # spoke AllowedIPs (e.g. after adding roaming-2). systemd "started" does not
+  # reload AllowedIPs; syncconf does, without dropping mesh SSH.
+  when: >-
+    (hostvars['localhost'].roaming_nodes | default([]) | length) > 0
+
+- name: Allow WireGuard peer forwarding on public static relays
+  ansible.builtin.iptables:
+    chain: FORWARD
+    in_interface: "{{ node_interface }}"
+    out_interface: "{{ node_interface }}"
+    jump: ACCEPT
+    action: insert
+    state: present
+  become: true
+  when:
+    - hostvars['localhost'].roaming_nodes | default([]) | length > 0
+    - not (roaming | default(false) | bool)
+    - >-
+      (node_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].static_hub | default(''))
+
+- name: Require IPv4 forwarding on public static relays after WireGuard is up
+  ansible.builtin.command:
+    argv: [sysctl, -n, net.ipv4.ip_forward]
+  register: static_hub_ip_forward
+  changed_when: false
+  failed_when: (static_hub_ip_forward.stdout | trim) != '1'
+  when:
+    - hostvars['localhost'].roaming_nodes | default([]) | length > 0
+    - not (roaming | default(false) | bool)
+    - >-
+      (node_forward_on_all_statics | default(true) | bool)
+      or inventory_hostname == (hostvars['localhost'].static_hub | default(''))
+
+- name: Install roaming random-static dial helper
+  ansible.builtin.copy:
+    src: supercompute-roaming-dial.sh
+    dest: /usr/local/sbin/supercompute-roaming-dial
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+  when: roaming | default(false) | bool
+
+- name: Install roaming dial systemd service
+  ansible.builtin.template:
+    src: supercompute-roaming-dial.service.j2
+    dest: /etc/systemd/system/supercompute-roaming-dial.service
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: roaming | default(false) | bool
+
+- name: Install roaming dial systemd timer
+  ansible.builtin.template:
+    src: supercompute-roaming-dial.timer.j2
+    dest: /etc/systemd/system/supercompute-roaming-dial.timer
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  when: roaming | default(false) | bool
+
+- name: Enable and start roaming dial timer
+  ansible.builtin.systemd_service:
+    name: supercompute-roaming-dial.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  become: true
+  when: roaming | default(false) | bool
+
+- name: Run roaming dial helper once after WireGuard is up
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/supercompute-roaming-dial]
+  become: true
+  when: roaming | default(false) | bool
+  changed_when: true
+
+- name: Install optional Mac operator SSH public key for ops
+  ansible.builtin.lineinfile:
+    path: "/home/{{ default_ssh_user }}/.ssh/authorized_keys"
+    line: "{{ mac_operator_ssh_public_key | trim }}"
+    create: true
+    owner: "{{ default_ssh_user }}"
+    group: "{{ default_ssh_user }}"
+    mode: '0600'
+    state: present
+  become: true
+  when:
+    - mac_operator_ssh_public_key is string
+    - mac_operator_ssh_public_key | length > 0
+    - not (node_lima_guest | default(false) | bool)
+
+- name: Have roaming nodes initiate WireGuard toward the Mac controller when present
+  ansible.builtin.command:
+    argv:
+      - ping
+      - -c
+      - "3"
+      - -W
+      - "2"
+      - -I
+      - "{{ node_interface }}"
+      - "{{ node_controller_address }}"
+  when:
+    - roaming | default(false) | bool
+    - node_include_controller_peer | default(true) | bool
+  register: roaming_controller_ping
+  changed_when: false
+  failed_when: false
+
+- name: Show this server's WireGuard peers without private keys
+  ansible.builtin.command:
+    argv: [wg, show, "{{ node_interface }}"]
+  become: true
+  changed_when: false

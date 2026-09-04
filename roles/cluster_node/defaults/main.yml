@@ -53,3 +53,33 @@ cluster_pdns_packages:
   - pdns-server
   - dnsutils
 cluster_pdns_service: pdns
+cluster_pdns_dropin_dir: /etc/powerdns/pdns.d
+cluster_pdns_dropin_path: "{{ cluster_pdns_dropin_dir }}/supercompute-local.conf"
+
+# --- Application containers (GHCR) ---
+# Pull :latest on every present run. If a named container already exists, it is
+# removed and recreated so the new digest is what is running.
+cluster_sc_container_name: sc
+cluster_sc_image: ghcr.io/stackific/sc/sc:latest
+cluster_sc_port: 3000
+cluster_supercompute_container_name: supercompute
+cluster_supercompute_image: ghcr.io/stackific/sc/supercompute:latest
+cluster_supercompute_port: 8080
+cluster_sc_api_origin: "https://{{ dns_prefix_api }}.{{ hostname }}"
+cluster_sc_app_origin: "https://{{ dns_prefix_app }}.{{ hostname }}"
+cluster_app_containers:
+  - name: "{{ cluster_sc_container_name }}"
+    image: "{{ cluster_sc_image }}"
+    port: "{{ cluster_sc_port }}"
+    env:
+      SC_API: "{{ cluster_sc_api_origin }}"
+  - name: "{{ cluster_supercompute_container_name }}"
+    image: "{{ cluster_supercompute_image }}"
+    port: "{{ cluster_supercompute_port }}"
+    env:
+      SC_DASH: "{{ cluster_sc_app_origin }}"
+
+# --- Caddy (sc-app. → sc, sc-api. → supercompute) ---
+cluster_caddy_package: caddy
+cluster_caddy_service: caddy
+cluster_caddyfile_path: /etc/caddy/Caddyfile
