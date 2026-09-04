@@ -6,6 +6,7 @@ import starlightKbd from "starlight-kbd";
 
 // https://astro.build/config
 export default defineConfig({
+  site: "https://supercompute.dev",
   integrations: [
     starlight({
       title: "Supercompute",
