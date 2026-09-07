@@ -1,13 +1,13 @@
 version: "3"
 
 env:
-  PROVIDER: "{{.PROVIDER}}"
+  ENV: "{{.ENV}}"
 
 tasks:
   up:
     desc: Bring up the WireGuard mesh and cluster software for a provider
     requires:
-      vars: [PROVIDER]
+      vars: [ENV]
     preconditions:
       - sh: command -v wg >/dev/null 2>&1
         msg: Install wireguard-tools (wg) before running up
@@ -16,19 +16,20 @@ tasks:
     cmds:
       - |
         started_at="$(date +%s)"
-        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.ENV}}")"
         case "${platform}" in
           public)
-            uv run --locked python scripts/cloud-known-hosts.py \
-              --inventory "inventories/{{.PROVIDER}}/hosts.yml" \
-              --known-hosts ".state/{{.PROVIDER}}/known_hosts" \
+            uv run --locked python scripts/known-hosts.py \
+              --inventory "inventories/{{.ENV}}/hosts.yml" \
+              --known-hosts ".state/{{.ENV}}/known_hosts" \
               --reuse-existing
-            uv run --locked python scripts/vault.py ensure-wireguard
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/cloud-wireguard-up.yml
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cluster-up.yml
+            ENV="{{.ENV}}" uv run --locked python scripts/vault.py ensure-secrets
+            ENV="{{.ENV}}" uv run --locked python scripts/validate-deployment.py
+            bash scripts/ansible-playbook.sh "{{.ENV}}" --ask-become-pass playbooks/wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.ENV}}" playbooks/cluster-up.yml
             ;;
           lima)
-            echo "provider.platform=lima is refused; use provider.platform=public with node_lima_guest hosts under PROVIDER=dev." >&2
+            echo "provider.platform=lima is refused; use provider.platform=public with node_lima_guest hosts under ENV=dev-lima." >&2
             exit 2
             ;;
           vps)
@@ -36,7 +37,7 @@ tasks:
             exit 2
             ;;
           *)
-            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            echo "ENV={{.ENV}} has unsupported provider.platform=${platform}." >&2
             exit 2
             ;;
         esac
@@ -44,15 +45,14 @@ tasks:
         elapsed_seconds=$((finished_at - started_at))
         elapsed_minutes=$((elapsed_seconds / 60))
         elapsed_remainder_seconds=$((elapsed_seconds % 60))
-        printf 'task up PROVIDER=%s completed in %dm %02ds\n' \
-          "{{.PROVIDER}}" "${elapsed_minutes}" "${elapsed_remainder_seconds}"
+        printf 'task up ENV=%s completed in %dm %02ds\n' \
+          "{{.ENV}}" "${elapsed_minutes}" "${elapsed_remainder_seconds}"
 
   down:
-    internal: true
     desc: Tear down cluster software, node WireGuard, and the Mac controller mesh
     requires:
       vars:
-        - PROVIDER
+        - ENV
         - CONFIRM
     env:
       CONFIRM: "{{.CONFIRM}}"
@@ -61,35 +61,79 @@ tasks:
         msg: Install wireguard-tools (wg) before running down
       - sh: command -v uv >/dev/null 2>&1
         msg: Install uv before running down
-      - sh: test "{{.CONFIRM}}" = "down-{{.PROVIDER}}"
+      - sh: test "{{.CONFIRM}}" = "down-{{.ENV}}"
         msg: >-
-          Set CONFIRM=down-{{.PROVIDER}} to run down
+          Set CONFIRM=down-{{.ENV}} to run down
+    cmds:
+      - bash scripts/environment-down.sh "{{.ENV}}" "{{.CONFIRM}}"
+
+  env-reset:
+    desc: Factory-reset an environment (down, optional Lima, vault, local state)
+    requires:
+      vars:
+        - ENV
+        - CONFIRM
+    env:
+      CONFIRM: "{{.CONFIRM}}"
+    preconditions:
+      - sh: test "{{.CONFIRM}}" = "reset-{{.ENV}}"
+        msg: Set CONFIRM=reset-{{.ENV}} to reset the environment
+      - sh: command -v wg >/dev/null 2>&1
+        msg: Install wireguard-tools (wg) before running env-reset
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running env-reset
     cmds:
       - |
-        started_at="$(date +%s)"
-        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
-        case "${platform}" in
-          public)
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cluster-down.yml
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" playbooks/cloud-wireguard-down.yml
-            bash scripts/disconnect-cloud-wireguard.sh "{{.PROVIDER}}"
-            ;;
-          lima)
-            echo "provider.platform=lima is refused; use provider.platform=public." >&2
-            exit 2
-            ;;
-          vps)
-            echo "provider.platform=vps is refused; rename to provider.platform=public." >&2
-            exit 2
-            ;;
-          *)
-            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
-            exit 2
-            ;;
-        esac
-        finished_at="$(date +%s)"
-        elapsed_seconds=$((finished_at - started_at))
-        elapsed_minutes=$((elapsed_seconds / 60))
-        elapsed_remainder_seconds=$((elapsed_seconds % 60))
-        printf 'task down PROVIDER=%s completed in %dm %02ds\n' \
-          "{{.PROVIDER}}" "${elapsed_minutes}" "${elapsed_remainder_seconds}"
+        set +e
+        down_attempts=3
+        down_status=1
+        attempt=1
+        while [ "${attempt}" -le "${down_attempts}" ]; do
+          if [ "${attempt}" -gt 1 ]; then
+            echo "env-reset: retrying down ENV={{.ENV}} (attempt ${attempt}/${down_attempts})..." >&2
+            sleep 15
+          fi
+          CONFIRM=down-{{.ENV}} task down ENV={{.ENV}}
+          down_status=$?
+          if [ "${down_status}" -eq 0 ]; then
+            break
+          fi
+          echo "env-reset: down ENV={{.ENV}} failed (exit ${down_status}) on attempt ${attempt}/${down_attempts}" >&2
+          attempt=$((attempt + 1))
+        done
+        set -e
+        if [ "${down_status}" -ne 0 ]; then
+          echo "env-reset: down ENV={{.ENV}} failed after ${down_attempts} attempt(s); continuing local factory reset" >&2
+        fi
+      - CONFIRM=reset-{{.ENV}} bash scripts/ansible-playbook.sh "{{.ENV}}" --ask-become-pass playbooks/env-reset-controller.yml
+      - |
+        lima_guests="$(uv run --locked python scripts/lima_nodes.py --provider "{{.ENV}}")"
+        if [[ -n "${lima_guests}" ]]; then
+          CONFIRM=destroy-lima-{{.ENV}} LIMA_RUNTIME_HOME_MODE=ensure \
+            bash scripts/ansible-playbook.sh "{{.ENV}}" playbooks/lima-destroy.yml
+        fi
+      - ENV="{{.ENV}}" CONFIRM=destroy-vault-{{.ENV}} uv run --locked python scripts/vault.py destroy
+      - CONFIRM=reset-{{.ENV}} bash scripts/ansible-playbook.sh "{{.ENV}}" playbooks/env-reset.yml
+
+  dev-reset:
+    desc: Factory-reset the dev environment (alias for env-reset ENV=dev)
+    requires:
+      vars: [CONFIRM]
+    cmds:
+      - task: env-reset
+        vars:
+          ENV: dev
+          CONFIRM: "{{.CONFIRM}}"
+
+  dev-reset-lima:
+    desc: Factory-reset the dev-lima environment (alias for env-reset ENV=dev-lima)
+    requires:
+      vars: [CONFIRM]
+    preconditions:
+      - sh: command -v limactl >/dev/null 2>&1
+        msg: Install Lima before running dev-reset-lima
+    cmds:
+      - task: env-reset
+        vars:
+          ENV: dev-lima
+          CONFIRM: "{{.CONFIRM}}"

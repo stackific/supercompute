@@ -1,3 +1,0 @@
----
-- name: Apply WireGuard server lifecycle
-  ansible.builtin.include_tasks: "{{ cloud_wireguard_lifecycle | default('present') }}.yml"

@@ -1,0 +1,11 @@
+[Unit]
+Description=Supercompute roaming WireGuard dial (random public static)
+After=wg-quick@{{ node_interface }}.service
+Requires=wg-quick@{{ node_interface }}.service
+
+[Service]
+Type=oneshot
+Environment=SUPERCOMPUTE_WG_IFACE={{ node_interface }}
+Environment=SUPERCOMPUTE_PUBLIC_ENDPOINTS=/etc/supercompute/public-endpoints.list
+Environment=SUPERCOMPUTE_TRANSIT_IPS=/etc/supercompute/roaming-transit.ips
+ExecStart=/usr/local/sbin/supercompute-roaming-dial

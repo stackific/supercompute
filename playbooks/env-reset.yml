@@ -1,0 +1,18 @@
+---
+- name: Remove environment runtime state
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Require the environment reset confirmation
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'CONFIRM') == 'reset-' ~ inventory_slug
+        fail_msg: >-
+          env-reset only removes .state/{{ inventory_slug }} and requires
+          CONFIRM=reset-{{ inventory_slug }}.
+
+    - name: Remove the environment runtime state
+      ansible.builtin.file:
+        path: "{{ playbook_dir | dirname }}/.state/{{ inventory_slug }}"
+        state: absent

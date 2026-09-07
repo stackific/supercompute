@@ -1,0 +1,134 @@
+---
+- name: Select the server transport without assuming public SSH remains open
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Probe mesh SSH access to every server
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].private_address }}"
+        port: "{{ hostvars[item].ansible_port | default(default_ssh_port) }}"
+        timeout: >-
+          {{
+            15
+            if (
+              (hostvars[item].roaming | default(false) | bool)
+              or (hostvars[item].node_lima_guest | default(false) | bool)
+            )
+            else 3
+          }}
+        connect_timeout: >-
+          {{
+            15
+            if (
+              (hostvars[item].roaming | default(false) | bool)
+              or (hostvars[item].node_lima_guest | default(false) | bool)
+            )
+            else 3
+          }}
+        state: started
+      loop: "{{ groups['nodes'] }}"
+      loop_control:
+        label: "macOS -> {{ item }} through WireGuard"
+      register: mesh_ssh_probes
+      failed_when: false
+      changed_when: false
+
+    - name: Index per-host mesh SSH reachability from the probe results
+      ansible.builtin.set_fact:
+        mesh_ssh_reachable: >-
+          {{
+            mesh_ssh_reachable | default({})
+            | combine({item.item: (item.state | default('') == 'started')})
+          }}
+      loop: "{{ mesh_ssh_probes.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Record whether every server is already reachable through WireGuard
+      ansible.builtin.set_fact:
+        mesh_ssh_ready: >-
+          {{
+            (
+              mesh_ssh_reachable.values()
+              | select
+              | list
+              | length
+            ) == (groups['nodes'] | length)
+          }}
+
+    - name: Explain the selected server transport
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            mesh_ssh_ready | bool
+            | ternary(
+                'All nodes are reachable through WireGuard; using mesh SSH.',
+                'One or more nodes are not reachable through WireGuard; bootstrap recovery SSH is required (public endpoint, Lima-local SSH for node_lima_guest, or Cloudflare for non-Lima roaming).'
+              )
+          }}
+
+- name: Require reachable bootstrap SSH only when the mesh needs recovery
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Wait for direct public SSH access to every stable server that is off-mesh
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].public_ip }}"
+        port: "{{ hostvars[item].ansible_port | default(default_ssh_port) }}"
+        timeout: 30
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['nodes'] }}"
+      loop_control:
+        label: "macOS -> {{ item }} public recovery SSH"
+      when:
+        - not (mesh_ssh_reachable[item] | default(false) | bool)
+        - not (hostvars[item].roaming | default(false) | bool)
+
+    - name: Wait for Lima-local SSH to every off-mesh Lima guest
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: >-
+          {{
+            lima_nodes
+            | selectattr('name', 'equalto', item)
+            | map(attribute='ssh_port')
+            | first
+          }}
+        timeout: 30
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['nodes'] }}"
+      loop_control:
+        label: "macOS -> {{ item }} Lima SSH"
+      when:
+        - not (mesh_ssh_reachable[item] | default(false) | bool)
+        - hostvars[item].node_lima_guest | default(false) | bool
+
+    - name: Require the Lima SSH identity for every off-mesh Lima guest
+      ansible.builtin.stat:
+        path: "{{ lima_home_dir }}/_config/user"
+      register: lima_ssh_identity
+      loop: "{{ groups['nodes'] }}"
+      loop_control:
+        label: "{{ item }}"
+      when:
+        - not (mesh_ssh_reachable[item] | default(false) | bool)
+        - hostvars[item].node_lima_guest | default(false) | bool
+      failed_when: >-
+        not lima_ssh_identity.stat.exists
+        or lima_ssh_identity.stat.mode != '0600'
+        or lima_ssh_identity.stat.isreg is not true
+
+    - name: Fail clearly when the Lima runtime home does not match inventory
+      ansible.builtin.fail:
+        msg: >-
+          Lima bootstrap for {{ item.item }} expects SSH identity
+          {{ lima_home_dir }}/_config/user (mode 0600). Re-run
+          task lima-up ENV={{ inventory_slug }} if the guest was recreated.
+      when: item.failed | default(false) | bool
+      loop: "{{ lima_ssh_identity.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item | default('lima') }}"

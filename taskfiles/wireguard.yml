@@ -1,13 +1,13 @@
 version: "3"
 
 env:
-  PROVIDER: "{{.PROVIDER}}"
+  ENV: "{{.ENV}}"
 
 tasks:
   wg-status:
     desc: Show WireGuard mesh status for a provider
     requires:
-      vars: [PROVIDER]
+      vars: [ENV]
     preconditions:
       - sh: command -v wg >/dev/null 2>&1
         msg: Install wireguard-tools (wg) before running wg-status
@@ -15,10 +15,10 @@ tasks:
         msg: Install uv before running wg-status
     cmds:
       - |
-        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.ENV}}")"
         case "${platform}" in
           public)
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --ask-become-pass playbooks/cloud-wireguard-status.yml
+            bash scripts/ansible-playbook.sh "{{.ENV}}" --ask-become-pass playbooks/wireguard-status.yml
             ;;
           lima)
             echo "provider.platform=lima is refused; use provider.platform=public." >&2
@@ -29,7 +29,7 @@ tasks:
             exit 2
             ;;
           *)
-            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            echo "ENV={{.ENV}} has unsupported provider.platform=${platform}." >&2
             exit 2
             ;;
         esac
@@ -37,7 +37,7 @@ tasks:
   wg-remove:
     desc: Disconnect the Mac WireGuard controller only (leave nodes and cluster state)
     requires:
-      vars: [PROVIDER]
+      vars: [ENV]
     preconditions:
       - sh: command -v wg >/dev/null 2>&1
         msg: Install wireguard-tools (wg) before running wg-remove
@@ -45,10 +45,10 @@ tasks:
         msg: Install uv before running wg-remove
     cmds:
       - |
-        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.ENV}}")"
         case "${platform}" in
           public)
-            bash scripts/disconnect-cloud-wireguard.sh "{{.PROVIDER}}"
+            bash scripts/disconnect-wireguard.sh "{{.ENV}}"
             ;;
           lima)
             echo "provider.platform=lima is refused; use provider.platform=public." >&2
@@ -59,7 +59,7 @@ tasks:
             exit 2
             ;;
           *)
-            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            echo "ENV={{.ENV}} has unsupported provider.platform=${platform}." >&2
             exit 2
             ;;
         esac
@@ -67,7 +67,7 @@ tasks:
   ssh:
     desc: SSH to a node over WireGuard (NODE=<inventory_hostname>)
     requires:
-      vars: [PROVIDER, NODE]
+      vars: [ENV, NODE]
     env:
       NODE: "{{.NODE}}"
     preconditions:
@@ -82,16 +82,16 @@ tasks:
     internal: true
     desc: Syntax-check WireGuard playbooks for a provider
     requires:
-      vars: [PROVIDER]
+      vars: [ENV]
     cmds:
       - |
-        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.PROVIDER}}")"
+        platform="$(uv run --locked python scripts/provider_platform.py --provider "{{.ENV}}")"
         case "${platform}" in
           public)
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-up.yml
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-down.yml
-            bash scripts/ansible-playbook.sh "{{.PROVIDER}}" --syntax-check playbooks/cloud-wireguard-status.yml
-            bash -n scripts/disconnect-cloud-wireguard.sh
+            bash scripts/ansible-playbook.sh "{{.ENV}}" --syntax-check playbooks/wireguard-up.yml
+            bash scripts/ansible-playbook.sh "{{.ENV}}" --syntax-check playbooks/wireguard-down.yml
+            bash scripts/ansible-playbook.sh "{{.ENV}}" --syntax-check playbooks/wireguard-status.yml
+            bash -n scripts/disconnect-wireguard.sh
             bash -n scripts/wg-ssh.sh
             ;;
           lima)
@@ -103,7 +103,7 @@ tasks:
             exit 2
             ;;
           *)
-            echo "PROVIDER={{.PROVIDER}} has unsupported provider.platform=${platform}." >&2
+            echo "ENV={{.ENV}} has unsupported provider.platform=${platform}." >&2
             exit 2
             ;;
         esac

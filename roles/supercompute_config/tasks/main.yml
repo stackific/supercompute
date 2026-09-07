@@ -1,0 +1,6 @@
+---
+- ansible.builtin.import_tasks: present.yml
+  when: supercompute_config_lifecycle | default('present') == 'present'
+
+- ansible.builtin.import_tasks: absent.yml
+  when: supercompute_config_lifecycle | default('present') == 'absent'

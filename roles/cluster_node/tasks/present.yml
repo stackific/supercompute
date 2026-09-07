@@ -80,6 +80,23 @@
     state: present
     update_cache: true
 
+- name: Ensure PowerDNS drop-in directory exists
+  ansible.builtin.file:
+    path: "{{ cluster_pdns_dropin_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Bind PowerDNS to the mesh address only
+  ansible.builtin.template:
+    src: pdns-local.conf.j2
+    dest: "{{ cluster_pdns_dropin_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart PowerDNS
+
 - name: Enable and start Docker
   ansible.builtin.systemd:
     name: "{{ cluster_docker_service }}"
@@ -94,18 +111,75 @@
     state: started
     daemon_reload: true
 
-- name: Install Caddy without activating its systemd service
+- name: Install Caddy
   ansible.builtin.apt:
-    name: caddy
+    name: "{{ cluster_caddy_package }}"
     state: present
-    policy_rc_d: 101
 
-- name: Keep Caddy disabled and stopped
-  ansible.builtin.systemd:
-    name: caddy
-    enabled: false
-    state: stopped
+- name: Pull the latest application images
+  ansible.builtin.command:
+    argv: [docker, pull, "{{ item.image }}"]
+  loop: "{{ cluster_app_containers }}"
+  loop_control:
+    label: "{{ item.image }}"
+
+- name: Remove existing application containers
+  ansible.builtin.command:
+    argv: [docker, rm, -f, "{{ item.name }}"]
+  loop: "{{ cluster_app_containers }}"
+  loop_control:
+    label: "{{ item.name }}"
   failed_when: false
+
+- name: Run application containers
+  ansible.builtin.command:
+    argv: "{{ _cluster_docker_run }}"
+  vars:
+    _cluster_docker_env: >-
+      {%- set ns = namespace(args=[]) -%}
+      {%- for pair in (item.env | default({}) | dict2items) -%}
+      {%- set ns.args = ns.args + ['-e', pair.key ~ '=' ~ pair.value] -%}
+      {%- endfor -%}
+      {{ ns.args }}
+    _cluster_docker_run: >-
+      {{
+        [
+          'docker',
+          'run',
+          '--detach',
+          '--name',
+          item.name,
+          '--restart',
+          'unless-stopped',
+          '--publish',
+          '127.0.0.1:' ~ (item.port | string) ~ ':' ~ (item.port | string)
+        ]
+        + (_cluster_docker_env | list)
+        + [item.image]
+      }}
+  loop: "{{ cluster_app_containers }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Install Caddyfile for app and api reverse proxies
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ cluster_caddyfile_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: caddy validate --adapter caddyfile --config %s
+  notify: Reload Caddy
+
+- name: Enable and start Caddy
+  ansible.builtin.systemd:
+    name: "{{ cluster_caddy_service }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply queued Caddy reload
+  ansible.builtin.meta: flush_handlers
 
 - name: Prove runsc is on PATH
   ansible.builtin.command:
@@ -115,4 +189,22 @@
 - name: Prove Docker Engine is running
   ansible.builtin.command:
     argv: [docker, version]
+  changed_when: false
+
+- name: Prove application containers are running
+  ansible.builtin.command:
+    argv:
+      - docker
+      - inspect
+      - --format
+      - "{{ '{{.State.Running}}' }}"
+      - "{{ cluster_sc_container_name }}"
+      - "{{ cluster_supercompute_container_name }}"
+  register: cluster_containers_running
+  changed_when: false
+  failed_when: cluster_containers_running.stdout_lines | join(',') != 'true,true'
+
+- name: Prove Caddy is running
+  ansible.builtin.command:
+    argv: [systemctl, is-active, "{{ cluster_caddy_service }}"]
   changed_when: false

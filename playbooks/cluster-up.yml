@@ -1,6 +1,6 @@
 ---
 - name: Bring cluster node software up on every deployment host
-  hosts: deployment
+  hosts: nodes
   gather_facts: true
   any_errors_fatal: true
   serial: 1
