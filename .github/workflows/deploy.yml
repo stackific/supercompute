@@ -54,6 +54,7 @@ jobs:
         run: |
           uv lock --check
           uv sync --locked
+          uv run --locked python scripts/rathole.py fetch
 
       - name: Materialize vault password
         env:
@@ -110,7 +111,8 @@ jobs:
           uv run --locked python scripts/known-hosts.py \
             --inventory "inventories/${ENV}/hosts.yml" \
             --known-hosts ".state/${ENV}/known_hosts" \
-            --reuse-existing
+            --reuse-existing \
+            --skip-non-lima-roaming
 
       - name: Ensure vault secrets
         if: inputs.action == 'up'

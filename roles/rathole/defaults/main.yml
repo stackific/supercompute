@@ -1,0 +1,8 @@
+---
+rathole_lifecycle: server
+rathole_version: "0.5.0"
+rathole_control_port: 2333
+rathole_ssh_port_base: 61000
+rathole_vendor_binary: "{{ project_root }}/.vendor/rathole/rathole"
+rathole_install_path: /usr/local/bin/rathole
+rathole_config_dir: /etc/rathole

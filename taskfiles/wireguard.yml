@@ -78,6 +78,29 @@ tasks:
     cmds:
       - bash scripts/wg-ssh.sh
 
+  rathole-client-bootstrap:
+    desc: Install rathole on the static hub and render a roaming VM install script
+    requires:
+      vars: [ENV, NODE]
+    env:
+      NODE: "{{.NODE}}"
+    preconditions:
+      - sh: command -v uv >/dev/null 2>&1
+        msg: Install uv before running rathole-client-bootstrap
+      - sh: test -x .vendor/rathole/rathole
+        msg: Run task setup to fetch the SHA-pinned rathole binary
+    cmds:
+      - |
+        uv run --locked python scripts/known-hosts.py \
+          --inventory "inventories/{{.ENV}}/hosts.yml" \
+          --known-hosts ".state/{{.ENV}}/known_hosts" \
+          --reuse-existing \
+          --skip-non-lima-roaming
+        ENV="{{.ENV}}" uv run --locked python scripts/vault.py ensure-secrets
+        bash scripts/ansible-playbook.sh "{{.ENV}}" --ask-become-pass playbooks/rathole-server.yml
+        uv run --locked python scripts/rathole.py render-client --provider "{{.ENV}}" --node "{{.NODE}}"
+        echo "Copy that install script to {{.NODE}} and run it as root, then prove jump SSH and task up."
+
   wg-syntax:
     internal: true
     desc: Syntax-check WireGuard playbooks for a provider
@@ -91,6 +114,7 @@ tasks:
             bash scripts/ansible-playbook.sh "{{.ENV}}" --syntax-check playbooks/wireguard-up.yml
             bash scripts/ansible-playbook.sh "{{.ENV}}" --syntax-check playbooks/wireguard-down.yml
             bash scripts/ansible-playbook.sh "{{.ENV}}" --syntax-check playbooks/wireguard-status.yml
+            bash scripts/ansible-playbook.sh "{{.ENV}}" --syntax-check playbooks/rathole-server.yml
             bash -n scripts/disconnect-wireguard.sh
             bash -n scripts/wg-ssh.sh
             ;;

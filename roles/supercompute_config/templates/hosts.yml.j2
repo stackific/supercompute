@@ -1,12 +1,11 @@
 # Managed by supercompute_config — edit inventories/<provider>/hosts.yml and re-run task up.
 project: {{ project }}
-hostname: {{ hostname }}
-nameserver_hostname: {{ nameserver_hostname }}
-database_url: "{{ vault_database_url }}"
-database_secret: "{{ vault_database_secret }}"
+sc_ns: {{ sc_ns }}
 sc_api: {{ sc_api }}
 sc_app: {{ sc_app }}
 sc_apps: {{ sc_apps }}
+database_url: "{{ vault_database_url }}"
+database_secret: "{{ vault_database_secret }}"
 hosts:
 {% for node in groups['nodes'] | sort %}
 {% set node_vars = hostvars[node] %}

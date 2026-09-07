@@ -44,7 +44,7 @@ The encrypted vault must contain `vault_database_url` (`postgresql://REPLACE_WIT
 | `OPS_SSH_PRIVATE_KEY` | yes | Private key for `ops` on nodes |
 | `MAC_OPERATOR_SSH_PUBLIC_KEY` | no | If set, installed into `/home/ops/.ssh/authorized_keys` |
 
-Cloudflare Access / tunnels are **operator-owned** and outside this project. Non-Lima roaming may still use `bootstrap_ssh_host` in inventory; configure the tunnel yourself. This workflow does not store Cloudflare API tokens.
+Non-Lima roaming uses rathole on the static hub (inbound **TCP 2333**). The workflow fetches the SHA-pinned rathole binary the same way as `task setup`. First known-hosts scan skips roaming until the hub jump is listening (`--skip-non-lima-roaming`); `wireguard-up` refreshes those keys through the jump. `down` leaves rathole in place.
 
 Nodes must allow passwordless `sudo` for `ops` (GHA cannot prompt for a become password).
 
@@ -65,4 +65,5 @@ After WireGuard is up, every roaming node (Mac or GHA path) runs `/usr/local/sbi
 
 - [vault.md](vault.md) — creating `.vault-pass`
 - [wireguard.md](wireguard.md) — mesh behavior
+- [roaming-nodes.md](roaming-nodes.md) — rathole bootstrap for home-lab nodes
 - [setup-prod.md](setup-prod.md) — production inventory shape

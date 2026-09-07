@@ -36,7 +36,10 @@ Our objective is to complete `inventories/<env>/hosts.yml` — for `dev`, that i
 all:
   vars:
     project: example
-    hostname: example.com
+    sc_ns: ns.example.com
+    sc_api: sc-api.example.com
+    sc_app: sc-app.example.com
+    sc_apps: sc-apps.example.com
 
 nodes:
   hosts:
@@ -53,7 +56,10 @@ nodes:
 all:
   vars:
     project: <project>
-    hostname: <your-prefix>.<project>.com
+    sc_ns: ns.<your-prefix>.<project>.com
+    sc_api: sc-api.<your-prefix>.<project>.com
+    sc_app: sc-app.<your-prefix>.<project>.com
+    sc_apps: sc-apps.<your-prefix>.<project>.com
 
 nodes:
   hosts:
@@ -208,11 +214,11 @@ static-1:
 </TabItem>
 </Tabs>
 
-To add another public node, duplicate the block as `static-2`, assign the next mesh IP (e.g. `.12`), add an A record for `ns.<hostname>` pointing at that node's public IPv4, and run `task up ENV=<env>` again. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+To add another public node, duplicate the block as `static-2`, assign the next mesh IP (e.g. `.12`), add an A record for `sc_ns` pointing at that node's public IPv4, and run `task up ENV=<env>` again. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
 
 ### Step 7: Cloud provider firewall
 
-Open TCP 22 for bootstrap and UDP 51830 if roaming peers will dial in later.
+Open TCP 22 for bootstrap, UDP 51830 if roaming peers will dial in later, and TCP 2333 on the first static hub for rathole.
 
 On the cloud provider (or host) firewall for this VM:
 
@@ -220,6 +226,7 @@ On the cloud provider (or host) firewall for this VM:
 | --- | --- |
 | Before setup | Allow inbound **TCP 22** from your Mac’s current public `/32` |
 | After setup | Allow inbound **UDP 51830** from peers that will dial this hub (if roaming nodes are added later, open UDP 51830 broadly—not only the Mac `/32`) |
+| After setup | On the **first static hub**, allow inbound **TCP 2333** if you will add a non-Lima roaming node ([Adding a roaming node](/guides/adding-roaming-node/)) |
 | After setup | Allow inbound **TCP 80** and **TCP 443** |
 
 Your Mac does **not** need further configuration for this step.

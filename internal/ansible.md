@@ -6,9 +6,11 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 
 | Playbook | Purpose |
 | --- | --- |
-| `playbooks/wireguard-up.yml` | Classify static/roaming; hub; Mac controller when `control_plane!=gha`; nodes |
-| `playbooks/wireguard-down.yml` | Tear down node WireGuard (`wireguard_node` absent) |
+| `playbooks/classify-mesh.yml` | Classify static vs roaming; pick `static_hub`; set `has_non_lima_roaming` |
+| `playbooks/wireguard-up.yml` | Classify; rathole server; hub; Mac controller when `control_plane!=gha`; nodes |
+| `playbooks/wireguard-down.yml` | Tear down node WireGuard (`wireguard_node` absent); rathole stays |
 | `playbooks/wireguard-status.yml` | Mesh status |
+| `playbooks/rathole-server.yml` | Rathole server on `rathole_hub` (in-memory group; non-Lima roaming only) |
 | `playbooks/gha-mesh-peer.yml` | Ephemeral GitHub Actions WireGuard peer on nodes |
 | `playbooks/lima-up.yml` | Create/start `node_lima_guest` VMs |
 | `playbooks/lima-status.yml` | Lima resource status |
@@ -26,24 +28,26 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 | `wireguard_controller` | macOS controller `scwg0`, LaunchDaemon (`control_plane: mac`) |
 | `wireguard_node` | Ubuntu nodes: WireGuard, static forwarding, roaming dial helper, syncconf |
 | `supercompute_config` | Ubuntu nodes: `/etc/supercompute/hosts.yml` + dial sidecars |
+| `rathole` | SHA-pinned reverse SSH tunnel (server on hub, client on non-Lima roaming) |
 | `lima` | Lima guest lifecycle (`dev-lima` testing) |
 | `cluster_node` | gVisor, Docker CE, Caddy, PowerDNS |
 
 ## `wireguard-up` flow (summary)
 
 1. **localhost** — Assert `provider.platform: public`; classify static vs roaming; pick `static_hub` (first static host).
-2. **localhost** — `wireguard_controller` when `control_plane` is not `gha`.
-3. **localhost** — Probe mesh SSH (3s static / 15s roaming or Lima); choose bootstrap vs mesh transport per node.
-4. **nodes** — `wireguard_node` with bootstrap SSH (public, Cloudflare, or Lima-local); install `/etc/supercompute/*`; post-up roaming dial helper + timer.
+2. **static hub** — Rathole server when non-Lima roaming exists (public SSH); refresh roaming known_hosts through the jump.
+3. **localhost** — `wireguard_controller` when `control_plane` is not `gha`.
+4. **localhost** — Probe mesh SSH (3s static / 15s roaming or Lima); choose bootstrap vs mesh transport per node.
+5. **nodes** — `wireguard_node` with bootstrap SSH (public, rathole jump, or Lima-local); install `/etc/supercompute/*`; post-up roaming dial helper + timer. Non-Lima roaming also reconciles the rathole client.
 
 ## `cluster_node` role
 
 Controlled by `cluster_lifecycle`:
 
-- **`present`** — Install gVisor, Docker, PowerDNS, and Caddy; pull and run the `sc` and `supercompute` containers (`unless-stopped`; recreate from `:latest` when already present); set `SC_API` on `sc` and `SC_DASH` on `supercompute`; point `sc-app.` at `sc` and `sc-api.` at `supercompute`.
+- **`present`** — Install gVisor, Docker, PowerDNS, and Caddy; pull and run the `sc` and `supercompute` containers (`unless-stopped`; recreate from `:latest` when already present); set `SC_API` on `sc` and `SC_APP` / `SC_NS` / `SC_APPS` on `supercompute`; point `sc_app` at `sc` and `sc_api` at `supercompute`.
 - **`absent`** — Remove cluster software; leave WireGuard intact.
 
-The nameserver hostname is `dns_prefix_ns` from `group_vars/all/main.yml` plus `hostname` from `inventories/<provider>/hosts.yml` → `all.vars`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+Set `sc_ns`, `sc_api`, `sc_app`, and `sc_apps` in `inventories/<provider>/hosts.yml` → `all.vars` (defaults `ns.example.com`, `sc-api.example.com`, `sc-app.example.com`, `sc-apps.example.com`). `sc_ns` must have a parent zone so Mac LaunchDaemon reverse-DNS can be derived from it (`ns.example.com` → `com.example`). If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
 
 ## Inventory groups used
 

@@ -77,23 +77,22 @@
   loop: "{{ groups['nodes'] }}"
   when: not (hostvars[item].roaming | default(false) | bool)
 
-- name: Require Cloudflare bootstrap hosts for non-Lima roaming nodes
+- name: Require non-Lima roaming nodes to omit public_ip and bootstrap_ssh_host
   ansible.builtin.assert:
     that:
-      - hostvars[item].bootstrap_ssh_host is string
-      - hostvars[item].bootstrap_ssh_host | length > 0
-      - hostvars[item].bootstrap_ssh_host is not match('^REPLACE_WITH_')
       - hostvars[item].public_ip is not defined
         or hostvars[item].public_ip | length == 0
+      - hostvars[item].bootstrap_ssh_host is not defined
+        or hostvars[item].bootstrap_ssh_host | length == 0
     fail_msg: >-
-      {{ item }} (roaming, non-Lima) must set bootstrap_ssh_host and
-      must not set public_ip in inventories/{{ inventory_slug }}/hosts.yml.
+      {{ item }} (roaming, non-Lima) must omit public_ip and
+      bootstrap_ssh_host; rathole bootstrap is derived from the static hub.
   loop: "{{ groups['nodes'] }}"
   when:
     - hostvars[item].roaming | default(false) | bool
     - not (hostvars[item].node_lima_guest | default(false) | bool)
 
-- name: Require Lima guests to roam without Cloudflare bootstrap hosts
+- name: Require Lima guests to roam without rathole or public endpoints
   ansible.builtin.assert:
     that:
       - hostvars[item].roaming | default(false) | bool

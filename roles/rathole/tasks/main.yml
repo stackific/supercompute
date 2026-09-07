@@ -1,0 +1,3 @@
+---
+- name: Apply rathole lifecycle
+  ansible.builtin.include_tasks: "{{ rathole_lifecycle }}.yml"

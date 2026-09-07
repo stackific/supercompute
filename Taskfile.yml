@@ -34,4 +34,5 @@ tasks:
           '  dev-reset      CONFIRM=reset-dev' \
           '  dev-reset-lima CONFIRM=reset-dev-lima' \
           '  lima-up        ENV=dev-lima (or other env with node_lima_guest hosts)' \
-          '  ssh            NODE=<inventory_hostname>'
+          '  ssh            NODE=<inventory_hostname>' \
+          '  rathole-client-bootstrap ENV=<slug> NODE=<roaming-host>'

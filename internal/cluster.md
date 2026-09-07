@@ -9,15 +9,24 @@
 | **gVisor** | `runsc` from gvisor.dev apt repo |
 | **Docker Engine** | `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin` from Docker’s Ubuntu repo |
 | **PowerDNS** | `pdns-server`, `dnsutils` |
-| **Caddy** | Reverse proxy: `sc-app.` → `sc` container, `sc-api.` → `supercompute` container |
-| **sc** | `ghcr.io/stackific/sc/sc:latest`, restart `unless-stopped`; `SC_API` = `https://` + `dns_prefix_api` + `hostname` |
-| **supercompute** | `ghcr.io/stackific/sc/supercompute:latest`, restart `unless-stopped`; `SC_DASH` = `https://` + `dns_prefix_app` + `hostname` |
+| **Caddy** | Reverse proxy: `sc_app` → `sc` container, `sc_api` → `supercompute` container |
+| **sc** | `ghcr.io/stackific/sc/sc:latest`, restart `unless-stopped` |
+| **supercompute** | `ghcr.io/stackific/sc/supercompute:latest`, restart `unless-stopped` |
+
+Container env vars are a curated pass-through of `hosts.yml` `all.vars` (not every inventory key). `/etc/supercompute/hosts.yml` on the node is a separate file; it is not mounted into the containers.
+
+| Container | Env | Value |
+| --- | --- | --- |
+| `sc` | `SC_API` | `https://` + `sc_api` |
+| `supercompute` | `SC_APP` | `https://` + `sc_app` |
+| `supercompute` | `SC_NS` | `sc_ns` (FQDN, no scheme) |
+| `supercompute` | `SC_APPS` | `sc_apps` (FQDN, no scheme) |
 
 ## DNS boundary
 
 PowerDNS listens on the node mesh address only (`pdns.d/supercompute-local.conf`) so host DNS stays on `systemd-resolved`. Teardown removes that drop-in and restarts `systemd-resolved`.
 
-Set `hostname` in `hosts.yml` → `all.vars` (for example `example.com`). Prefixes come from `group_vars/all/main.yml` (`dns_prefix_ns`, `dns_prefix_api`, `dns_prefix_app`, `dns_prefix_apps`; defaults `ns`, `sc-api`, `sc-app`, `apps`). Parent DNS: A for `ns.`, CNAME `sc-api.` and `sc-app.` to the nameserver hostname, and NS-delegate `apps.` to it. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. PowerDNS currently listens on the mesh address only.
+Set `sc_ns`, `sc_api`, `sc_app`, and `sc_apps` in `hosts.yml` → `all.vars`. `sc_ns` must have a parent zone (for example `ns.example.com`) so Mac LaunchDaemon reverse-DNS can be derived from it (`ns.example.com` → `com.example`). Parent DNS: A for `sc_ns`, CNAME `sc_api` and `sc_app` to `sc_ns`, and NS-delegate `sc_apps` to `sc_ns`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. PowerDNS currently listens on the mesh address only.
 
 ## Architecture mapping
 
@@ -33,7 +42,7 @@ task up ENV=<env>
 task down ENV=<env> CONFIRM=down-<slug>   # stop; keeps vault, .state/, Lima
 ```
 
-`down` removes cluster software and configs, tears down node WireGuard (including `/etc/supercompute/*`), and disconnects the Mac controller mesh (`control_plane: mac`). Down playbooks use mesh SSH when available and bootstrap recovery (public IP, Lima-local, Cloudflare) when the mesh is down.
+`down` removes cluster software and configs, tears down node WireGuard (including `/etc/supercompute/*`), and disconnects the Mac controller mesh (`control_plane: mac`). Down playbooks use mesh SSH when available and bootstrap recovery (public IP, Lima-local, rathole jump) when the mesh is down. Rathole itself stays installed so roaming recovery still works.
 
 Factory-reset local automation (vault, `.state/`, optional Lima) with `env-reset` / `dev-reset` / `dev-reset-lima` — see [tasks.md](tasks.md). For GHA-managed inventories use the Actions workflow instead — [gha-deploy.md](gha-deploy.md).
 

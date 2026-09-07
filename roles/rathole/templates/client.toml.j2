@@ -1,0 +1,15 @@
+[client]
+remote_addr = "{{ hostvars[hostvars['localhost'].static_hub].public_ip }}:{{ rathole_control_port }}"
+heartbeat_timeout = 40
+retry_interval = 1
+
+[client.transport]
+type = "noise"
+
+[client.transport.noise]
+remote_public_key = "{{ vault_rathole_noise_public_key }}"
+
+[client.services.{{ inventory_hostname }}]
+type = "tcp"
+token = "{{ vault_rathole_tokens[inventory_hostname] }}"
+local_addr = "127.0.0.1:22"

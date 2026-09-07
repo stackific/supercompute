@@ -11,6 +11,7 @@ import ipaddress
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,11 @@ def parse_args() -> argparse.Namespace:
     "--reuse-existing",
     action="store_true",
     help="reuse a complete mode-0600 alias file after validating every inventory fingerprint",
+  )
+  parser.add_argument(
+    "--skip-non-lima-roaming",
+    action="store_true",
+    help="omit non-Lima roaming hosts (scan them after rathole is listening)",
   )
   return parser.parse_args()
 
@@ -111,7 +117,34 @@ def inventory_host_vars(inventory: dict) -> dict[str, dict]:
     raise HostKeyError(str(error)) from error
 
 
-def load_contract(inventory_path: Path) -> list[dict[str, str]]:
+def load_group_vars(inventory_path: Path) -> dict:
+  main_path = inventory_path.parent / "group_vars" / "all" / "main.yml"
+  try:
+    document = yaml.safe_load(main_path.read_text(encoding="utf-8"))
+  except FileNotFoundError as error:
+    raise HostKeyError(f"Provider configuration does not exist: {main_path}") from error
+  except yaml.YAMLError as error:
+    raise HostKeyError(f"Invalid YAML in {main_path}: {error}") from error
+  if not isinstance(document, dict):
+    raise HostKeyError(f"{main_path} must contain a YAML mapping")
+  return document
+
+
+def rathole_listen_port(private_address: str, port_base: int) -> int:
+  try:
+    address = ipaddress.ip_address(private_address)
+  except ValueError as error:
+    raise HostKeyError(f"private_address must be IPv4: {private_address}") from error
+  if address.version != 4:
+    raise HostKeyError(f"private_address must be IPv4: {private_address}")
+  return port_base + int(str(address).rsplit(".", 1)[1])
+
+
+def load_contract(
+  inventory_path: Path,
+  *,
+  skip_non_lima_roaming: bool = False,
+) -> list[dict[str, str]]:
   """Build the known_hosts sync contract from hosts.yml (source of truth)."""
   with inventory_path.open(encoding="utf-8") as source:
     inventory = yaml.safe_load(source)
@@ -126,6 +159,33 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
     raise HostKeyError("Inventory aliases must be unique")
 
   lima_ports = lima_ssh_ports(inventory_path)
+  group_vars = load_group_vars(inventory_path)
+  port_base = group_vars.get("rathole_ssh_port_base", 61000)
+  if not isinstance(port_base, int):
+    raise HostKeyError("rathole_ssh_port_base must be an integer")
+  ssh_user = group_vars.get("default_ssh_user", "ops")
+  if not isinstance(ssh_user, str) or not ssh_user:
+    raise HostKeyError("default_ssh_user must be a non-empty string")
+  try:
+    identity = inventory_hosts.identity_vars(
+      inventory_path.parent.name, document=inventory
+    )
+  except inventory_hosts.InventoryError as error:
+    raise HostKeyError(str(error)) from error
+  ssh_key = Path.home() / ".ssh" / f"{identity['project']}-{inventory_path.parent.name}"
+
+  static_names = sorted(
+    name for name, values in hosts.items() if not is_roaming(values)
+  )
+  hub_alias = static_names[0] if static_names else ""
+  hub_endpoint = ""
+  if hub_alias:
+    hub_endpoint = validate_dial_target(
+      hosts[hub_alias].get("public_ip"),
+      hub_alias,
+      "public_ip",
+    )
+
   contract: list[dict[str, str]] = []
   for node in nodes:
     values = hosts[node]
@@ -138,6 +198,7 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
     if fingerprint.startswith("SHA256:REPLACE_WITH_"):
       raise HostKeyError(f"{node}: replace ssh_ed25519_sha256 placeholder first")
 
+    extra: dict[str, str] = {}
     if is_lima_guest(values):
       if not is_roaming(values):
         raise HostKeyError(f"{node}: node_lima_guest requires roaming: true")
@@ -156,13 +217,31 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
       kind = "lima"
       port = str(lima_ports[node])
     elif is_roaming(values):
-      dial = validate_dial_target(
-        values.get("bootstrap_ssh_host"),
-        node,
-        "bootstrap_ssh_host",
-      )
+      if values.get("bootstrap_ssh_host"):
+        raise HostKeyError(
+          f"{node}: non-Lima roaming must omit bootstrap_ssh_host "
+          "(rathole jump uses the static hub)"
+        )
+      if values.get("public_ip"):
+        raise HostKeyError(f"{node}: roaming hosts must omit public_ip")
+      if skip_non_lima_roaming:
+        continue
+      if not hub_alias:
+        raise HostKeyError(
+          f"{node}: non-Lima roaming needs a static public hub for rathole"
+        )
+      private_address = values.get("private_address")
+      if not isinstance(private_address, str) or not private_address:
+        raise HostKeyError(f"{node}: private_address is required")
+      dial = "127.0.0.1"
       kind = "roaming"
-      port = ""
+      port = str(rathole_listen_port(private_address, port_base))
+      extra = {
+        "hub_alias": hub_alias,
+        "hub_endpoint": hub_endpoint,
+        "ssh_user": ssh_user,
+        "ssh_key": str(ssh_key),
+      }
     else:
       dial = validate_dial_target(
         values.get("public_ip"),
@@ -179,15 +258,20 @@ def load_contract(inventory_path: Path) -> list[dict[str, str]]:
         "port": port,
         "expected": fingerprint,
         "kind": kind,
+        **extra,
       }
     )
 
   public_endpoints = [item["endpoint"] for item in contract if item["kind"] == "public"]
   if len(set(public_endpoints)) != len(public_endpoints):
     raise HostKeyError("Inventory contains duplicate public endpoints among static hosts")
-  roaming_hosts = [item["endpoint"] for item in contract if item["kind"] == "roaming"]
-  if len(set(roaming_hosts)) != len(roaming_hosts):
-    raise HostKeyError("Inventory contains duplicate bootstrap_ssh_host values")
+  roaming_targets = [
+    f"{item['hub_alias']}:{item['port']}"
+    for item in contract
+    if item["kind"] == "roaming"
+  ]
+  if len(set(roaming_targets)) != len(roaming_targets):
+    raise HostKeyError("Inventory contains duplicate rathole SSH listen ports")
   lima_endpoints = [
     f"{item['endpoint']}:{item['port']}" for item in contract if item["kind"] == "lima"
   ]
@@ -247,7 +331,7 @@ def parse_host_pubkey_line(output: str, node: str) -> tuple[str, str]:
     return fields[1], fingerprint_key_blob(fields[1])
   raise HostKeyError(
     f"{node}: bootstrap SSH did not return /etc/ssh/ssh_host_ed25519_key.pub "
-    "(prove `ssh <bootstrap_ssh_host> true` per internal/roaming-nodes.md first)"
+    "(prove rathole jump SSH per internal/roaming-nodes.md first)"
   )
 
 
@@ -287,14 +371,42 @@ def scan_public_node(
 
 def scan_roaming_node(
   node: str,
-  bootstrap_host: str,
+  item: dict[str, str],
   expected: str,
   timeout: int,
+  jump_known_hosts: Path,
 ) -> tuple[str, str]:
-  """Fetch the origin host key through the operator SSH config (Cloudflare ProxyCommand)."""
+  """Fetch the origin host key through rathole on the static hub."""
+  ssh_key = Path(item["ssh_key"])
+  if not ssh_key.is_file():
+    raise HostKeyError(f"{node}: missing operator SSH key {ssh_key}")
+  jump = [
+    "ssh",
+    "-F",
+    "/dev/null",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    f"ConnectTimeout={timeout}",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    f"UserKnownHostsFile={jump_known_hosts}",
+    "-o",
+    "IdentitiesOnly=yes",
+    "-o",
+    f"HostKeyAlias={item['hub_alias']}",
+    "-i",
+    str(ssh_key),
+    "-W",
+    f"127.0.0.1:{item['port']}",
+    f"{item['ssh_user']}@{item['hub_endpoint']}",
+  ]
   result = subprocess.run(
     [
       "ssh",
+      "-F",
+      "/dev/null",
       "-o",
       "BatchMode=yes",
       "-o",
@@ -305,7 +417,13 @@ def scan_roaming_node(
       "UserKnownHostsFile=/dev/null",
       "-o",
       "GlobalKnownHostsFile=/dev/null",
-      bootstrap_host,
+      "-o",
+      "IdentitiesOnly=yes",
+      "-i",
+      str(ssh_key),
+      "-o",
+      f"ProxyCommand={shlex.join(jump)}",
+      f"{item['ssh_user']}@127.0.0.1",
       "cat /etc/ssh/ssh_host_ed25519_key.pub",
     ],
     check=False,
@@ -316,8 +434,10 @@ def scan_roaming_node(
   if result.returncode != 0:
     detail = (result.stderr or result.stdout or "").strip() or f"exit {result.returncode}"
     raise HostKeyError(
-      f"{node}: bootstrap SSH to {bootstrap_host} failed ({detail}). "
-      "Prove SSH via Cloudflare first (internal/roaming-nodes.md), then re-run up."
+      f"{node}: rathole jump SSH to {item['hub_alias']} "
+      f"127.0.0.1:{item['port']} failed ({detail}). "
+      "Install the rathole client on the roaming VM "
+      "(task rathole-client-bootstrap) then re-run up."
     )
   encoded_key, observed = parse_host_pubkey_line(result.stdout, node)
   if observed != expected:
@@ -332,14 +452,37 @@ def scan_contract(
 ) -> tuple[list[str], list[str]]:
   known_host_lines: list[str] = []
   errors: list[str] = []
-  for item in contract:
+  public_items = [item for item in contract if item["kind"] == "public"]
+  lima_items = [item for item in contract if item["kind"] == "lima"]
+  roaming_items = [item for item in contract if item["kind"] == "roaming"]
+  ordered = public_items + lima_items + roaming_items
+  jump_known_hosts = temporary_directory / "jump.known_hosts"
+
+  def record(item: dict[str, str], encoded_key: str, observed: str, outcome: str) -> None:
+    endpoint_display = (
+      f"{item['endpoint']}:{item['port']}"
+      if item["kind"] in {"lima", "roaming"} and item.get("port")
+      else item["endpoint"]
+    )
+    print(
+      f"node={item['node']} kind={item['kind']} endpoint={endpoint_display} "
+      f"expected={item['expected']} observed={observed} result={outcome}"
+    )
+
+  for item in ordered:
     node = item["node"]
     endpoint = item["endpoint"]
     expected = item["expected"]
     kind = item["kind"]
     try:
       if kind == "roaming":
-        encoded_key, observed = scan_roaming_node(node, endpoint, expected, timeout)
+        if not jump_known_hosts.is_file():
+          raise HostKeyError(
+            f"{node}: rathole jump needs a scanned static hub host key first"
+          )
+        encoded_key, observed = scan_roaming_node(
+          node, item, expected, timeout, jump_known_hosts
+        )
       elif kind == "lima":
         port = int(item["port"])
         encoded_key, observed = scan_public_node(
@@ -355,18 +498,14 @@ def scan_contract(
           node, endpoint, expected, timeout, temporary_directory
         )
       known_host_lines.append(f"{node} ssh-ed25519 {encoded_key}\n")
-      outcome = "match"
+      if kind == "public":
+        jump_known_hosts.write_text("".join(known_host_lines), encoding="utf-8")
+        jump_known_hosts.chmod(0o600)
+      record(item, encoded_key, observed, "match")
     except (HostKeyError, subprocess.TimeoutExpired, ValueError) as error:
       observed = "<unavailable>"
       errors.append(str(error))
-      outcome = "REJECTED"
-    endpoint_display = (
-      f"{endpoint}:{item['port']}" if kind == "lima" and item.get("port") else endpoint
-    )
-    print(
-      f"node={node} kind={kind} endpoint={endpoint_display} expected={expected} "
-      f"observed={observed} result={outcome}"
-    )
+      record(item, "", observed, "REJECTED")
   return known_host_lines, errors
 
 
@@ -434,7 +573,7 @@ def validate_existing_known_hosts(
       raise HostKeyError(f"{item['node']}: existing known_hosts fingerprint mismatch")
     endpoint_display = (
       f"{item['endpoint']}:{item['port']}"
-      if item["kind"] == "lima" and item.get("port")
+      if item["kind"] in {"lima", "roaming"} and item.get("port")
       else item["endpoint"]
     )
     print(
@@ -449,7 +588,10 @@ def main() -> int:
     print("ERROR: --timeout must be at least one second", file=sys.stderr)
     return 2
   try:
-    contract = load_contract(args.inventory)
+    contract = load_contract(
+      args.inventory,
+      skip_non_lima_roaming=args.skip_non_lima_roaming,
+    )
     if args.reuse_existing and args.known_hosts.exists():
       try:
         validate_existing_known_hosts(contract, args.known_hosts)

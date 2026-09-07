@@ -21,11 +21,11 @@ You have already tried and run [Get started locally](/start-here/get-started/) l
 
 ### Step 1: Configure prod hosts
 
-Set `hostname` and fill public IPs and SSH fingerprints for both static nodes.
+Set the `sc_*` FQDNs, then fill public IPs and SSH fingerprints for both static nodes.
 
 Edit `inventories/prod/hosts.yml`:
 
-1. Set `all.vars.hostname` (for example `example.com`). Nameserver, API, app, and app URLs are derived from that name.
+1. Set `sc_ns`, `sc_api`, `sc_app`, and `sc_apps` (defaults `ns.example.com` / `sc-api.example.com` / `sc-app.example.com` / `sc-apps.example.com`). `sc_ns` must have a parent zone (for example `ns.example.com`).
 2. Fill placeholders for **static-1** and **static-2** (public IP and SSH host-key fingerprint). Install this public key on each VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
 
 <Tabs syncKey="pkg">
@@ -36,7 +36,10 @@ Edit `inventories/prod/hosts.yml`:
 all:
   vars:
     project: example
-    hostname: example.com
+    sc_ns: ns.example.com
+    sc_api: sc-api.example.com
+    sc_app: sc-app.example.com
+    sc_apps: sc-apps.example.com
 
 nodes:
   hosts:
@@ -58,7 +61,10 @@ nodes:
 all:
   vars:
     project: <project>
-    hostname: <your-prefix>.<project>.com
+    sc_ns: ns.<your-prefix>.<project>.com
+    sc_api: sc-api.<your-prefix>.<project>.com
+    sc_app: sc-app.<your-prefix>.<project>.com
+    sc_apps: sc-apps.<your-prefix>.<project>.com
 
 nodes:
   hosts:
@@ -77,24 +83,19 @@ nodes:
 
 ### Step 2: Configure DNS
 
-Create records for the hostname you set in Step 1. Supercompute derives the rest by adding the hostname as a common suffix. Leave `example.com` at your registrar. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+Create records matching `sc_ns`, `sc_api`, `sc_app`, and `sc_apps` from Step 1. Leave `example.com` at your registrar. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
 
-| Prefix | Name | Type | Value |
+| Inventory var | Example | Type | Value |
 | --- | --- | --- | --- |
-| `ns` | `ns.example.com` | A | **static-1** public IPv4 |
-| `ns` | `ns.example.com` | A | **static-2** public IPv4 |
-| `sc-api` | `sc-api.example.com` | CNAME | `ns.example.com` |
-| `sc-app` | `sc-app.example.com` | CNAME | `ns.example.com` |
+| `sc_ns` | `ns.example.com` | A | **static-1** public IPv4 |
+| `sc_ns` | `ns.example.com` | A | **static-2** public IPv4 |
+| `sc_api` | `sc-api.example.com` | CNAME | `ns.example.com` |
+| `sc_app` | `sc-app.example.com` | CNAME | `ns.example.com` |
+| `sc_apps` | `sc-apps.example.com` | NS | `ns.example.com` |
 
-Later, dynamic app URLs use the same nameserver:
+Supercompute's Nameserver then serves `*.sc-apps.example.com`. If the VM IPs are not ready yet, add the A records before bring-up.
 
-| Prefix | Name | Type | Value |
-| --- | --- | --- | --- |
-| `apps` | `apps.example.com` | NS | `ns.example.com` |
-
-Supercompute's Nameserver then serves `*.apps.example.com`. If the VM IPs are not ready yet, add the A records before bring-up.
-
-To use different API or app hostnames, edit `dns_prefix_api` and `dns_prefix_app` (and other `dns_prefix_*` values if needed) in `inventories/<env>/group_vars/all/main.yml`, then create matching DNS records and re-run `task up`.
+To use different names, edit those `all.vars` in `hosts.yml`, create matching DNS records, and re-run `task up`.
 
 ### Step 3: Prepare the two public VMs
 
@@ -108,7 +109,7 @@ For **static-1** and **static-2**:
 2. Create `ops`, install `~/.ssh/example-prod.pub`, passwordless sudo.
 3. Record each host’s `SHA256:…` from `/etc/ssh/ssh_host_ed25519_key.pub`.
 4. Fill `public_ip` and `ssh_ed25519_sha256` in `hosts.yml`.
-5. Firewall: TCP **22** from your Mac `/32` during bootstrap. Open **UDP 51830** broadly if you plan to add roaming nodes later ([Adding a roaming node](/guides/adding-roaming-node/)).
+5. Firewall: TCP **22** from your Mac `/32` during bootstrap. Open **UDP 51830** broadly if you plan to add roaming nodes later. The first static hub also needs inbound **TCP 2333** for rathole when you add a non-Lima roaming node ([Adding a roaming node](/guides/adding-roaming-node/)).
 
 Prove SSH:
 
@@ -125,7 +126,7 @@ Create the encrypted vault and local password file for prod.
 task vault-init ENV=prod
 ```
 
-Creates `inventories/prod/.vault-pass` and encrypted `vault.yml` with `vault_meta`, placeholder `vault_database_url`, and auto-generated `vault_database_secret`. The first `task up` adds WireGuard keypairs.
+Creates `inventories/prod/.vault-pass` and encrypted `vault.yml` with `vault_meta`, placeholder `vault_database_url`, and auto-generated `vault_database_secret`. The first `task up` adds WireGuard keypairs (and rathole secrets if you add non-Lima roaming hosts).
 
 Decrypted `inventories/prod/group_vars/all/vault.yml` looks like this:
 
@@ -238,8 +239,8 @@ If you can access both nodes, you are done with this guide.
 
 | Item | Done |
 | --- | --- |
-| `hostname` set in `hosts.yml` (for example `example.com`) | |
-| Parent DNS: `ns` A per static + `api`/`app` CNAME to ns + `apps` NS (Cloudflare proxy off) | |
+| `sc_*` FQDNs set in `hosts.yml` | |
+| Parent DNS: `sc_ns` A per static + `sc_api`/`sc_app` CNAME to `sc_ns` + `sc_apps` NS (Cloudflare proxy off) | |
 | `static-1` + `static-2` public IPs + fingerprints in `hosts.yml` | |
 | `~/.ssh/example-prod` on both VMs (`ops` user) | |
 | `vault_database_url` set in prod vault (not placeholder) | |

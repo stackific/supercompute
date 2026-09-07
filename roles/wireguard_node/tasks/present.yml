@@ -49,9 +49,11 @@
         (not (roaming | default(false) | bool))
         or (node_lima_guest | default(false) | bool)
         or (
-          bootstrap_ssh_host is string
-          and bootstrap_ssh_host | length > 0
-          and bootstrap_ssh_host is not match('^REPLACE_WITH_')
+          (public_ip is not defined or public_ip | length == 0)
+          and (
+            bootstrap_ssh_host is not defined
+            or bootstrap_ssh_host | length == 0
+          )
         )
       - >
         (not (node_lima_guest | default(false) | bool))
@@ -70,7 +72,7 @@
       This server lacks hosts.yml private_address, a complete
       Vault-managed WireGuard identity, or the correct bootstrap dial target
       (public_ip for a static public host; Lima-local SSH for
-      node_lima_guest; bootstrap_ssh_host for non-Lima roaming).
+      node_lima_guest; rathole jump via the static hub for non-Lima roaming).
   no_log: true
 
 - name: Require WireGuard material for every server

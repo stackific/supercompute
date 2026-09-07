@@ -4,19 +4,27 @@
     that:
       - project is string
       - project | length > 0
-      - hostname is string
-      - hostname | length > 0
-      - hostname is not search('REPLACE_WITH_')
-      - hostname is not search('<')
-      - "'.' in hostname"
-      - dns_prefix_ns is string
-      - dns_prefix_ns | length > 0
-      - dns_prefix_api is string
-      - dns_prefix_api | length > 0
-      - dns_prefix_app is string
-      - dns_prefix_app | length > 0
-      - dns_prefix_apps is string
-      - dns_prefix_apps | length > 0
+      - sc_ns is string
+      - sc_ns | length > 0
+      - sc_ns is not search('REPLACE_WITH_')
+      - sc_ns is not search('<')
+      - "'.' in sc_ns"
+      - sc_ns.split('.') | length >= 3
+      - sc_api is string
+      - sc_api | length > 0
+      - sc_api is not search('REPLACE_WITH_')
+      - sc_api is not search('<')
+      - "'.' in sc_api"
+      - sc_app is string
+      - sc_app | length > 0
+      - sc_app is not search('REPLACE_WITH_')
+      - sc_app is not search('<')
+      - "'.' in sc_app"
+      - sc_apps is string
+      - sc_apps | length > 0
+      - sc_apps is not search('REPLACE_WITH_')
+      - sc_apps is not search('<')
+      - "'.' in sc_apps"
       - vault_database_url is string
       - vault_database_url | length > 0
       - vault_database_url is match('^postgres(ql)?://')
@@ -25,22 +33,14 @@
       - vault_database_secret is string
       - vault_database_secret | length > 0
     fail_msg: >-
-      inventories/{{ inventory_slug }}/hosts.yml all.vars must define project
-      and hostname, and group_vars/all/main.yml must define dns_prefix_ns,
-      dns_prefix_api, dns_prefix_app, and dns_prefix_apps, before nodes can
-      receive {{ supercompute_config_path }}.
-      Nameserver, API, app, and apps hostnames are derived from those
-      prefixes plus hostname.
+      inventories/{{ inventory_slug }}/hosts.yml all.vars must define project,
+      sc_ns, sc_api, sc_app, and sc_apps before nodes can receive
+      {{ supercompute_config_path }}. Those FQDNs are copied into that file.
+      sc_ns must have a parent zone (for example ns.example.com) so Mac
+      LaunchDaemon reverse-DNS can be derived from it.
       The encrypted vault must contain vault_database_url and
       vault_database_secret (set the URL with task vault-edit;
       run task up or task vault-init for the database secret).
-
-- name: Derive DNS names from hostname
-  ansible.builtin.set_fact:
-    nameserver_hostname: "{{ dns_prefix_ns }}.{{ hostname }}"
-    sc_api: "{{ dns_prefix_api }}.{{ hostname }}"
-    sc_app: "{{ dns_prefix_app }}.{{ hostname }}"
-    sc_apps: "{{ dns_prefix_apps }}.{{ hostname }}"
 
 - name: Require WireGuard mesh hosts for the node config file
   ansible.builtin.assert:

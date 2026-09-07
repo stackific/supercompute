@@ -12,6 +12,8 @@ bun run dev
 
 Default URL: `http://localhost:4321/`
 
+Public pages live under `docs/src/content/docs/`. Home-lab roaming is [Adding a roaming node](../docs/src/content/docs/guides/adding-roaming-node.mdx) (rathole). Lima guests stay on [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx). Cloudflare Pages hosts this site only; it is not used for roaming SSH.
+
 ## Cloudflare Pages
 
 | Setting | Value |

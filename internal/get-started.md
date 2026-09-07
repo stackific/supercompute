@@ -20,6 +20,8 @@ From the worktree root:
 task setup
 ```
 
+`task setup` installs the locked Ansible venv and fetches the SHA-pinned rathole Linux amd64 binary into `.vendor/rathole/` (copied to Ubuntu nodes by Ansible; unused until a non-Lima roaming host exists).
+
 ## 3. Prepare `static-1`
 
 1. Create Ubuntu 26.04 `x86_64` on a provider with a public IP.
@@ -39,7 +41,7 @@ task wg-status ENV=dev
 task ssh ENV=dev NODE=static-1
 ```
 
-`task up` brings up WireGuard **and** installs the cluster stack (gVisor, Docker, Caddy reverse-proxying `sc-app.`→`sc` and `sc-api.`→`supercompute`, PowerDNS), writes `/etc/supercompute/*` on nodes. See [cluster.md](cluster.md) and [wireguard.md](wireguard.md).
+`task up` brings up WireGuard **and** installs the cluster stack (gVisor, Docker, Caddy reverse-proxying `sc_app`→`sc` and `sc_api`→`supercompute`, PowerDNS), writes `/etc/supercompute/*` on nodes, and passes `SC_API` to `sc` plus `SC_APP` / `SC_NS` / `SC_APPS` to `supercompute`. See [cluster.md](cluster.md) and [wireguard.md](wireguard.md).
 
 ## Reset dev
 
@@ -64,5 +66,5 @@ To stop without wiping vault or `.state/`, use `task down ENV=dev CONFIRM=down-d
 | Lima roaming guest | [lima.md](lima.md), [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx) |
 | Production mesh | [setup-prod.md](setup-prod.md) |
 | GHA-managed deploy | [gha-deploy.md](gha-deploy.md) |
-| Home lab roaming (Cloudflare) | [roaming-nodes.md](roaming-nodes.md) |
+| Home lab roaming (rathole) | [roaming-nodes.md](roaming-nodes.md) |
 | Task reference | [tasks.md](tasks.md) |

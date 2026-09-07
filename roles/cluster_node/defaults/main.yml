@@ -65,8 +65,8 @@ cluster_sc_port: 3000
 cluster_supercompute_container_name: supercompute
 cluster_supercompute_image: ghcr.io/stackific/sc/supercompute:latest
 cluster_supercompute_port: 8080
-cluster_sc_api_origin: "https://{{ dns_prefix_api }}.{{ hostname }}"
-cluster_sc_app_origin: "https://{{ dns_prefix_app }}.{{ hostname }}"
+cluster_sc_api_origin: "https://{{ sc_api }}"
+cluster_sc_app_origin: "https://{{ sc_app }}"
 cluster_app_containers:
   - name: "{{ cluster_sc_container_name }}"
     image: "{{ cluster_sc_image }}"
@@ -77,9 +77,11 @@ cluster_app_containers:
     image: "{{ cluster_supercompute_image }}"
     port: "{{ cluster_supercompute_port }}"
     env:
-      SC_DASH: "{{ cluster_sc_app_origin }}"
+      SC_APP: "{{ cluster_sc_app_origin }}"
+      SC_NS: "{{ sc_ns }}"
+      SC_APPS: "{{ sc_apps }}"
 
-# --- Caddy (sc-app. → sc, sc-api. → supercompute) ---
+# --- Caddy (sc_app → sc, sc_api → supercompute) ---
 cluster_caddy_package: caddy
 cluster_caddy_service: caddy
 cluster_caddyfile_path: /etc/caddy/Caddyfile

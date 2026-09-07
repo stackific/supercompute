@@ -1,5 +1,6 @@
 .cache/
 .venv/
+.vendor/
 .state/
 inventories/*/.vault-pass*
 __pycache__/

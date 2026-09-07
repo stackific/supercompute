@@ -61,19 +61,19 @@ task up ENV=dev
 
 ### Step 1: Install dependencies
 
-Run `task setup` from the project root to install the locked Ansible environment.
+Run `task setup` from the project root to install the locked Ansible environment and fetch the SHA-pinned rathole Linux amd64 binary.
 
 ```sh
 task setup
 ```
 
-`task setup` installs the locked Ansible venv.
+`task setup` installs the locked Ansible venv and places rathole in `.vendor/rathole/` (copied to Ubuntu nodes later; unused until you add a non-Lima roaming host).
 
 ### Step 2: Prepare the dev environment
 
-Set `hostname` for this cloud, then fill the static node's public IP and SSH fingerprint.
+Set the `sc_*` FQDNs, then fill the static node's public IP and SSH fingerprint.
 
-Edit `inventories/dev/hosts.yml` — one file for project identity and every node. Set `all.vars.hostname` (for example `example.com`). This is going to be the common suffix for Nameserver (`ns.`), app (`sc-app.`), API (`sc-api.`), and app URLs (`*.apps.`).
+Edit `inventories/dev/hosts.yml` — one file for project identity and every node. Set the nameserver, API, app, and apps FQDNs (`sc_ns`, `sc_api`, `sc_app`, `sc_apps`). `sc_ns` must have a parent zone (for example `ns.example.com`); that parent is also used for the Mac WireGuard LaunchDaemon label.
 
 Fill placeholders for `static-1` (public IP and SSH host-key fingerprint). Install this public key on the VM with static IP (`ops` user)—same prep as [Adding a public node](/guides/adding-public-node/). Go and do that first.
 
@@ -86,7 +86,10 @@ A completed `inventories/dev/hosts.yml` file looks like this:
 all:
   vars:
     project: example
-    hostname: example.com
+    sc_ns: ns.example.com
+    sc_api: sc-api.example.com
+    sc_app: sc-app.example.com
+    sc_apps: sc-apps.example.com
 
 nodes:
   hosts:
@@ -102,7 +105,10 @@ nodes:
 all:
   vars:
     project: <project>
-    hostname: <your-prefix>.<project>.com
+    sc_ns: ns.<your-prefix>.<project>.com
+    sc_api: sc-api.<your-prefix>.<project>.com
+    sc_app: sc-app.<your-prefix>.<project>.com
+    sc_apps: sc-apps.<your-prefix>.<project>.com
 
 nodes:
   hosts:
@@ -116,23 +122,18 @@ nodes:
 
 ### Step 3: Configure DNS
 
-Create records for the hostname you set in Step 2. Supercompute derives the rest by adding the hostname as a common suffix. Leave `example.com` at your registrar. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
+Create records matching `sc_ns`, `sc_api`, `sc_app`, and `sc_apps` from Step 2. Leave `example.com` at your registrar. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
 
-| Prefix | Name | Type | Value |
+| Inventory var | Example | Type | Value |
 | --- | --- | --- | --- |
-| `ns` | `ns.example.com` | A | **static-1** public IPv4 |
-| `sc-api` | `sc-api.example.com` | CNAME | `ns.example.com` |
-| `sc-app` | `sc-app.example.com` | CNAME | `ns.example.com` |
+| `sc_ns` | `ns.example.com` | A | **static-1** public IPv4 |
+| `sc_api` | `sc-api.example.com` | CNAME | `ns.example.com` |
+| `sc_app` | `sc-app.example.com` | CNAME | `ns.example.com` |
+| `sc_apps` | `sc-apps.example.com` | NS | `ns.example.com` |
 
-Later, dynamic app URLs use the same nameserver:
+Supercompute's Nameserver then serves `*.sc-apps.example.com`.
 
-| Prefix | Name | Type | Value |
-| --- | --- | --- | --- |
-| `apps` | `apps.example.com` | NS | `ns.example.com` |
-
-Supercompute's Nameserver then serves `*.apps.example.com`.
-
-To use different API or app hostnames, edit `dns_prefix_api` and `dns_prefix_app` (and other `dns_prefix_*` values if needed) in `inventories/<env>/group_vars/all/main.yml`, then create matching DNS records and re-run `task up`.
+To use different names, edit those `all.vars` in `hosts.yml`, create matching DNS records, and re-run `task up`.
 
 ### Step 4: Initialize the vault
 
@@ -233,6 +234,8 @@ task up ENV=dev
 
 When it asks for `BECOME password`, enter your macOS password. You can run `task up` multiple times to retry if you have issues, made mistakes, or just want to be sure, because this is a rather long operation yet an idempotent one.
 
+`up` runs the `sc` and `supercompute` containers. `sc` gets `SC_API` (`https://` + `sc_api`). `supercompute` gets `SC_APP` (`https://` + `sc_app`), `SC_NS` (`sc_ns`), and `SC_APPS` (`sc_apps`).
+
 Please note that the speed of operations heavily depends on the network connection between the Mac and the VM and the performance of the VM/server.
 
 ### Step 6: SSH to the node
@@ -264,6 +267,9 @@ Public Task entrypoints are listed with `task --list`. Full reference: [Task com
   </Card>
   <Card title="Deploy via GitHub Actions" icon="setting">
     Run mesh lifecycle from CI—no permanent Mac WireGuard peer: [Deploy with GitHub Actions](/start-here/deploy-with-github-actions/).
+  </Card>
+  <Card title="Adding a roaming node" icon="laptop">
+    Home-lab Ubuntu host with a changing public IP: [Adding a roaming node](/guides/adding-roaming-node/).
   </Card>
   <Card title="Adding a public node" icon="add-document">
     Single public VM walkthrough: [Adding a public node](/guides/adding-public-node/).

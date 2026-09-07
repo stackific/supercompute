@@ -1,0 +1,23 @@
+---
+- ansible.builtin.import_playbook: classify-mesh.yml
+
+- name: Reconcile rathole server on the static hub over public SSH
+  hosts: rathole_hub
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    ansible_host: "{{ public_ip }}"
+    ansible_user: "{{ default_ssh_user }}"
+    ansible_port: "{{ default_ssh_port }}"
+    ansible_ssh_private_key_file: "{{ ssh_private_key_file }}"
+    ansible_ssh_common_args: >-
+      -F /dev/null -o BatchMode=yes -o ControlMaster=no -o ControlPath=none
+      -o ServerAliveInterval=15 -o ServerAliveCountMax=30 -o ConnectTimeout=30
+      -o HostKeyAlias={{ inventory_hostname }} -o StrictHostKeyChecking=yes
+      -o UserKnownHostsFile={{ known_hosts_file }}
+      -o IdentitiesOnly=yes
+  roles:
+    - role: rathole
+      vars:
+        rathole_lifecycle: server

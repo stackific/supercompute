@@ -1,7 +1,9 @@
 ---
-- name: Classify static vs roaming nodes and pick the static hub
+- ansible.builtin.import_playbook: classify-mesh.yml
+
+- name: Assert WireGuard-up preconditions after mesh classification
   hosts: localhost
-  gather_facts: true
+  gather_facts: false
   any_errors_fatal: true
   tasks:
     - name: Require a public-endpoint provider for WireGuard
@@ -31,32 +33,6 @@
           this path if that public key is already authorized.
       when: control_plane | default('mac') != 'gha'
 
-    - name: Reset classified WireGuard node lists
-      ansible.builtin.set_fact:
-        static_nodes: []
-        roaming_nodes: []
-
-    - name: Classify each WireGuard inventory node
-      ansible.builtin.set_fact:
-        static_nodes: >-
-          {{
-            static_nodes
-            + ([] if (hostvars[item].roaming | default(false) | bool) else [item])
-          }}
-        roaming_nodes: >-
-          {{
-            roaming_nodes
-            + ([item] if (hostvars[item].roaming | default(false) | bool) else [])
-          }}
-      loop: "{{ groups['nodes'] | sort }}"
-      loop_control:
-        label: "{{ item }}"
-
-    - name: Record roaming presence and the static hub hostname
-      ansible.builtin.set_fact:
-        has_roaming: "{{ roaming_nodes | length > 0 }}"
-        static_hub: "{{ static_nodes | first | default('') }}"
-
     - name: Require at least one static public host when roaming nodes are present
       ansible.builtin.assert:
         that:
@@ -73,6 +49,27 @@
           (no inbound UDP {{ node_listen_port }} required on the Mac).
           Roaming nodes: {{ roaming_nodes | join(', ') }}.
       when: has_roaming | bool
+
+- ansible.builtin.import_playbook: rathole-server.yml
+
+- name: Refresh known_hosts after rathole server is listening
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Scan non-Lima roaming host keys through the rathole jump
+      ansible.builtin.command:
+        argv:
+          - "{{ project_root }}/.venv/bin/python"
+          - "{{ project_root }}/scripts/known-hosts.py"
+          - --inventory
+          - "{{ project_root }}/inventories/{{ inventory_slug }}/hosts.yml"
+          - --known-hosts
+          - "{{ known_hosts_file }}"
+          - --reuse-existing
+      changed_when: "'CHANGED=1' in known_hosts_refresh.stdout"
+      register: known_hosts_refresh
+      when: has_non_lima_roaming | default(false) | bool
 
 - name: Configure the macOS controller side of the WireGuard mesh
   hosts: localhost
@@ -97,6 +94,12 @@
     - vars/node_recovery_ssh.yml
   roles:
     - wireguard_node
+    - role: rathole
+      vars:
+        rathole_lifecycle: client
+      when:
+        - roaming | default(false) | bool
+        - not (node_lima_guest | default(false) | bool)
 
 - name: Prove macOS can reach every server through the mesh
   hosts: localhost

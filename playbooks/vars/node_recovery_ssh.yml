@@ -12,19 +12,24 @@ node_lima_ssh_port: >-
     | first
     | default(default_ssh_port)
   }}
+rathole_hub_name: "{{ hostvars['localhost'].static_hub | default('') }}"
+rathole_listen_port: >-
+  {{ rathole_ssh_port_base | int + (private_address.split('.')[-1] | int) }}
 ansible_host: >-
   {%- if node_mesh_reachable -%}
   {{ private_address }}
   {%- elif node_lima_guest -%}
   127.0.0.1
   {%- elif roaming | default(false) | bool -%}
-  {{ bootstrap_ssh_host }}
+  127.0.0.1
   {%- else -%}
   {{ public_ip }}
   {%- endif -%}
 ansible_port: >-
   {%- if (not node_mesh_reachable) and node_lima_guest -%}
   {{ node_lima_ssh_port }}
+  {%- elif (not node_mesh_reachable) and (roaming | default(false) | bool) -%}
+  {{ rathole_listen_port }}
   {%- else -%}
   {{ hostvars[inventory_hostname].ansible_port | default(default_ssh_port) }}
   {%- endif -%}
@@ -51,5 +56,13 @@ ansible_ssh_common_args: >-
   {% if (not node_mesh_reachable)
         and (roaming | default(false) | bool)
         and (not node_lima_guest) %}
-  -o ProxyCommand="{{ lookup('ansible.builtin.pipe', 'command -v cloudflared') }} access ssh --hostname %h"
+  -o ProxyCommand={{
+      (
+        'ssh -F /dev/null -o BatchMode=yes -o ControlMaster=no -o ControlPath=none'
+        ~ ' -o StrictHostKeyChecking=yes -o UserKnownHostsFile=' ~ known_hosts_file
+        ~ ' -o IdentitiesOnly=yes -o HostKeyAlias=' ~ rathole_hub_name
+        ~ ' -i ' ~ ssh_private_key_file
+        ~ ' -W %h:%p ' ~ default_ssh_user ~ '@' ~ hostvars[rathole_hub_name].public_ip
+      ) | quote
+    }}
   {% endif %}

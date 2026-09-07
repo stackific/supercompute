@@ -10,13 +10,13 @@ This worktree automates **provider infrastructure**: WireGuard meshes, optional 
 | --- | --- |
 | **Inventory** | Declares hosts, mesh IPs, endpoints, fingerprints, roaming flags, `control_plane` |
 | **WireGuard** | Mac controller and/or Ubuntu nodes on `scwg0` (UDP 51830); post-build roaming dial |
-| **Bootstrap SSH** | Public endpoint, Lima-local SSH, or Cloudflare Tunnel (non-Lima roaming) |
-| **Vault** | Encrypted secrets per provider; WireGuard key material |
+| **Bootstrap SSH** | Public endpoint, Lima-local SSH, or rathole jump via the static hub (non-Lima roaming) |
+| **Vault** | Encrypted secrets per provider; WireGuard keys; rathole Noise/tokens when non-Lima roaming exists |
 | **Lima** | Factory for `node_lima_guest` Ubuntu guests on Apple Silicon |
 | **Cluster** | Runtime software on `deployment` group hosts (part of every `up`) |
 | **GHA (optional)** | Manual Actions deploy for `control_plane: gha` inventories |
 
-The project does **not** provision VPS instances, Cloudflare tunnels, or parent-zone DNS records. Operators create those outside this repo and fill inventory.
+The project does **not** provision VPS instances or parent-zone DNS records. Operators create those outside this repo and fill inventory.
 
 ## Controller and nodes
 
@@ -24,7 +24,7 @@ The project does **not** provision VPS instances, Cloudflare tunnels, or parent-
 - **GHA control plane (`control_plane: gha`)** — GitHub-hosted runner mutates the mesh; **no** Mac peer. See [gha-deploy.md](gha-deploy.md).
 - **Static public hosts** — Ubuntu 26.04 `x86_64` VMs with stable public IPs (`static-1`, …). Build-up hub is the first static; day-2 roaming may dial any public static when forwarding is enabled on all of them.
 - **Roaming hosts** — `roaming: true`. Initiate WireGuard to a public static; no inbound UDP 51830 on home routers.
-- **Lima guests** — `node_lima_guest: true`, `aarch64`. Roaming peers created on the Mac; bootstrap SSH is Lima-local, not Cloudflare.
+- **Lima guests** — `node_lima_guest: true`, `aarch64`. Roaming peers created on the Mac; bootstrap SSH is Lima-local, not rathole.
 
 ## Platform dispatch
 
@@ -44,15 +44,14 @@ Legacy `provider.platform: vps` and `provider.platform: lima` are **refused** at
 
 **Production (`prod`)** — two static public nodes (`10.217.79.0/24`), committed inventory; Mac or GHA control plane. See [setup-prod.md](setup-prod.md) and [gha-deploy.md](gha-deploy.md).
 
-**Home lab roaming (prod)** — dynamic IP Ubuntu VM joined via Cloudflare Tunnel SSH bootstrap. See [roaming-nodes.md](roaming-nodes.md).
+**Home lab roaming (prod)** — dynamic IP Ubuntu VM joined via rathole SSH bootstrap. See [roaming-nodes.md](roaming-nodes.md).
 
 ## External dependencies
 
 Operators supply:
 
-- At least one **public IP** for a static hub (UDP 51830 open for roaming egress on every dialable static).
+- At least one **public IP** for a static hub (UDP 51830 open for roaming egress on every dialable static; TCP **2333** on the rathole hub).
 - **Postgres database with owner role** hosted outside of the Supercompute cloud (not installed by this automation).
-- **Cloudflare** account and tunnel for non-Lima roaming bootstrap (operator-owned; outside Ansible).
 
 ## Related docs
 

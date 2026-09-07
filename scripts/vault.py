@@ -549,9 +549,86 @@ def validate_deployment_vault(provider: str) -> None:
   )
 
 
+def ensure_rathole(provider: str) -> None:
+  try:
+    hosts = inventory_hosts.node_hosts(inventory_hosts.load_document(provider))
+  except inventory_hosts.InventoryError as error:
+    raise VaultError(str(error)) from error
+  roaming_names = sorted(
+    name
+    for name, values in hosts.items()
+    if values.get("roaming") is True
+    and values.get("node_lima_guest") is not True
+  )
+  if not roaming_names:
+    print(f"No non-Lima roaming hosts; skip rathole vault material for {provider}")
+    return
+
+  password_file = password_path(provider)
+  encrypted_vault = vault_path(provider)
+  read_password(password_file)
+  content = decrypt(encrypted_vault, provider, password_file)
+  document = yaml.safe_load(content)
+  if not isinstance(document, dict):
+    raise VaultError("Vault root must be a YAML mapping")
+
+  changed = False
+  private_key = document.get("vault_rathole_noise_private_key")
+  public_key = document.get("vault_rathole_noise_public_key")
+  if isinstance(private_key, str) and private_key and isinstance(public_key, str) and public_key:
+    pass
+  elif (isinstance(private_key, str) and private_key) ^ (
+    isinstance(public_key, str) and public_key
+  ):
+    raise VaultError(
+      "Rathole Noise key pair is incomplete; fix with vault-edit"
+    )
+  else:
+    if subprocess.run(["which", "wg"], check=False, capture_output=True).returncode != 0:
+      raise VaultError(
+        "Install wireguard-tools (wg) before ensuring rathole Noise vault keys"
+      )
+    generated_private, generated_public = generate_wireguard_keypair()
+    document["vault_rathole_noise_private_key"] = generated_private
+    document["vault_rathole_noise_public_key"] = generated_public
+    changed = True
+
+  tokens = document.get("vault_rathole_tokens")
+  if tokens is None:
+    tokens = {}
+  if not isinstance(tokens, dict):
+    raise VaultError("vault_rathole_tokens must be a mapping")
+  for name in roaming_names:
+    existing = tokens.get(name)
+    if isinstance(existing, str) and existing:
+      continue
+    tokens[name] = secrets.token_urlsafe(32)
+    changed = True
+  document["vault_rathole_tokens"] = tokens
+
+  if not changed:
+    print(f"Rathole vault material already present for {provider}")
+    return
+
+  plaintext_body = yaml.safe_dump(document, explicit_start=True, sort_keys=False)
+  prefix = f"{config_project(provider)}-vault-rathole-{provider}-"
+  with tempfile.TemporaryDirectory(prefix=prefix) as name:
+    plaintext = Path(name) / "vault.yml"
+    plaintext.write_text(plaintext_body, encoding="utf-8")
+    plaintext.chmod(0o600)
+    encrypt_and_replace(
+      plaintext,
+      encrypted_vault,
+      provider,
+      password_file,
+    )
+  print(f"Rathole vault material ensured: {encrypted_vault.relative_to(ROOT)}")
+
+
 def ensure_vault_secrets(provider: str) -> None:
   ensure_wireguard(provider)
   ensure_database_secret(provider)
+  ensure_rathole(provider)
 
 
 def parse_arguments() -> argparse.Namespace:

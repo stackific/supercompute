@@ -14,7 +14,7 @@ task --list
 
 | Task | Description |
 | --- | --- |
-| `task setup` | Install locked Ansible venv |
+| `task setup` | Locked Ansible venv + SHA-pinned rathole Linux amd64 binary |
 
 ### Vault (`taskfiles/vault.yml`)
 
@@ -49,6 +49,7 @@ Requires `ENV=<slug>` with `node_lima_guest` hosts (typically **`dev-lima`**).
 | `task wg-status ENV=<env>` | Mesh status |
 | `task wg-remove ENV=<env>` | Disconnect Mac controller only (nodes unchanged) |
 | `task ssh ENV=<env> NODE=<host>` | SSH over mesh |
+| `task rathole-client-bootstrap ENV=<env> NODE=<roaming-host>` | Hub rathole server + roaming VM install script |
 
 ## `down` vs reset
 
@@ -57,6 +58,7 @@ Requires `ENV=<slug>` with `node_lima_guest` hosts (typically **`dev-lima`**).
 | Vault + `.vault-pass` | Kept | Deleted |
 | `.state/<slug>/` | Kept | Deleted |
 | Lima guests | Kept | Destroyed (when inventory has them) |
+| Rathole on hub / roaming VMs | Kept (mesh-down SSH recovery) | Left on remote VMs; local rathole state under `.state/` is deleted |
 | Bring back | `task up` | `vault-init` (+ `lima-up` for dev-lima), then `up` |
 
 ## Internal tasks (`internal: true`)
@@ -65,7 +67,7 @@ Hidden from `task --list`; still callable for troubleshooting:
 
 | Task | Description |
 | --- | --- |
-| `vault-secrets-ensure` | WG keys + `vault_database_secret` (`up` calls this) |
+| `vault-secrets-ensure` | WG keys, rathole Noise/tokens when roaming exists, `vault_database_secret` (`up` calls this) |
 | `vault-wireguard-ensure` | WG keys only |
 | `vault-destroy` | Vault delete without full reset |
 | `lima-host-fingerprints` | Fingerprint capture (`lima-up` runs `--force`) |
@@ -92,6 +94,15 @@ task lima-up ENV=dev-lima
 task vault-init ENV=dev-lima
 task vault-edit ENV=dev-lima
 task up ENV=dev-lima
+```
+
+**Home-lab roaming (non-Lima):** see [roaming-nodes.md](roaming-nodes.md) and [Adding a roaming node](../docs/src/content/docs/guides/adding-roaming-node.mdx).
+
+```sh
+task setup
+task rathole-client-bootstrap ENV=prod NODE=roaming-1
+# copy .state/prod/rathole/roaming-1-install.sh to the VM; run as root
+task up ENV=prod
 ```
 
 See [get-started.md](get-started.md) and public [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx).
