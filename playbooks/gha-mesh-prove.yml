@@ -1,0 +1,40 @@
+---
+# Prove the ephemeral GHA runner peer can open mesh SSH to every node.
+# Invoked by scripts/gha-mesh-peer.sh after the runner interface is up.
+- name: Prove the GHA runner can reach every server through the mesh
+  hosts: localhost
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Require GHA control plane for runner mesh proof
+      ansible.builtin.assert:
+        that:
+          - control_plane | default('mac') == 'gha'
+        fail_msg: >-
+          gha-mesh-prove requires control_plane=gha
+          (runner peer at node_ci_address).
+
+    - name: Wait for WireGuard SSH access to each server from the runner
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item].private_address }}"
+        port: "{{ hostvars[item].ansible_port | default(default_ssh_port) }}"
+        timeout: "{{ 90 if (hostvars[item].roaming | default(false) | bool) else 30 }}"
+        connect_timeout: 5
+        state: started
+      loop: "{{ groups['nodes'] }}"
+      loop_control:
+        label: "gha -> {{ item }}"
+      register: gha_mesh_ssh_proof
+      failed_when: false
+
+    - name: Fail clearly when the GHA runner cannot reach a node through the mesh
+      ansible.builtin.fail:
+        msg: >-
+          GHA runner could not open TCP {{ hostvars[item.item].ansible_port | default(default_ssh_port) }}
+          on {{ hostvars[item.item].private_address }} ({{ item.item }}) through WireGuard
+          (CI peer {{ node_ci_address }}). Confirm static-host UDP {{ node_listen_port }},
+          hub Endpoint reachability from GitHub-hosted runners, and re-run up.
+      when: item.state | default('') != 'started'
+      loop: "{{ gha_mesh_ssh_proof.results }}"
+      loop_control:
+        label: "{{ item.item }}"

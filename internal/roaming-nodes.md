@@ -159,6 +159,8 @@ Cloudflare Tunnel SSH is **not** plain TCP to port 22. The Mac needs
 command -v cloudflared
 ```
 
+GitHub Actions Deploy installs the same `cloudflared` client on the runner so bootstrap SSH to non-Lima roaming hosts works from GHA. The tunnel itself still runs on the roaming VM.
+
 Add to `~/.ssh/config` (adjust user and key to match [setup-prod.md](setup-prod.md)):
 
 ```sshconfig

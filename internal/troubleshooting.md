@@ -40,6 +40,13 @@ Rename inventory to `provider.platform: public`. Lima guests use `node_lima_gues
 - Required secrets: `ANSIBLE_VAULT_PASSWORD`, `OPS_SSH_PRIVATE_KEY`.
 - Do not Mac-`task up` a `control_plane: gha` inventory.
 - Nodes need passwordless sudo for `ops`.
+- `wireguard-up` skips the Mac controller and Mac→node mesh SSH proof when
+  `control_plane: gha`; runner reachability is proven by `gha-mesh-prove.yml`
+  after `gha-mesh-peer.sh` brings the runner interface up.
+- Node↔node proof in `wireguard-up` uses bootstrap recovery SSH until the
+  runner is on-mesh.
+- Non-Lima roaming bootstrap needs `cloudflared` on the runner (installed by
+  Deploy); the tunnel stays on the roaming VM.
 - See [gha-deploy.md](gha-deploy.md).
 
 ## Lima guest unreachable
