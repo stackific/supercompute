@@ -1,5 +1,5 @@
 ---
-- name: Show macOS WireGuard status
+- name: Show controller WireGuard status
   hosts: localhost
   gather_facts: false
   any_errors_fatal: true
@@ -12,7 +12,7 @@
           wireguard-status requires provider.platform=public for
           ENV={{ inventory_slug }}.
   tasks:
-    - name: Show macOS WireGuard peers
+    - name: Show controller WireGuard peers
       ansible.builtin.command:
         argv: [wg, show]
       become: true

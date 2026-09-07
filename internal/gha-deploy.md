@@ -44,7 +44,7 @@ The encrypted vault must contain `vault_database_url` (`postgresql://REPLACE_WIT
 | `OPS_SSH_PRIVATE_KEY` | yes | Private key for `ops` on nodes |
 | `MAC_OPERATOR_SSH_PUBLIC_KEY` | no | If set, installed into `/home/ops/.ssh/authorized_keys` |
 
-Cloudflare Access / tunnels are **operator-owned** and outside this project. Non-Lima roaming may still use `bootstrap_ssh_host` in inventory; configure the tunnel yourself. This workflow does not store Cloudflare API tokens.
+Cloudflare Access / tunnels are **operator-owned** and outside this project. The tunnel/`cloudflared` service on a non-Lima roaming VM is configured by the operator. The Deploy workflow installs a **`cloudflared` client on the GitHub-hosted runner** so Ansible bootstrap SSH can use `ProxyCommand cloudflared access ssh` against `bootstrap_ssh_host`. WireGuard UDP never goes through Cloudflare. This workflow does not store Cloudflare API tokens.
 
 Nodes must allow passwordless `sudo` for `ops` (GHA cannot prompt for a become password).
 
@@ -53,9 +53,9 @@ Nodes must allow passwordless `sudo` for `ops` (GHA cannot prompt for a become p
 1. Actions → **Deploy** → Run workflow.
 2. Inputs: `env`, `action` (`up` / `down` / `verify`), and for `down` set `confirm` to `down-<env>`.
 
-`up` flow: known-hosts → ensure-secrets → validate deployment config → `wireguard-up` → ephemeral CI mesh peer → `cluster-up` → remove CI peer.
+`up` flow: known-hosts → ensure-secrets → validate deployment config → `wireguard-up` (skips Mac controller and Mac mesh SSH proof; node↔node proof uses bootstrap recovery SSH until the runner is on-mesh) → ephemeral CI mesh peer → runner mesh SSH proof → `cluster-up` → remove CI peer.
 
-`verify` flow: known-hosts → ephemeral CI mesh peer → `verify.yml` → remove CI peer.
+`verify` flow: known-hosts → ephemeral CI mesh peer → runner mesh SSH proof → `verify.yml` → remove CI peer.
 
 ## Shared post-build roaming dial
 
