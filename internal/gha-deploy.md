@@ -44,7 +44,7 @@ The encrypted vault must contain `vault_database_url` (`postgresql://REPLACE_WIT
 | `OPS_SSH_PRIVATE_KEY` | yes | Private key for `ops` on nodes |
 | `MAC_OPERATOR_SSH_PUBLIC_KEY` | no | If set, installed into `/home/ops/.ssh/authorized_keys` |
 
-Non-Lima roaming uses rathole on the static hub (inbound **TCP 2333**). The workflow fetches the SHA-pinned rathole binary the same way as `task setup`. First known-hosts scan skips roaming until the hub jump is listening (`--skip-non-lima-roaming`); `wireguard-up` refreshes those keys through the jump. `down` leaves rathole in place.
+Non-Lima roaming uses rathole on the static hub (inbound **TCP 2333**). The workflow fetches the SHA-pinned rathole binary the same way as `task setup`. First known-hosts scan skips roaming until the hub jump is listening (`--skip-non-lima-roaming`); `wireguard-up` refreshes those keys through the jump. The runner jumps through the hub the same way as a Mac (`127.0.0.1` + last octet of `private_address`). `down` leaves rathole in place.
 
 Nodes must allow passwordless `sudo` for `ops` (GHA cannot prompt for a become password).
 
@@ -53,9 +53,9 @@ Nodes must allow passwordless `sudo` for `ops` (GHA cannot prompt for a become p
 1. Actions → **Deploy** → Run workflow.
 2. Inputs: `env`, `action` (`up` / `down` / `verify`), and for `down` set `confirm` to `down-<env>`.
 
-`up` flow: known-hosts → ensure-secrets → validate deployment config → `wireguard-up` → ephemeral CI mesh peer → `cluster-up` → remove CI peer.
+`up` flow: known-hosts → ensure-secrets → validate deployment config → `wireguard-up` (skips Mac controller and Mac mesh SSH proof; node↔node proof uses bootstrap recovery SSH until the runner is on-mesh) → ephemeral CI mesh peer → runner mesh SSH proof → `cluster-up` → remove CI peer.
 
-`verify` flow: known-hosts → ephemeral CI mesh peer → `verify.yml` → remove CI peer.
+`verify` flow: known-hosts → ephemeral CI mesh peer → runner mesh SSH proof → `verify.yml` → remove CI peer.
 
 ## Shared post-build roaming dial
 

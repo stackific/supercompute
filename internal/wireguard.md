@@ -59,6 +59,15 @@ Before choosing bootstrap vs mesh transport, `wireguard-up` probes each node’s
 | Static public | **3s** |
 | Roaming or Lima guest | **15s** |
 
+After nodes are reconciled, controller reachability is proven separately:
+
+| Control plane | Proof |
+| --- | --- |
+| `mac` | `wireguard-up` localhost play waits for mesh SSH from the Mac |
+| `gha` | Mac proof is skipped; `scripts/gha-mesh-peer.sh` runs `gha-mesh-prove.yml` after the runner interface is up |
+
+Node↔node mesh SSH proof still runs inside `wireguard-up` for both control planes. That play uses bootstrap recovery SSH when the controller is not yet on-mesh (GHA before `gha-mesh-peer`); `wait_for` still checks peer mesh IPs from each node.
+
 ## Bootstrap SSH paths
 
 | Host type | Before / during `up` | After mesh up |

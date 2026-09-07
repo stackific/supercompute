@@ -7,11 +7,12 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 | Playbook | Purpose |
 | --- | --- |
 | `playbooks/classify-mesh.yml` | Classify static vs roaming; pick `static_hub`; set `has_non_lima_roaming` |
-| `playbooks/wireguard-up.yml` | Classify; rathole server; hub; Mac controller when `control_plane!=gha`; nodes |
+| `playbooks/wireguard-up.yml` | Classify; rathole server; hub; Mac controller when `control_plane!=gha`; nodes; Mac mesh proof when `control_plane!=gha` |
 | `playbooks/wireguard-down.yml` | Tear down node WireGuard (`wireguard_node` absent); rathole stays |
 | `playbooks/wireguard-status.yml` | Mesh status |
 | `playbooks/rathole-server.yml` | Rathole server on `rathole_hub` (in-memory group; non-Lima roaming only) |
 | `playbooks/gha-mesh-peer.yml` | Ephemeral GitHub Actions WireGuard peer on nodes |
+| `playbooks/gha-mesh-prove.yml` | Prove GHA runner can reach every node over mesh SSH |
 | `playbooks/lima-up.yml` | Create/start `node_lima_guest` VMs |
 | `playbooks/lima-status.yml` | Lima resource status |
 | `playbooks/lima-destroy.yml` | Destroy Lima guests |
@@ -39,6 +40,8 @@ Ansible is the only supported path for provider and infrastructure lifecycle. Ta
 3. **localhost** — `wireguard_controller` when `control_plane` is not `gha`.
 4. **localhost** — Probe mesh SSH (3s static / 15s roaming or Lima); choose bootstrap vs mesh transport per node.
 5. **nodes** — `wireguard_node` with bootstrap SSH (public, rathole jump, or Lima-local); install `/etc/supercompute/*`; post-up roaming dial helper + timer. Non-Lima roaming also reconciles the rathole client.
+6. **localhost** — Prove Mac controller mesh SSH to every node when `control_plane` is not `gha` (GHA proves after `gha-mesh-peer`).
+7. **nodes** — Prove every server can reach every peer through the mesh (Ansible SSH uses bootstrap recovery when the controller is off-mesh; `wait_for` still checks peer mesh IPs on each node).
 
 ## `cluster_node` role
 

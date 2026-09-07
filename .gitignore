@@ -2,6 +2,7 @@
 .venv/
 .vendor/
 .state/
+.worktrees/
 inventories/*/.vault-pass*
 __pycache__/
 *.py[cod]

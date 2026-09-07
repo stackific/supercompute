@@ -29,7 +29,7 @@
         state: started
       loop: "{{ groups['nodes'] }}"
       loop_control:
-        label: "macOS -> {{ item }} through WireGuard"
+        label: "controller -> {{ item }} through WireGuard"
       register: mesh_ssh_probes
       failed_when: false
       changed_when: false
@@ -82,7 +82,7 @@
         state: started
       loop: "{{ groups['nodes'] }}"
       loop_control:
-        label: "macOS -> {{ item }} public recovery SSH"
+        label: "controller -> {{ item }} public recovery SSH"
       when:
         - not (mesh_ssh_reachable[item] | default(false) | bool)
         - not (hostvars[item].roaming | default(false) | bool)
@@ -102,7 +102,7 @@
         state: started
       loop: "{{ groups['nodes'] }}"
       loop_control:
-        label: "macOS -> {{ item }} Lima SSH"
+        label: "controller -> {{ item }} Lima SSH"
       when:
         - not (mesh_ssh_reachable[item] | default(false) | bool)
         - hostvars[item].node_lima_guest | default(false) | bool

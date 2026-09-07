@@ -38,15 +38,15 @@
         that:
           - static_hub | length > 0
         fail_msg: >-
-          Roaming nodes need a static public endpoint hub for Mac↔roaming mesh traffic.
+          Roaming nodes need a static public endpoint hub for controller↔roaming mesh traffic.
           Add a non-roaming static-N host before roaming-N.
       when: has_roaming | bool
 
-    - name: Explain Mac↔roaming routing through the static hub
+    - name: Explain controller↔roaming routing through the static hub
       ansible.builtin.debug:
         msg: >-
           Roaming mesh path uses static hub {{ static_hub }}
-          (no inbound UDP {{ node_listen_port }} required on the Mac).
+          (no inbound UDP {{ node_listen_port }} required on the controller).
           Roaming nodes: {{ roaming_nodes | join(', ') }}.
       when: has_roaming | bool
 
@@ -106,41 +106,47 @@
   gather_facts: false
   any_errors_fatal: true
   tasks:
-    - name: Wait for WireGuard SSH access to each server
-      ansible.builtin.wait_for:
-        host: "{{ hostvars[item].private_address }}"
-        port: "{{ hostvars[item].ansible_port | default(default_ssh_port) }}"
-        timeout: "{{ 90 if (hostvars[item].roaming | default(false) | bool) else 30 }}"
-        connect_timeout: 5
-        state: started
-      loop: "{{ groups['nodes'] }}"
-      loop_control:
-        label: "macOS -> {{ item }}"
-      register: mesh_ssh_proof
-      failed_when: false
+    # GHA has no Mac controller peer here; runner mesh proof runs after gha-mesh-peer.
+    - name: Prove Mac controller mesh SSH to every node
+      when: control_plane | default('mac') != 'gha'
+      block:
+        - name: Wait for WireGuard SSH access to each server
+          ansible.builtin.wait_for:
+            host: "{{ hostvars[item].private_address }}"
+            port: "{{ hostvars[item].ansible_port | default(default_ssh_port) }}"
+            timeout: "{{ 90 if (hostvars[item].roaming | default(false) | bool) else 30 }}"
+            connect_timeout: 5
+            state: started
+          loop: "{{ groups['nodes'] }}"
+          loop_control:
+            label: "macOS -> {{ item }}"
+          register: mesh_ssh_proof
+          failed_when: false
 
-    - name: Fail clearly when Mac cannot reach a node through the mesh
-      ansible.builtin.fail:
-        msg: >-
-          macOS could not open TCP {{ hostvars[item.item].ansible_port | default(default_ssh_port) }}
-          on {{ hostvars[item.item].private_address }} ({{ item.item }}) through WireGuard.
-          {% if hostvars[item.item].roaming | default(false) | bool %}
-          Mac↔roaming is routed via static hub {{ static_hub | default('(unset)') }}.
-          Confirm hub IP forwarding, static-host UDP {{ node_listen_port }}, and that roaming
-          has an Endpoint to the hub, then re-run up.
-          {% else %}
-          Confirm the public endpoint/firewall and re-run up.
-          {% endif %}
-      when: item.state | default('') != 'started'
-      loop: "{{ mesh_ssh_proof.results }}"
-      loop_control:
-        label: "{{ item.item }}"
+        - name: Fail clearly when Mac cannot reach a node through the mesh
+          ansible.builtin.fail:
+            msg: >-
+              macOS could not open TCP {{ hostvars[item.item].ansible_port | default(default_ssh_port) }}
+              on {{ hostvars[item.item].private_address }} ({{ item.item }}) through WireGuard.
+              {% if hostvars[item.item].roaming | default(false) | bool %}
+              Mac↔roaming is routed via static hub {{ static_hub | default('(unset)') }}.
+              Confirm hub IP forwarding, static-host UDP {{ node_listen_port }}, and that roaming
+              has an Endpoint to the hub, then re-run up.
+              {% else %}
+              Confirm the public endpoint/firewall and re-run up.
+              {% endif %}
+          when: item.state | default('') != 'started'
+          loop: "{{ mesh_ssh_proof.results }}"
+          loop_control:
+            label: "{{ item.item }}"
 
 - name: Prove every server can reach every peer through the mesh
   hosts: nodes
   gather_facts: false
   serial: 1
   any_errors_fatal: true
+  vars_files:
+    - vars/node_recovery_ssh.yml
   tasks:
     - name: Wait for WireGuard SSH access to each peer
       ansible.builtin.wait_for:

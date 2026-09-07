@@ -166,6 +166,10 @@ PY
     sudo wg-quick down "${iface}" 2>/dev/null || true
     sudo wg-quick up "${iface}"
     echo "GHA mesh peer is up."
+
+    bash scripts/ansible-playbook.sh "${provider}" \
+      --extra-vars "@${vars_file}" \
+      playbooks/gha-mesh-prove.yml
     ;;
   absent)
     sudo wg-quick down "${iface}" 2>/dev/null || true
