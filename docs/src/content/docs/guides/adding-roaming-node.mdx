@@ -3,18 +3,25 @@ title: Adding a roaming node
 description: Step-by-step tutorial to add a home-lab Ubuntu node with rathole bootstrap SSH—no public IP, no inbound WireGuard.
 ---
 
+import { Kbd } from "starlight-kbd/components";
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-This guide walks through adding a **roaming** node: Ubuntu at home (or anywhere with a changing public IP), bootstrap SSH through **rathole** on your static hub, and WireGuard that **always dials out** to your public static hub(s).
+This guide walks through adding a **roaming** node: Ubuntu at home (or anywhere with a changing public IP). The home router stays closed. Two outbound connections replace a public SSH hostname and an inbound WireGuard port:
 
-The example uses the **prod environment** and host name **`roaming-1`**.
+| Path | What dials out | Where it lands |
+| --- | --- | --- |
+| Bootstrap SSH | Rathole **client** on the roaming VM | First static hub, **TCP 2333** |
+| Mesh traffic | WireGuard on the roaming VM | Public statics, **UDP 51830** |
+
+Your Mac (and GitHub Actions) never SSH to the home IP. They jump through `127.0.0.1:(61000 + last octet of private_address)` on the hub after the client is up.
+
+The example uses the **prod environment** and host name **`roaming-1`**. Mesh IP `.21` means hub listen port **61021**.
 
 Where you see `ENV=<env>`, replace with your environment name (for example `prod`).
 
 :::note[What this guide does not cover]
 
-- **Lima guests** (`node_lima_guest: true`) — Apple Silicon Lima `roaming-1` uses [Get started locally with a roaming node](/start-here/get-started-roaming-node/) instead.
-- **DynDNS or port-forwarding UDP 51830** on your home router — roaming nodes never publish a WireGuard dial-in address.
+- **Lima guests** (`node_lima_guest: true`) — Apple Silicon Lima `roaming-1` uses [Get started locally with a roaming node](/start-here/get-started-roaming-node/) instead (Lima-local SSH, no rathole).
 
 :::
 
@@ -26,10 +33,10 @@ You need:
 
 1. A working environment (for example **prod**) with at least **one public static node** ([Adding a public node](/guides/adding-public-node/) or [Deploy to production](/start-here/deploy-to-production/)).
 2. The same **operator SSH key** already installed on your static nodes (`~/.ssh/<project>-<env>`).
-3. `task setup` completed (fetches the SHA-pinned rathole Linux amd64 binary).
+3. `task setup` completed (fetches the SHA-pinned rathole Linux amd64 binary into `.vendor/rathole/`).
 4. An Ubuntu **26.04** amd64 machine for the roaming node (VM, NUC, NAS, etc.).
 5. An external Postgres instance with owner role hosted outside of the Supercompute cloud.
-6. Hub firewall: inbound **TCP 2333** (rathole control) and **UDP 51830** (WireGuard) wide enough for a changing home IP.
+6. Console or **LAN SSH** to the roaming VM once (to run the generated install script).
 
 Prove SSH to a static node in your environment first:
 
@@ -51,14 +58,40 @@ On the roaming machine (local console or temporary LAN SSH):
 sudo ss -tlnp | grep ':22'
 ```
 
-4. Confirm outbound internet works (UDP for WireGuard, TCP for rathole). **Do not** forward inbound UDP **51830** on your router.
+4. Confirm outbound internet works (TCP to the hub, UDP for WireGuard). Do **not** create a DynDNS name for this VM, and do **not** port-forward inbound UDP **51830** (or TCP **22**) on the home router. Rathole and WireGuard both dial **out**.
 5. Record the host-key fingerprint:
 
 ```sh
 sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-### Step 2: Fill the environment inventory
+Copy the full `SHA256:…` value into your password manager.
+
+### Step 2: Open the static hub firewall
+
+The replacement for a home port-forward is inbound access on the **public static hub**, not on your router.
+
+In the cloud provider (or host) firewall for **every** public static that roaming peers will dial, and especially for the **first** static (`static-1`):
+
+| Rule | Why |
+| --- | --- |
+| Inbound **TCP 2333** on **static-1** from `0.0.0.0/0` (or a wide IPv4 range) | Rathole control. The roaming public IP changes, so a Mac `/32` is not enough. |
+| Inbound **UDP 51830** on **every** public static from a wide source | WireGuard. Roaming always initiates to a static `Endpoint`. |
+| Inbound **TCP 22** on statics from your Mac `/32` | Hub bootstrap and the jump’s first hop. |
+
+Your home router needs **no** new inbound rules. Stateful outbound TCP/UDP is enough.
+
+On the hub itself, if you also use `ufw`:
+
+```sh
+sudo ufw allow 2333/tcp
+sudo ufw allow 51830/udp
+sudo ufw status
+```
+
+Confirm from any network (including the roaming VM) that TCP 2333 on the hub public IP is reachable before you expect the client to stay up. A closed 2333 looks like `rathole-client` restarting forever.
+
+### Step 3: Fill the environment inventory
 
 Add the roaming host and fingerprint to `inventories/<env>/hosts.yml`. Use the **next free** mesh IP in your CIDR (example prod `10.217.79.0/24` → `.21` if `.11` and `.12` are statics). Rathole listens on the hub at `127.0.0.1:(61000 + last octet)` — `.21` → **61021**.
 
@@ -85,42 +118,145 @@ Add the roaming host and fingerprint to `inventories/<env>/hosts.yml`. Use the *
 </TabItem>
 </Tabs>
 
-No `public_ip`. No `bootstrap_ssh_host`. No `node_lima_guest`.
+No `public_ip`. No `bootstrap_ssh_host`. No `node_lima_guest`. Do not put a DynDNS hostname anywhere in this block — the hub jump is derived from `static-1`’s `public_ip` plus the mesh last octet.
 
-### Step 3: Install rathole on the hub and render the client script
+### Step 4: Install rathole on the hub and render the client script
+
+From the Mac, in the worktree:
 
 ```sh
 task rathole-client-bootstrap ENV=prod NODE=roaming-1
 ```
 
-This ensures vault Noise keys and a per-host token, installs **rathole server** on the first static hub, and writes `.state/prod/rathole/roaming-1-install.sh`.
+When it asks for `BECOME password`, enter your macOS password.
 
-Copy that script to the roaming VM and run it as root. The client retries until it can reach the hub on TCP **2333**.
+That command:
 
-### Step 4: Prove jump SSH
+1. Pins known_hosts for statics (skips roaming until the jump listens).
+2. Ensures vault Noise keys and a per-host token.
+3. Installs **rathole server** on the first static hub over public SSH.
+4. Writes `.state/prod/rathole/roaming-1-install.sh` (mode `0700`; contains the token — keep `.state/` off git).
 
-Ansible jumps through the hub on `127.0.0.1:(61000 + last octet)`. After the client is up:
+On the hub, confirm the server and the per-host listen port:
 
 ```sh
-ss -tlnp | grep 127.0.0.1:61021   # on static-1
+sudo systemctl status rathole-server
+sudo ss -tlnp | grep 2333
+sudo ss -tlnp | grep 127.0.0.1:61021
 ```
 
-Then `task up` will scan the host key through that jump.
+`2333` should be on `0.0.0.0`. `61021` should already be `LISTEN` on `127.0.0.1` (the hub service bind). Jump SSH still fails until the client in Step 5 is connected. If `rathole-server` is inactive, fix this step before copying the script.
+
+### Step 5: Run the install script on the roaming VM
+
+Copy `.state/prod/rathole/roaming-1-install.sh` to the VM and run it as root. The script downloads the same SHA-pinned rathole binary, writes `/etc/rathole/client.toml`, and enables `rathole-client.service`. It retries until it can reach the hub on TCP **2333**.
+
+**If your Mac is on the same LAN as the VM:**
+
+<Tabs syncKey="pkg">
+<TabItem label="Example">
+
+```sh
+scp .state/prod/rathole/roaming-1-install.sh ops@192.168.1.50:
+ssh -t ops@192.168.1.50 'sudo bash ~/roaming-1-install.sh'
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+scp .state/<env>/rathole/roaming-1-install.sh ops@<roaming-lan-ip>:
+ssh -t ops@<roaming-lan-ip> 'sudo bash ~/roaming-1-install.sh'
+```
+
+</TabItem>
+</Tabs>
+
+**If you only have a local console** (no LAN from the Mac): copy the script onto the VM with a USB stick or the hypervisor clipboard, then:
+
+```sh
+sudo bash ./roaming-1-install.sh
+```
+
+The script must run as root (`sudo bash`). When it finishes you should see `rathole-client.service` **active**.
+
+### Step 6: Confirm the reverse tunnel
+
+On the **roaming VM**:
+
+```sh
+sudo systemctl status rathole-client
+sudo journalctl -u rathole-client -n 50 --no-pager
+```
+
+Healthy logs show a connection to `<static-1-public-ip>:2333`. Crash loops usually mean TCP **2333** is still blocked (Step 2) or `rathole-server` is down (Step 4).
+
+On **static-1**:
+
+```sh
+sudo ss -tlnp | grep 127.0.0.1:61021
+```
+
+You want `127.0.0.1:61021` in `LISTEN`. If jump SSH in Step 7 still gets connection refused, the client is not registered — check `rathole-client` logs and hub TCP **2333**.
+
+### Step 7: Prove jump SSH from the Mac
+
+Ansible does not need an entry in `~/.ssh/config`. Prove the same jump `task up` will use.
+
+Replace the hub public IP with `static-1`’s `public_ip`. The first hop is ordinary SSH to the hub; the second hop is `127.0.0.1:61021` on that hub.
+
+<Tabs syncKey="pkg">
+<TabItem label="Example">
+
+```sh
+ssh -F /dev/null \
+  -o HostKeyAlias=roaming-1 \
+  -o IdentitiesOnly=yes \
+  -i ~/.ssh/example-prod \
+  -o ProxyCommand="ssh -F /dev/null -o IdentitiesOnly=yes -o HostKeyAlias=static-1 -i ~/.ssh/example-prod -W %h:%p ops@203.0.113.11" \
+  -p 61021 ops@127.0.0.1 true
+```
+
+</TabItem>
+<TabItem label="Template">
+
+```sh
+ssh -F /dev/null \
+  -o HostKeyAlias=roaming-1 \
+  -o IdentitiesOnly=yes \
+  -i ~/.ssh/<project>-<env> \
+  -o ProxyCommand="ssh -F /dev/null -o IdentitiesOnly=yes -o HostKeyAlias=static-1 -i ~/.ssh/<project>-<env> -W %h:%p ops@<static-1-public-ip>" \
+  -p 61021 ops@127.0.0.1 true
+```
+
+</TabItem>
+</Tabs>
+
+It may ask `Are you sure you want to continue connecting (yes/no)?` for `roaming-1` — type `yes` and press <Kbd mac="Enter" windows="Enter" />. Compare the shown fingerprint to Step 1.
+
+This must return with no password prompt (key-based `ops` login). Do not run `task up` until it does.
+
+#### If `true` fails
+
+| Symptom | What to fix |
+| --- | --- |
+| Inner hop to `static-1` fails | Hub TCP **22**, operator key, `task ssh ENV=prod NODE=static-1` |
+| `Connection refused` on `127.0.0.1:61021` | Client not connected; repeat Steps 2, 5, and 6 |
+| Hang, then timeout | Hub TCP **2333** still closed from the roaming egress IP |
+| Auth failure on the second hop | `ops` authorized_keys on the roaming VM (Step 1) |
 
 #### Checklist before `up`
 
 | Check | OK? |
 | --- | --- |
-| `rathole-server` on the static hub | |
-| `rathole-client` enabled on the roaming VM | |
-| Hub allows inbound TCP **2333** | |
-| Fingerprint recorded in `hosts.yml` | |
+| Hub firewall: TCP **2333** + UDP **51830** (wide source) | |
+| `rathole-server` active on `static-1` | |
+| Install script ran as root; `rathole-client` active | |
+| `ss` shows `127.0.0.1:61021` on the hub | |
+| Jump `ssh … ops@127.0.0.1 -p 61021 true` from the Mac | |
+| Fingerprint in `hosts.yml` matches the VM | |
 
-### Step 5: Static hub firewall
-
-Roaming nodes dial **out** to public statics. Each static VM must allow **inbound UDP 51830** from the internet (or wide enough sources). The rathole hub must also allow **inbound TCP 2333**. TCP **22** on statics stays for Mac/GHA bootstrap to the hub itself.
-
-### Step 6: Vault and bring up
+### Step 8: Vault and bring up
 
 If this is a new environment, run `task vault-init ENV=<env>`, then set `vault_database_url` with `task vault-edit ENV=<env>` before the first `task up`. Existing prod: update `hosts.yml` only, then:
 
@@ -128,9 +264,9 @@ If this is a new environment, run `task vault-init ENV=<env>`, then set `vault_d
 task up ENV=prod
 ```
 
-`up` reaches `roaming-1` via the rathole jump when the mesh is down, then over WireGuard after join. Roaming always initiates to the static hub; Mac↔roaming traffic relays through **static-1** (first static by name).
+`up` reaches `roaming-1` via the rathole jump when the mesh is down, then over WireGuard after join. Roaming always initiates to the static hub; Mac↔roaming traffic relays through **static-1** (first static by name). `down` leaves rathole running so this jump still works when the mesh is gone.
 
-### Step 7: SSH over the mesh
+### Step 9: SSH over the mesh
 
 ```sh
 task ssh ENV=prod NODE=roaming-1
@@ -150,9 +286,10 @@ systemctl status rathole-client
 | Operator SSH private key | Mac → nodes (same as static nodes) |
 | `ssh_ed25519_sha256` for `roaming-1` | Inventory + known_hosts contract |
 | Vault password + encrypted `vault.yml` | Mesh keys, rathole Noise keys, tokens |
+| `.state/<env>/rathole/<host>-install.sh` | Re-run on a rebuilt VM; contains the token |
 
-The repository does **not** store rathole tokens in plaintext. `task down` leaves rathole running so mesh-down recovery still works.
+The repository does **not** store rathole tokens in plaintext.
 
 ### Next steps
 
-Go back to [Deploy to production](/start-here/deploy-to-production/) if you started there, or add another roaming host by repeating this guide with `roaming-2`.
+Go back to [Deploy to production](/start-here/deploy-to-production/) if you started there, or add another roaming host by repeating this guide with `roaming-2` (next mesh IP, next hub listen port).

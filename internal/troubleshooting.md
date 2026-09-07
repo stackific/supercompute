@@ -30,11 +30,11 @@ Rename inventory to `provider.platform: public`. Lima guests use `node_lima_gues
 
 ## Rathole jump SSH fails (non-Lima roaming)
 
-- Hub allows inbound **TCP 2333**; roaming VM has outbound TCP 2333.
-- `task setup` has placed `.vendor/rathole/rathole`; Ansible copies that binary (it does not download on the node).
-- Run `task rathole-client-bootstrap ENV=<env> NODE=<roaming-host>`, copy the generated install script, run it as root on the VM.
-- On the hub: `systemctl status rathole-server` and `ss -tlnp | grep 127.0.0.1:61` (listen port is `61000` + last octet of `private_address`).
-- On the roaming VM: `systemctl status rathole-client`.
+- Hub allows inbound **TCP 2333** from a wide source; roaming VM has outbound TCP 2333. Home routers do not port-forward.
+- `task setup` has placed `.vendor/rathole/rathole`; Ansible copies that binary to the hub (the roaming install script downloads the same SHA-pinned zip).
+- Follow [Adding a roaming node](../docs/src/content/docs/guides/adding-roaming-node.mdx): `task rathole-client-bootstrap`, copy `.state/<env>/rathole/<host>-install.sh`, run as root, prove jump SSH.
+- On the hub: `systemctl status rathole-server`, `ss -tlnp | grep 2333`, and `ss -tlnp | grep 127.0.0.1:61` (listen port is `61000` + last octet of `private_address`).
+- On the roaming VM: `systemctl status rathole-client` and `journalctl -u rathole-client -n 50`.
 - Lima guests do **not** use rathole — see [lima.md](lima.md).
 - See [roaming-nodes.md](roaming-nodes.md).
 

@@ -369,7 +369,7 @@ Install rathole on the static hub and render a one-shot install script for a non
 task rathole-client-bootstrap ENV=prod NODE=roaming-1
 ```
 
-Requires `task setup` first (SHA-pinned binary in `.vendor/rathole/`). Writes `.state/<env>/rathole/<host>-install.sh`. Copy that script to the roaming VM and run it as root (console or LAN SSH), then [Adding a roaming node](/guides/adding-roaming-node/). Lima guests (`node_lima_guest`) do not use this task.
+Requires `task setup` first (SHA-pinned binary in `.vendor/rathole/`). Writes `.state/<env>/rathole/<host>-install.sh`. Follow [Adding a roaming node](/guides/adding-roaming-node/) to open hub TCP **2333**, copy the script to the VM, run it as root, and prove jump SSH before `task up`. Lima guests (`node_lima_guest`) do not use this task.
 
 ---
 

@@ -16,9 +16,10 @@ Inventory hostnames: stable public hosts as `static-1`, `static-2`, …; roaming
 `roaming-1`, `roaming-2`, … (not `home-*` / `prod-*`).
 
 **WireGuard rule:** roaming nodes **always initiate**. Stable peers (static
-public hosts, Mac) never dial the roaming node and **must not** rely on an
-inbound UDP **51830** forward on the home router. Do not use DynDNS (or any
-public hostname) as a WireGuard `Endpoint` for roaming peers.
+public hosts, Mac) never dial the roaming node. Do **not** DynDNS the roaming
+VM or port-forward inbound UDP **51830** (or SSH) on the home router. Open
+those ports on the **static hub** instead — see §1 and
+[Adding a roaming node](../docs/src/content/docs/guides/adding-roaming-node.mdx).
 
 **Bootstrap SSH (non-Lima roaming only):** use **rathole** on the first static
 hub. The roaming VM dials out to the hub; the Mac/GHA jump through
@@ -27,8 +28,9 @@ hub. The roaming VM dials out to the hub; the Mac/GHA jump through
 
 `up` syncs `.state` (known_hosts + mesh configs) from `hosts.yml`. For
 non-Lima `roaming: true` it uses the rathole jump (not a public WG endpoint).
-Prepare the client and prove SSH first, then fill inventory. Mesh address lives
-on each host as `private_address`.
+Fill inventory, open hub TCP **2333**, run `rathole-client-bootstrap`, install
+the client, and prove jump SSH before `up`. Mesh address lives on each host as
+`private_address`.
 
 ## 0. What you are building
 
@@ -43,10 +45,11 @@ on each host as `private_address`.
 2. Operator SSH key and vault as in [setup-prod.md](setup-prod.md).
 3. `task setup` has fetched the SHA-pinned rathole Linux amd64 binary
    (`.vendor/rathole/rathole`).
-4. Hub firewall: inbound **TCP 2333** (`rathole_control_port`) wide enough for
-   changing roaming egress IPs, plus existing UDP **51830**.
+4. Hub firewall: inbound **TCP 2333** (`rathole_control_port`) and **UDP 51830**
+   from a wide source (home IPs change). Optional on the hub: `ufw allow 2333/tcp`
+   and `ufw allow 51830/udp`.
 5. On the roaming Ubuntu VM: console or LAN SSH once, to run the generated
-   install script.
+   install script. Do not port-forward the home router.
 
 ## 2. Prepare the roaming VM (once per machine)
 
@@ -57,8 +60,8 @@ On the roaming VM (console or any existing SSH):
    public key, passwordless sudo — same steps as setup-prod “Prepare each
    static public host”, adapted for this host.
 3. Confirm `sshd` listens on port **22** on localhost (default).
-4. Confirm outbound UDP and TCP work (default on most home routers). **Do not**
-   port-forward UDP 51830 inbound.
+4. Confirm outbound UDP and TCP work (default on most home routers). Do **not**
+   DynDNS this VM or port-forward UDP 51830 / TCP 22 inbound at home.
 5. Record the host-key fingerprint from the console:
 
 ```sh
@@ -92,15 +95,31 @@ That ensures vault Noise keys and the per-host token, installs **rathole
 server** on `static-1` over public SSH, and writes
 `.state/prod/rathole/roaming-1-install.sh`.
 
-Copy the script to the roaming VM and run it as root. The client retries until
-the hub server is reachable on TCP **2333**.
+Copy the script to the roaming VM (LAN `scp`, or USB/console paste) and run it
+as root:
+
+```sh
+scp .state/prod/rathole/roaming-1-install.sh ops@<roaming-lan-ip>:
+ssh -t ops@<roaming-lan-ip> 'sudo bash ~/roaming-1-install.sh'
+```
+
+The client retries until the hub server is reachable on TCP **2333**.
+
+Confirm on the roaming VM:
+
+```sh
+sudo systemctl status rathole-client
+```
 
 Confirm on the hub:
 
 ```sh
 sudo systemctl status rathole-server
+ss -tlnp | grep 2333
 ss -tlnp | grep 127.0.0.1:61021   # 61000 + 21 for 10.217.79.21
 ```
+
+`2333` listens on `0.0.0.0` once the server is up. `61021` is the hub service bind (`127.0.0.1`); jump SSH works only after the client is connected.
 
 ## 5. Prove jump SSH before `up`
 
