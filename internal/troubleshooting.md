@@ -41,7 +41,6 @@ Rename inventory to `provider.platform: public`. Lima guests use `node_lima_gues
 ## Roaming mesh traffic fails
 
 - **Every dialable public static** must accept **inbound UDP 51830** from a wide source (not only Mac `/32`).
-- Roaming nodes must **not** use DynDNS as WireGuard `Endpoint`.
 - Statics need `ip_forward` and FORWARD rules — applied by `wireguard_node` when roaming exists.
 - After adding roaming peers, `wg syncconf` refreshes `AllowedIPs`.
 - Check dial helper: `systemctl status supercompute-roaming-dial.timer`,

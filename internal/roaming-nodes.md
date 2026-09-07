@@ -16,9 +16,8 @@ Inventory hostnames: stable public hosts as `static-1`, `static-2`, …; roaming
 `roaming-1`, `roaming-2`, … (not `home-*` / `prod-*`).
 
 **WireGuard rule:** roaming nodes **always initiate**. Stable peers (static
-public hosts, Mac) never dial the roaming node. Do **not** DynDNS the roaming
-VM or port-forward inbound UDP **51830** (or SSH) on the home router. Open
-those ports on the **static hub** instead — see §1 and
+public hosts, Mac) never dial the roaming node. Open UDP **51830** and TCP
+**2333** on the **static hub** — see §1 and
 [Adding a roaming node](../docs/src/content/docs/guides/adding-roaming-node.mdx).
 
 **Bootstrap SSH (non-Lima roaming only):** use **rathole** on the first static
@@ -60,8 +59,7 @@ On the roaming VM (console or any existing SSH):
    public key, passwordless sudo — same steps as setup-prod “Prepare each
    static public host”, adapted for this host.
 3. Confirm `sshd` listens on port **22** on localhost (default).
-4. Confirm outbound UDP and TCP work (default on most home routers). Do **not**
-   DynDNS this VM or port-forward UDP 51830 / TCP 22 inbound at home.
+4. Confirm outbound UDP and TCP work (default on most home routers).
 5. Record the host-key fingerprint from the console:
 
 ```sh
@@ -168,7 +166,7 @@ key-based `ops` login.
 
 ## 8. Explicit non-goals
 
-- Inbound WireGuard port-forward or DynDNS as a WG Endpoint for roaming
+- Inbound WireGuard port-forward on the home router
 - Using rathole as the `scwg0` (WireGuard UDP) transport
 - Lima guests (Lima-local SSH only)
 - Cloudflare Tunnel / `cloudflared` for roaming bootstrap

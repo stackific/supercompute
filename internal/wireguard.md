@@ -26,8 +26,7 @@ Inventory hostnames: `static-1`, `static-2`, â€¦ and `roaming-1`, `roaming-2`, â
 
 1. **Roaming nodes always initiate** WireGuard toward a public static `Endpoint`.
 2. Stable peers (Mac, static hosts) **do not dial** roaming nodes for mesh traffic.
-3. **No DynDNS** or public hostname as WireGuard `Endpoint` for roaming peers.
-4. **No inbound UDP 51830** port-forward on home routers for roaming nodes.
+3. Roaming hosts have no WireGuard `Endpoint`; only statics publish `public_ip`.
 
 Rathole carries **SSH bootstrap only**; it does not carry `scwg0` UDP.
 

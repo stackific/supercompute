@@ -58,7 +58,7 @@ On the roaming machine (local console or temporary LAN SSH):
 sudo ss -tlnp | grep ':22'
 ```
 
-4. Confirm outbound internet works (TCP to the hub, UDP for WireGuard). Do **not** create a DynDNS name for this VM, and do **not** port-forward inbound UDP **51830** (or TCP **22**) on the home router. Rathole and WireGuard both dial **out**.
+4. Confirm outbound internet works (TCP to the hub, UDP for WireGuard). Rathole and WireGuard both dial **out**.
 5. Record the host-key fingerprint:
 
 ```sh
@@ -118,7 +118,7 @@ Add the roaming host and fingerprint to `inventories/<env>/hosts.yml`. Use the *
 </TabItem>
 </Tabs>
 
-No `public_ip`. No `bootstrap_ssh_host`. No `node_lima_guest`. Do not put a DynDNS hostname anywhere in this block — the hub jump is derived from `static-1`’s `public_ip` plus the mesh last octet.
+No `public_ip`. No `bootstrap_ssh_host`. No `node_lima_guest`. The hub jump is derived from `static-1`’s `public_ip` plus the mesh last octet.
 
 ### Step 4: Install rathole on the hub and render the client script
 
