@@ -14,7 +14,7 @@ whatever `inventories/<slug>/` directory you are configuring). Below,
 
 ## Prerequisites
 
-- macOS on Apple Silicon (controller)
+- A Mac (controller)
 - [Task](https://taskfile.dev/installation/)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - WireGuard tools (`wg`, `wg-quick`)
@@ -25,7 +25,7 @@ brew install go-task/tap/go-task uv wireguard-tools
 task setup
 ```
 
-`task setup` installs the locked Ansible venv.
+`task setup` installs the locked Ansible venv and fetches the SHA-pinned rathole Linux amd64 binary into `.vendor/rathole/`.
 
 ## Prepare the Mac SSH identity (once)
 
@@ -164,8 +164,9 @@ controller's public `/32` and each server's public `/32`.
 
 **With roaming hosts:** each static hub must accept inbound UDP **51830** from a wide
 enough source set (often the public internet). Roaming public IPs change and
-will not stay in a fixed peer `/32` list. See
-[roaming-nodes.md](roaming-nodes.md) §7.
+will not stay in a fixed peer `/32` list. The first static hub also needs inbound
+**TCP 2333** (`rathole_control_port`) for bootstrap SSH. See
+[roaming-nodes.md](roaming-nodes.md).
 
 During initial bootstrap or recovery, also allow inbound TCP **22** from the
 controller `/32`; remove that rule after every stable node answers `ssh`.
@@ -192,7 +193,7 @@ roaming hosts exist). With any `roaming: true` host, it also enables
 static forwarding (`node_forward_on_all_statics`) and runs `wg syncconf` —
 details in [roaming-nodes.md](roaming-nodes.md) §6 and [wireguard.md](wireguard.md).
 
-Before first `up`, set `project` and `hostname` in
+Before first `up`, set `project`, `sc_ns`, `sc_api`, `sc_app`, and `sc_apps` in
 `inventories/<provider>/hosts.yml` → `all.vars`. Choose `control_plane: mac` (this Mac runbook) or
 `control_plane: gha` ([gha-deploy.md](gha-deploy.md)). For GHA, also set
 `node_ci_address` to a free mesh IP (often `.254`). Optional repository
@@ -221,8 +222,10 @@ brings up the mesh (not a second step).
 `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin` from Docker’s apt
 repo), and **PowerDNS** (`pdns-server`). It does not create DNS zones,
 configure application hostnames, or verify website records. Set
-`hostname` in `hosts.yml` all.vars (for example `example.com`); Supercompute
-prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. Caddy is enabled and reverse-proxies `sc-app.` to the `sc` container and `sc-api.` to the `supercompute` container. Each `up` pulls `:latest` for those images and recreates the containers when they already exist (`unless-stopped`).
+`sc_ns`, `sc_api`, `sc_app`, and `sc_apps` in `hosts.yml` all.vars (defaults
+`ns.example.com`, `sc-api.example.com`, `sc-app.example.com`,
+`sc-apps.example.com`). `sc_ns` must have a parent zone so Mac LaunchDaemon
+reverse-DNS can be derived from it (`ns.example.com` → `com.example`). If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. Caddy reverse-proxies `sc_app` to the `sc` container and `sc_api` to the `supercompute` container. `sc` gets `SC_API`; `supercompute` gets `SC_APP`, `SC_NS`, and `SC_APPS`. Each `up` pulls `:latest` for those images and recreates the containers when they already exist (`unless-stopped`).
 
 When using multiple public statics with roaming, allow **inbound UDP 51830** on
 **every** dialable static (not only `static-1`) so post-build random dial works.
@@ -245,13 +248,13 @@ task down ENV=prod CONFIRM=down-prod
 ## Roaming nodes (dynamic IP)
 
 To join Ubuntu 26.04 hosts with a changing public IP (inventory names
-`roaming-1`, `roaming-2`, …), follow the Cloudflare Tunnel SSH bootstrap in
+`roaming-1`, `roaming-2`, …), follow the rathole SSH bootstrap in
 [roaming-nodes.md](roaming-nodes.md). Roaming peers always initiate WireGuard;
 do not port-forward UDP 51830 inbound on the home router. Widen static hub UDP
-**51830** as in the firewall section above before `up` with roaming hosts.
-After join, Mac↔roaming and spoke↔spoke stay hub-relayed through `static-1`
-(no published roaming Endpoint); adding another `roaming-N` is inventory-only
-plus `up` / optional `up`.
+**51830** and hub TCP **2333** as in the firewall section above before `up` with
+roaming hosts. After join, Mac↔roaming and spoke↔spoke stay hub-relayed through
+`static-1` (no published roaming Endpoint); adding another `roaming-N` is
+inventory plus `task rathole-client-bootstrap` then `up`.
 
 ## Backup for a fresh computer
 
@@ -266,7 +269,7 @@ mesh from a new Mac. Do **not** rely on git for anything marked gitignored.
 | ------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | Operator SSH private key | `~/.ssh/<project>-<provider>`     | Proves you are the operator on every node (`ops` / inventory user)                                                         |
 | Operator SSH public key  | `~/.ssh/<project>-<provider>.pub` | Rebuild authorized_keys or verify the key pair                                                                             |
-| Ansible Vault password   | `inventories/<provider>/.vault-pass`      | Decrypts WireGuard private keys; **gitignored**—losing this loses the vault contents |
+| Ansible Vault password   | `inventories/<provider>/.vault-pass`      | Decrypts WireGuard and rathole secrets; **gitignored**—losing this loses the vault contents |
 
 
 
@@ -276,7 +279,7 @@ mesh from a new Mac. Do **not** rely on git for anything marked gitignored.
 
 | Item                           | Where                                                    | Why                                                                                                                                        |
 | ------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Encrypted vault                | `inventories/<provider>/group_vars/all/vault.yml`        | Holds `vault_wireguard_*` key pairs. Prefer committing it; also keep a secret-manager copy |
+| Encrypted vault                | `inventories/<provider>/group_vars/all/vault.yml`        | Holds `vault_wireguard_*` and, with non-Lima roaming, rathole Noise keys/tokens. Prefer committing it; also keep a secret-manager copy |
 | Per-node host-key fingerprints | `SHA256:…` from each `/etc/ssh/ssh_host_ed25519_key.pub` | Must match `ssh_ed25519_sha256` in `hosts.yml` for `up` / known_hosts                                                         |
 | Per-node public endpoints      | IPv4 or DNS in `hosts.yml`                               | WireGuard peer endpoints and bootstrap SSH                                                                                                 |
 | Inventory (`hosts.yml`)  | Git clone                                                | Project identity, host names, mesh IPs, SSH user, launchd label namespace                                                                                    |

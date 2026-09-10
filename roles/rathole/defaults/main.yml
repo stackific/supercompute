@@ -1,0 +1,11 @@
+---
+rathole_lifecycle: server
+rathole_version: "0.5.0"
+rathole_archive_name: rathole-x86_64-unknown-linux-gnu.zip
+rathole_archive_url: "https://github.com/rapiz1/rathole/releases/download/v{{ rathole_version }}/{{ rathole_archive_name }}"
+rathole_archive_sha256: "3e7d0d0f365120cd3cd351d147d1a12ee960c8068b464d4dd533a3821873b80e"
+rathole_control_port: 2333
+rathole_ssh_port_base: 61000
+rathole_vendor_binary: "{{ project_root }}/.vendor/rathole/rathole"
+rathole_install_path: /usr/local/bin/rathole
+rathole_config_dir: /etc/rathole

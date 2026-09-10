@@ -4,19 +4,18 @@
 
 | Requirement | Used for |
 | --- | --- |
-| macOS Apple Silicon | Mac control plane (`task up`), Lima guests |
+| A Mac | Mac control plane (`task up`), Lima guests |
 | [Task](https://taskfile.dev/installation/) | All `task …` entrypoints |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | Locked Ansible venv (`uv sync --locked`) |
 | WireGuard (`wg`, `wg-quick`) | Mesh bring-up and status |
 | [Lima](https://lima-vm.io/docs/installation/) | `node_lima_guest` hosts under `dev` |
-| `cloudflared` (macOS via `task setup`) | Non-Lima roaming SSH bootstrap only |
 
 ```sh
 brew install go-task/tap/go-task uv wireguard-tools lima
 task setup
 ```
 
-`task setup` runs `uv lock --check`, `uv sync --locked`, verifies Ansible, and on macOS installs `cloudflared` via Homebrew when missing.
+`task setup` runs `uv lock --check`, `uv sync --locked`, verifies Ansible, and fetches the SHA-pinned rathole Linux amd64 binary into `.vendor/rathole/` (copied to Ubuntu nodes by Ansible).
 
 GHA-managed inventories do **not** require a Mac for mutations — see [gha-deploy.md](gha-deploy.md).
 
@@ -27,7 +26,10 @@ GHA-managed inventories do **not** require a Mac for mutations — see [gha-depl
 | Key | Purpose |
 | --- | --- |
 | `project` | Stable id (currently `example`) |
-| `hostname` | Cloud DNS suffix (for example `example.com`); seeds Mac LaunchDaemon reverse-DNS. Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
+| `sc_ns` | Nameserver FQDN (default `ns.example.com`); parent zone seeds Mac LaunchDaemon reverse-DNS. Must have a parent zone (at least three labels). |
+| `sc_api` | API FQDN (default `sc-api.example.com`) |
+| `sc_app` | App FQDN (default `sc-app.example.com`) |
+| `sc_apps` | Apps zone FQDN (default `sc-apps.example.com`) |
 
 `project` prefixes:
 
@@ -36,7 +38,7 @@ GHA-managed inventories do **not** require a Mac for mutations — see [gha-depl
 - WireGuard LaunchDaemon label on macOS
 - Vault ID label: `<project>-<provider>`
 
-The same identity is rendered to **`/etc/supercompute/hosts.yml`** on every deployment node during WireGuard reconcile. That copy adds a `hosts` list (`name`, `private_address`, `type`: `public` | `roaming` | `lima`, and `public_ip` for public hosts) from inventory.
+The same identity (`project`, `sc_ns`, `sc_api`, `sc_app`, `sc_apps`) is rendered to **`/etc/supercompute/hosts.yml`** on every deployment node during WireGuard reconcile. That copy adds a `hosts` list (`name`, `private_address`, `type`: `public` | `roaming` | `lima`, and `public_ip` for public hosts) from inventory. Container env vars are a subset of those FQDNs — see [cluster.md](cluster.md).
 
 Changing `project` after go-live creates new paths and labels; it does not migrate existing state.
 
@@ -75,4 +77,4 @@ Not installed by this repo but required for full stack operation:
 
 - **Public IP** on each dialable static
 - **Postgres database with owner role** hosted outside of the Supercompute cloud (not installed by this automation)
-- **Cloudflare** zone and tunnel for non-Lima roaming (operator-owned)
+- Inbound **TCP 2333** on the rathole hub when non-Lima roaming exists

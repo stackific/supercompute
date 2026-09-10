@@ -1,0 +1,78 @@
+---
+- name: Require the SHA-pinned rathole binary from task setup
+  ansible.builtin.stat:
+    path: "{{ rathole_vendor_binary }}"
+  delegate_to: localhost
+  become: false
+  register: rathole_vendor_stat
+
+- name: Fail clearly when rathole has not been fetched on the controller
+  ansible.builtin.assert:
+    that:
+      - rathole_vendor_stat.stat.exists
+      - rathole_vendor_stat.stat.isreg
+    fail_msg: >-
+      Missing {{ rathole_vendor_binary }}. Run task setup so Ansible can copy
+      the SHA-pinned Linux amd64 binary.
+
+- name: Require Noise keys and per-roaming tokens from the vault
+  ansible.builtin.assert:
+    that:
+      - vault_rathole_noise_private_key is string
+      - vault_rathole_noise_private_key | length > 0
+      - vault_rathole_noise_public_key is string
+      - vault_rathole_noise_public_key | length > 0
+      - vault_rathole_tokens is mapping
+      - vault_rathole_tokens[item] is string
+      - vault_rathole_tokens[item] | length > 0
+  loop: "{{ hostvars['localhost'].non_lima_roaming_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  no_log: true
+
+- name: Install the pinned rathole binary
+  ansible.builtin.copy:
+    src: "{{ rathole_vendor_binary }}"
+    dest: "{{ rathole_install_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Create the rathole configuration directory
+  ansible.builtin.file:
+    path: "{{ rathole_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  become: true
+
+- name: Render the rathole server configuration
+  ansible.builtin.template:
+    src: server.toml.j2
+    dest: "{{ rathole_config_dir }}/server.toml"
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  no_log: true
+  register: rathole_server_config
+
+- name: Install the rathole server unit
+  ansible.builtin.template:
+    src: rathole-server.service.j2
+    dest: /etc/systemd/system/rathole-server.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  register: rathole_server_unit
+
+- name: Enable and start the rathole server
+  ansible.builtin.systemd_service:
+    name: rathole-server.service
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if (rathole_server_config.changed or rathole_server_unit.changed) else 'started' }}"
+  become: true

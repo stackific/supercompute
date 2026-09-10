@@ -64,7 +64,7 @@
             mesh_ssh_ready | bool
             | ternary(
                 'All nodes are reachable through WireGuard; using mesh SSH.',
-                'One or more nodes are not reachable through WireGuard; bootstrap recovery SSH is required (public endpoint, Lima-local SSH for node_lima_guest, or Cloudflare for non-Lima roaming).'
+                'One or more nodes are not reachable through WireGuard; bootstrap recovery SSH is required (public endpoint, Lima-local SSH for node_lima_guest, or rathole jump via the static hub for non-Lima roaming).'
               )
           }}
 

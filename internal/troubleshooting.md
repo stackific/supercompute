@@ -14,22 +14,33 @@ Rename inventory to `provider.platform: public`. Lima guests use `node_lima_gues
 
 - `ssh_ed25519_sha256` must be full `SHA256:…` from the host key.
 - Lima guests: run `task lima-host-fingerprints ENV=dev-lima` (`lima-up` force-refreshes fingerprints after recreation).
-- Non-Lima roaming: prove Cloudflare SSH first — see [roaming-nodes.md](roaming-nodes.md).
+- Non-Lima roaming: prove rathole jump SSH first — see [roaming-nodes.md](roaming-nodes.md).
 
-## `up` fails asserting `hostname`
+## `up` fails asserting `sc_*`
 
-- `inventories/<provider>/hosts.yml` → `all.vars` must define `project` and `hostname`
-  before nodes can receive `/etc/supercompute/hosts.yml`.
+- `inventories/<provider>/hosts.yml` → `all.vars` must define `project`,
+  `sc_ns`, `sc_api`, `sc_app`, and `sc_apps` before nodes can receive
+  `/etc/supercompute/hosts.yml`. `sc_ns` must have a parent zone (for example
+  `ns.example.com`).
 
 ## Mesh probe chooses bootstrap though mesh is up
 
 - Roaming/Lima mesh SSH probe waits **15s**; static waits **3s**. A slow peer
   can force Lima/public bootstrap. Re-run `up` once the mesh is warm.
 
+## Rathole jump SSH fails (non-Lima roaming)
+
+- Hub allows inbound **TCP 2333** from a wide source; roaming VM has outbound TCP 2333. Home routers do not port-forward.
+- `task setup` has placed `.vendor/rathole/rathole`; Ansible copies that binary to the hub (the roaming install script downloads the same SHA-pinned zip).
+- Follow [Adding a roaming node](../docs/src/content/docs/guides/adding-roaming-node.mdx): `task rathole-client-bootstrap`, copy `.state/<env>/rathole/<host>-install.sh`, run as root, prove jump SSH.
+- On the hub: `systemctl status rathole-server`, `ss -tlnp | grep 2333`, and `ss -tlnp | grep 127.0.0.1:61` (listen port is `61000` + last octet of `private_address`).
+- On the roaming VM: `systemctl status rathole-client` and `journalctl -u rathole-client -n 50`.
+- Lima guests do **not** use rathole — see [lima.md](lima.md).
+- See [roaming-nodes.md](roaming-nodes.md).
+
 ## Roaming mesh traffic fails
 
 - **Every dialable public static** must accept **inbound UDP 51830** from a wide source (not only Mac `/32`).
-- Roaming nodes must **not** use DynDNS as WireGuard `Endpoint`.
 - Statics need `ip_forward` and FORWARD rules — applied by `wireguard_node` when roaming exists.
 - After adding roaming peers, `wg syncconf` refreshes `AllowedIPs`.
 - Check dial helper: `systemctl status supercompute-roaming-dial.timer`,
@@ -45,8 +56,8 @@ Rename inventory to `provider.platform: public`. Lima guests use `node_lima_gues
   after `gha-mesh-peer.sh` brings the runner interface up.
 - Node↔node proof in `wireguard-up` uses bootstrap recovery SSH until the
   runner is on-mesh.
-- Non-Lima roaming bootstrap needs `cloudflared` on the runner (installed by
-  Deploy); the tunnel stays on the roaming VM.
+- Non-Lima roaming bootstrap uses the rathole jump via the static hub (the
+  workflow fetches the pinned binary; no `cloudflared` on the runner).
 - See [gha-deploy.md](gha-deploy.md).
 
 ## Lima guest unreachable
@@ -70,14 +81,14 @@ New installs bind PowerDNS to the mesh address only so host `systemd-resolved` k
 
 Requires `CONFIRM=down-<env>` matching `ENV`. Listed in `task --list`.
 
-**Stop only** — keeps vault, `.state/<env>/`, and Lima guests. Re-run `task up` to restore.
+**Stop only** — keeps vault, `.state/<env>/`, Lima guests, and rathole. Re-run `task up` to restore.
 
 For a full local factory reset (vault + `.state/` deleted, Lima destroyed when applicable), use `env-reset`, `dev-reset`, or `dev-reset-lima` instead. See [tasks.md](tasks.md).
 
 ## `up` / DNS issues
 
 - `cluster_node` does not create DNS zones or application records.
-- Set `hostname` in `hosts.yml` all.vars; Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`.
+- Set `sc_ns`, `sc_api`, `sc_app`, and `sc_apps` in `hosts.yml` all.vars. LaunchDaemon reverse-DNS is derived from the `sc_ns` parent zone.
 - If the DNS is hosted on Cloudflare, do not enable the proxy orange icons.
 - See [cluster.md](cluster.md) and [setup-prod.md](setup-prod.md).
 

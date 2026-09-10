@@ -22,7 +22,8 @@ tasks:
             uv run --locked python scripts/known-hosts.py \
               --inventory "inventories/{{.ENV}}/hosts.yml" \
               --known-hosts ".state/{{.ENV}}/known_hosts" \
-              --reuse-existing
+              --reuse-existing \
+              --skip-non-lima-roaming
             ENV="{{.ENV}}" uv run --locked python scripts/vault.py ensure-secrets
             ENV="{{.ENV}}" uv run --locked python scripts/validate-deployment.py
             bash scripts/ansible-playbook.sh "{{.ENV}}" --ask-become-pass playbooks/wireguard-up.yml

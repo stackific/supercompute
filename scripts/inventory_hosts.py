@@ -11,12 +11,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-DNS_PREFIX_KEYS = (
-  "dns_prefix_ns",
-  "dns_prefix_api",
-  "dns_prefix_app",
-  "dns_prefix_apps",
-)
+SC_NAME_KEYS = ("sc_ns", "sc_api", "sc_app", "sc_apps")
 
 
 class InventoryError(ValueError):
@@ -136,29 +131,25 @@ def validate_project(project: str, *, path: str) -> str:
   return project
 
 
-def dns_prefixes(provider: str) -> dict[str, str]:
-  values = load_group_vars_all(provider)
-  path = f"inventories/{provider}/group_vars/all/main.yml"
-  return {key: require_scalar(values, key, path=path) for key in DNS_PREFIX_KEYS}
-
-
-def derived_dns_names(hostname: str, prefixes: dict[str, str]) -> dict[str, str]:
-  return {
-    "nameserver_hostname": f"{prefixes['dns_prefix_ns']}.{hostname}",
-    "sc_api": f"{prefixes['dns_prefix_api']}.{hostname}",
-    "sc_app": f"{prefixes['dns_prefix_app']}.{hostname}",
-    "sc_apps": f"{prefixes['dns_prefix_apps']}.{hostname}",
+def validate_dns_name(value: str, *, key: str, path: str) -> str:
+  examples = {
+    "sc_ns": "ns.example.com",
+    "sc_api": "sc-api.example.com",
+    "sc_app": "sc-app.example.com",
+    "sc_apps": "sc-apps.example.com",
   }
-
-
-def validate_hostname(hostname: str, *, path: str) -> str:
-  if "REPLACE_WITH_" in hostname or "<" in hostname or ">" in hostname:
+  example = examples.get(key, "example.com")
+  if "REPLACE_WITH_" in value or "<" in value or ">" in value:
     raise InventoryError(
-      f"{path}: set hostname to your cloud DNS name (for example example.com)"
+      f"{path}: set {key} to a DNS name (for example {example})"
     )
-  if "." not in hostname:
-    raise InventoryError(f"{path}: hostname must be a DNS name with a dot")
-  return hostname
+  if "." not in value:
+    raise InventoryError(f"{path}: {key} must be a DNS name with a dot")
+  if key == "sc_ns" and value.count(".") < 2:
+    raise InventoryError(
+      f"{path}: sc_ns must have a parent zone (for example ns.example.com)"
+    )
+  return value
 
 
 def identity_vars(provider: str, *, document: dict | None = None) -> dict[str, str]:
@@ -166,11 +157,13 @@ def identity_vars(provider: str, *, document: dict | None = None) -> dict[str, s
   values = all_vars(document)
   path = f"inventories/{provider}/hosts.yml all.vars"
   project = validate_project(require_scalar(values, "project", path=path), path=path)
-  hostname = validate_hostname(require_scalar(values, "hostname", path=path), path=path)
+  sc_names = {
+    key: validate_dns_name(require_scalar(values, key, path=path), key=key, path=path)
+    for key in SC_NAME_KEYS
+  }
   return {
     "project": project,
-    "hostname": hostname,
-    **derived_dns_names(hostname, dns_prefixes(provider)),
+    **sc_names,
   }
 
 
@@ -189,7 +182,8 @@ def validate_deployment_config(provider: str) -> None:
 
 def launchd_label(provider: str) -> str:
   identity = identity_vars(provider)
-  reverse_dns = ".".join(reversed(identity["hostname"].split(".")))
+  parent_labels = identity["sc_ns"].split(".")[1:]
+  reverse_dns = ".".join(reversed(parent_labels))
   return f"{reverse_dns}.{identity['project']}.{provider}.wireguard"
 
 

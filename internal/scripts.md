@@ -19,7 +19,8 @@ Python helpers use **`uv run --locked`** from the worktree root. Shell scripts a
 
 | Script | Role |
 | --- | --- |
-| `scripts/known-hosts.py` | Sync `.state/<provider>/known_hosts` from `hosts.yml` fingerprints |
+| `scripts/known-hosts.py` | Sync `.state/<provider>/known_hosts` from `hosts.yml` fingerprints (`--skip-non-lima-roaming` until the hub jump listens) |
+| `scripts/rathole.py` | `fetch` SHA-pinned Linux amd64 binary; `render-client` roaming install script |
 | `scripts/wireguard-ssh-config.py` | Generate SSH config snippets for mesh/bootstrap |
 | `scripts/wg-ssh.sh` | `task ssh` entrypoint |
 | `scripts/disconnect-wireguard.sh` | `task wg-remove` for public meshes |
@@ -42,14 +43,15 @@ Python helpers use **`uv run --locked`** from the worktree root. Shell scripts a
 
 | Script | Role |
 | --- | --- |
-| `scripts/vault.py` | `vault-init`, `edit`, `destroy`, `ensure-wireguard` |
+| `scripts/vault.py` | `init`, `edit`, `destroy`, `ensure-wireguard`, `ensure-secrets` (includes rathole when non-Lima roaming exists) |
 
 ## Common invocations
 
 ```sh
 uv run --locked python scripts/provider_platform.py --provider dev
-uv run --locked python scripts/lima-host-fingerprints.py --provider dev --force
-uv run --locked python scripts/vault.py ensure-wireguard
+uv run --locked python scripts/lima-host-fingerprints.py --provider dev-lima --force
+uv run --locked python scripts/vault.py ensure-secrets
+uv run --locked python scripts/rathole.py fetch
 ```
 
 See [tasks.md](tasks.md) for Task entrypoints that call these scripts.

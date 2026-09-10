@@ -26,10 +26,9 @@ Inventory hostnames: `static-1`, `static-2`, … and `roaming-1`, `roaming-2`, �
 
 1. **Roaming nodes always initiate** WireGuard toward a public static `Endpoint`.
 2. Stable peers (Mac, static hosts) **do not dial** roaming nodes for mesh traffic.
-3. **No DynDNS** or public hostname as WireGuard `Endpoint` for roaming peers.
-4. **No inbound UDP 51830** port-forward on home routers for roaming nodes.
+3. Roaming hosts have no WireGuard `Endpoint`; only statics publish `public_ip`.
 
-Cloudflare Tunnel carries **SSH bootstrap only**; it does not carry `scwg0` UDP.
+Rathole carries **SSH bootstrap only**; it does not carry `scwg0` UDP.
 
 ## Build-up hub vs post-build dial
 
@@ -73,7 +72,7 @@ Node↔node mesh SSH proof still runs inside `wireguard-up` for both control pla
 | Host type | Before / during `up` | After mesh up |
 | --- | --- | --- |
 | Static public | Public IP SSH (or mesh if already up) | `task ssh` / GHA over mesh |
-| Non-Lima roaming | Cloudflare Tunnel → `bootstrap_ssh_host` | Mesh SSH |
+| Non-Lima roaming | Rathole jump via static hub `127.0.0.1:(61000+last octet)` | Mesh SSH |
 | Lima guest | Lima-local `127.0.0.1` + `lima_nodes[].ssh_port` | Mesh SSH |
 
 See [lima.md](lima.md) and [roaming-nodes.md](roaming-nodes.md).
@@ -95,8 +94,9 @@ Public (`task --list`); full reference in [tasks.md](tasks.md) and [task.mdx](..
 | `task wg-status ENV=<env>` | Status playbook |
 | `task wg-remove ENV=<env>` | Disconnect Mac controller only (nodes unchanged) |
 | `task ssh ENV=<env> NODE=<host>` | SSH over mesh |
+| `task rathole-client-bootstrap ENV=<env> NODE=<host>` | Hub rathole server + roaming VM install script |
 
-All require `provider.platform: public`. GHA mutations use Actions, not Task — see [gha-deploy.md](gha-deploy.md).
+All require `provider.platform: public`. GHA mutations use Actions, not Task — see [gha-deploy.md](gha-deploy.md). `task down` leaves rathole running so mesh-down recovery still works.
 
 ## State files
 
@@ -104,7 +104,8 @@ All require `provider.platform: public`. GHA mutations use Actions, not Task —
 | --- | --- |
 | `.state/<provider>/wireguard/scwg0.conf` | Mac controller config (`control_plane: mac`) |
 | `.state/<provider>/known_hosts` | SSH aliases for bootstrap and mesh |
-| Vault | WireGuard private keys per node (+ `macos` when used) |
+| `.state/<provider>/rathole/` | Generated roaming client install scripts |
+| Vault | WireGuard private keys per node (+ `macos` when used); rathole Noise/tokens when non-Lima roaming exists |
 | `/etc/supercompute/*` on nodes | Identity + dial sidecars |
 
 ## Firewall guidance
@@ -112,12 +113,14 @@ All require `provider.platform: public`. GHA mutations use Actions, not Task —
 | Host | Inbound |
 | --- | --- |
 | Every dialable public static | UDP 51830 from roaming egress (wide enough for changing home IPs) |
+| Rathole hub (first static) | TCP 2333 from roaming egress when non-Lima roaming exists |
 | Static (bootstrap) | TCP 22 from operator `/32` if public SSH used |
 | Roaming (home) | No inbound UDP 51830 |
 | Mac | No inbound UDP 51830 required when a static relays Mac↔roaming |
 
 ## Related
 
-- [vault.md](vault.md) — WireGuard key generation
+- [vault.md](vault.md) — WireGuard and rathole key generation
+- [roaming-nodes.md](roaming-nodes.md) — non-Lima rathole bootstrap
 - [gha-deploy.md](gha-deploy.md) — Actions control plane
 - [tasks.md](tasks.md) — full task list

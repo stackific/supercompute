@@ -1,6 +1,6 @@
 # Get started
 
-Minimal path from a fresh clone to a working **`dev`** mesh (one public static hub). For Lima roaming on Apple Silicon, use **`dev-lima`** — [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx).
+Minimal path from a fresh clone to a working **`dev`** mesh (one public static hub). For Lima roaming on a Mac, use **`dev-lima`** — [Adding a node roaming on a Mac](../docs/src/content/docs/guides/adding-node-roaming-on-a-mac.mdx).
 
 ## 1. Install tools
 
@@ -19,6 +19,8 @@ From the worktree root:
 ```sh
 task setup
 ```
+
+`task setup` installs the locked Ansible venv and fetches the SHA-pinned rathole Linux amd64 binary into `.vendor/rathole/` (copied to Ubuntu nodes by Ansible; unused until a non-Lima roaming host exists).
 
 ## 3. Prepare `static-1`
 
@@ -39,7 +41,7 @@ task wg-status ENV=dev
 task ssh ENV=dev NODE=static-1
 ```
 
-`task up` brings up WireGuard **and** installs the cluster stack (gVisor, Docker, Caddy reverse-proxying `sc-app.`→`sc` and `sc-api.`→`supercompute`, PowerDNS), writes `/etc/supercompute/*` on nodes. See [cluster.md](cluster.md) and [wireguard.md](wireguard.md).
+`task up` brings up WireGuard **and** installs the cluster stack (gVisor, Docker, Caddy reverse-proxying `sc_app`→`sc` and `sc_api`→`supercompute`, PowerDNS), writes `/etc/supercompute/*` on nodes, and passes `SC_API` to `sc` plus `SC_APP` / `SC_NS` / `SC_APPS` to `supercompute`. See [cluster.md](cluster.md) and [wireguard.md](wireguard.md).
 
 ## Reset dev
 
@@ -61,8 +63,8 @@ To stop without wiping vault or `.state/`, use `task down ENV=dev CONFIRM=down-d
 | Goal | Document |
 | --- | --- |
 | Full `dev` walkthrough | [setup-dev.md](setup-dev.md) |
-| Lima roaming guest | [lima.md](lima.md), [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx) |
+| Lima roaming guest | [lima.md](lima.md), [Adding a node roaming on a Mac](../docs/src/content/docs/guides/adding-node-roaming-on-a-mac.mdx) |
 | Production mesh | [setup-prod.md](setup-prod.md) |
 | GHA-managed deploy | [gha-deploy.md](gha-deploy.md) |
-| Home lab roaming (Cloudflare) | [roaming-nodes.md](roaming-nodes.md) |
+| Home lab roaming (rathole) | [roaming-nodes.md](roaming-nodes.md) |
 | Task reference | [tasks.md](tasks.md) |

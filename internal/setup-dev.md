@@ -6,7 +6,7 @@ The **`dev`** inventory is a `provider.platform: public` WireGuard mesh with one
 
 Mesh CIDR defaults to **`10.217.80.0/24`** (disjoint from **`dev-lima`** at `10.217.81.0/24` and typical prod `10.217.79.0/24`).
 
-For a Lima roaming guest on Apple Silicon, use **`dev-lima`** instead — see [lima.md](lima.md) and [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx).
+For a Lima roaming guest on a Mac, use **`dev-lima`** instead — see [lima.md](lima.md) and [Adding a node roaming on a Mac](../docs/src/content/docs/guides/adding-node-roaming-on-a-mac.mdx).
 
 `provider.platform: lima` and `provider.platform: vps` are refused — use `public`.
 
@@ -21,6 +21,8 @@ For a Lima roaming guest on Apple Silicon, use **`dev-lima`** instead — see [l
 brew install go-task/tap/go-task uv wireguard-tools
 task setup
 ```
+
+`task setup` installs the locked Ansible venv and fetches the SHA-pinned rathole Linux amd64 binary.
 
 ## 1. Prepare the static public host
 
@@ -85,3 +87,4 @@ ping -c 10 -I scwg0 10.217.80.1
 1. Prepare public `static-1` and fill inventory placeholders (including fingerprint).
 2. `task vault-init ENV=dev`; `task vault-edit ENV=dev` (set `vault_database_url`); `task up ENV=dev`.
 3. Spot-check mesh SSH with `task ssh ENV=dev NODE=static-1`.
+4. For a home-lab Ubuntu VM later, see [roaming-nodes.md](roaming-nodes.md). For Lima, use **`dev-lima`**.

@@ -1,7 +1,9 @@
 ---
-- name: Classify static vs roaming nodes and pick the static hub
+- ansible.builtin.import_playbook: classify-mesh.yml
+
+- name: Assert WireGuard-down preconditions after mesh classification
   hosts: localhost
-  gather_facts: true
+  gather_facts: false
   any_errors_fatal: true
   tasks:
     - name: Require a public-endpoint provider for WireGuard teardown
@@ -12,32 +14,6 @@
         fail_msg: >-
           wireguard-down requires provider.platform=public for
           ENV={{ inventory_slug }}.
-
-    - name: Reset classified WireGuard node lists
-      ansible.builtin.set_fact:
-        static_nodes: []
-        roaming_nodes: []
-
-    - name: Classify each WireGuard inventory node
-      ansible.builtin.set_fact:
-        static_nodes: >-
-          {{
-            static_nodes
-            + ([] if (hostvars[item].roaming | default(false) | bool) else [item])
-          }}
-        roaming_nodes: >-
-          {{
-            roaming_nodes
-            + ([item] if (hostvars[item].roaming | default(false) | bool) else [])
-          }}
-      loop: "{{ groups['nodes'] | sort }}"
-      loop_control:
-        label: "{{ item }}"
-
-    - name: Record roaming presence and the static hub hostname
-      ansible.builtin.set_fact:
-        has_roaming: "{{ roaming_nodes | length > 0 }}"
-        static_hub: "{{ static_nodes | first | default('') }}"
 
 - ansible.builtin.import_playbook: node-transport.yml
 

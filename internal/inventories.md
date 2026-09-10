@@ -7,7 +7,7 @@ Each **provider** is an Ansible inventory directory: `inventories/<slug>/`. The 
 | File | Role |
 | --- | --- |
 | `hosts.yml` | Project identity (`all.vars`) and host definitions |
-| `group_vars/all/main.yml` | Provider platform, mesh, Lima, SSH defaults, DNS prefixes |
+| `group_vars/all/main.yml` | Provider platform, mesh, Lima, SSH defaults |
 | `group_vars/all/vault.yml` | Encrypted secrets (after `task vault-init`) |
 | `group_vars/nodes/main.yml` | SSH connection defaults for remote nodes (mesh `ansible_host`, keys, known_hosts) |
 
@@ -19,7 +19,10 @@ Typical structure in `hosts.yml`:
 all:
   vars:
     project: example
-    hostname: example.com
+    sc_ns: ns.example.com
+    sc_api: sc-api.example.com
+    sc_app: sc-app.example.com
+    sc_apps: sc-apps.example.com
 
 nodes:
   hosts:
@@ -38,7 +41,10 @@ Required in every inventory before `task up` (`scripts/validate-deployment.py`):
 | Variable | Example | Notes |
 | --- | --- | --- |
 | `project` | `example` | Stable id |
-| `hostname` | `example.com` | Cloud DNS suffix. Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
+| `sc_ns` | `ns.example.com` | Nameserver FQDN (copied to `/etc/supercompute/hosts.yml`); parent zone seeds Mac LaunchDaemon reverse-DNS (`ns.example.com` → `com.example`). Must have at least three labels. |
+| `sc_api` | `sc-api.example.com` | API FQDN (copied to `/etc/supercompute/hosts.yml`) |
+| `sc_app` | `sc-app.example.com` | App FQDN (copied to `/etc/supercompute/hosts.yml`) |
+| `sc_apps` | `sc-apps.example.com` | Apps zone FQDN (copied to `/etc/supercompute/hosts.yml`) |
 
 | Vault key | Example | Notes |
 | --- | --- | --- |
@@ -53,8 +59,7 @@ Required in every inventory before `task up` (`scripts/validate-deployment.py`):
 
 | Field | Source |
 | --- | --- |
-| `project`, `hostname` | `hosts.yml` `all.vars` |
-| `nameserver_hostname`, `sc_api`, `sc_app`, `sc_apps` | Derived: `dns_prefix_*` from `group_vars/all/main.yml` + `hostname` |
+| `project`, `sc_ns`, `sc_api`, `sc_app`, `sc_apps` | `hosts.yml` `all.vars` |
 | `database_url` on the node | `vault_database_url` from the encrypted vault |
 | `database_secret` on the node | `vault_database_secret` from the encrypted vault |
 | `hosts` | `nodes` group (name, `private_address`, type, `public_ip` for statics) |
@@ -86,20 +91,9 @@ provider:
 | `node_ci_address` | e.g. `.254` | Ephemeral GHA runner mesh IP (unique in CIDR) |
 | `node_forward_on_all_statics` | `true` | Every public static forwards for day-2 random dial |
 | `roaming_dial_timer_on_calendar` | `hourly` | systemd timer for roaming dial helper |
+| `rathole_control_port` | `2333` | Hub inbound TCP for rathole Noise control (non-Lima roaming) |
+| `rathole_ssh_port_base` | `61000` | Hub loopback SSH listen = base + last octet of `private_address` |
 | `mac_operator_ssh_public_key` | from env | Optional; GHA installs into `ops` authorized_keys |
-
-### DNS prefixes (`main.yml`)
-
-Labels prepended to `hosts.yml` `all.vars.hostname` (example results assume `hostname: example.com`):
-
-| Variable | Default | Result |
-| --- | --- | --- |
-| `dns_prefix_ns` | `ns` | `ns.example.com` |
-| `dns_prefix_api` | `sc-api` | `sc-api.example.com` |
-| `dns_prefix_app` | `sc-app` | `sc-app.example.com` |
-| `dns_prefix_apps` | `apps` | `apps.example.com` |
-
-Operators may override any `dns_prefix_*` in `group_vars/all/main.yml`. Matching parent DNS records and a re-run of `task up` are required after a change.
 
 When `control_plane: gha`, see [gha-deploy.md](gha-deploy.md).
 
@@ -113,7 +107,7 @@ When `control_plane: gha`, see [gha-deploy.md](gha-deploy.md).
 | `roaming` | — | `true` | `true` |
 | `node_lima_guest` | — | — | `true` |
 | `node_host_architecture` | `x86_64` | `x86_64` | `aarch64` |
-| `bootstrap_ssh_host` | — | Cloudflare hostname | — |
+| `bootstrap_ssh_host` | — | omit (rathole jump) | — |
 
 Lima guests **must not** set `bootstrap_ssh_host` or `public_ip`.
 
@@ -162,3 +156,4 @@ Vault password files (`inventories/*/.vault-pass`) are always gitignored.
 - [setup-prod.md](setup-prod.md) — production inventory
 - [gha-deploy.md](gha-deploy.md) — `control_plane: gha`
 - [wireguard.md](wireguard.md) — roaming and hub semantics
+- [roaming-nodes.md](roaming-nodes.md) — non-Lima rathole bootstrap

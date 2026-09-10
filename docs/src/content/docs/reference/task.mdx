@@ -21,7 +21,7 @@ Run `task` with no arguments for the same list plus a short reminder of required
 | Parameter | Used by | Meaning |
 | --- | --- | --- |
 | `ENV` | Most environment-scoped tasks | Environment name — directory under `inventories/` (for example `dev`, `prod`) |
-| `NODE` | `task ssh` | Host name from `inventories/<env>/hosts.yml` (for example `static-1`) |
+| `NODE` | `task ssh`, `task rathole-client-bootstrap` | Host name from `inventories/<env>/hosts.yml` (for example `static-1`, `roaming-1`) |
 | `CONFIRM` | Destructive tasks | Exact token required by that task (see each command) |
 
 Environment-scoped tasks require `provider.platform: public` in `inventories/<env>/group_vars/all/main.yml`. They refuse retired `lima` and `vps` platform values.
@@ -34,13 +34,13 @@ Inventories with `control_plane: gha` are meant for [GitHub Actions](/start-here
 
 #### `task setup`
 
-Install the locked Ansible Python environment.
+Install the locked Ansible Python environment and fetch the SHA-pinned rathole Linux amd64 binary.
 
 ```sh
 task setup
 ```
 
-Requires `uv` on PATH.
+Requires `uv` on PATH. The rathole binary lands in `.vendor/rathole/` (gitignored). Ansible copies it to Ubuntu nodes; Lima guests do not use rathole.
 
 ---
 
@@ -69,9 +69,10 @@ task up ENV=<env>
 </TabItem>
 </Tabs>
 
-- Syncs `.state/<env>/known_hosts` from inventory fingerprints.
-- Ensures WireGuard keypairs and `vault_database_secret` in the vault.
-- Validates `hosts.yml` `all.vars` (`project`, `hostname`) and vault secrets (`vault_database_url`, `vault_database_secret`) before playbooks run.
+- Syncs `.state/<env>/known_hosts` from inventory fingerprints (skips non-Lima roaming until the rathole jump is listening).
+- Ensures WireGuard keypairs, `vault_database_secret`, and (when non-Lima roaming exists) rathole Noise keys and tokens.
+- Validates `hosts.yml` `all.vars` (`project`, `sc_ns`, `sc_api`, `sc_app`, `sc_apps`) and vault secrets (`vault_database_url`, `vault_database_secret`) before playbooks run.
+- Runs the `sc` container with `SC_API` and the `supercompute` container with `SC_APP`, `SC_NS`, and `SC_APPS`.
 - Prompts for **BECOME password** (macOS sudo) on the Mac.
 - Idempotent — safe to re-run.
 
@@ -81,7 +82,7 @@ Requires `wg` and `uv` on PATH.
 
 Stop the environment without deleting vault or local state.
 
-**Stop** the environment — undo cluster software, node WireGuard, and the Mac controller mesh. Keeps your vault, `.state/<env>/`, Lima guests, and inventory. Re-run `task up` to bring everything back.
+**Stop** the environment — undo cluster software, node WireGuard, and the Mac controller mesh. Keeps your vault, `.state/<env>/`, Lima guests, inventory, and rathole (mesh-down SSH recovery). Re-run `task up` to bring everything back.
 
 ```sh
 task down ENV=dev CONFIRM=down-dev
@@ -99,6 +100,7 @@ Use this when you want a clean teardown without wiping secrets or local automati
 | Encrypted vault + `.vault-pass` | **Kept** | **Deleted** |
 | `.state/<env>/` (known_hosts, WG state, …) | **Kept** | **Deleted** |
 | Lima guests (`dev-lima`) | **Kept** | **Destroyed** |
+| Rathole on hub / roaming VMs | **Kept** | Left on remote VMs |
 | Remote VMs (`ops`, SSH keys, firewall) | Unchanged | Unchanged |
 | To run again | `task up` | `vault-init` (+ `lima-up` for dev-lima), then `task up` |
 
@@ -145,7 +147,7 @@ May prompt for macOS BECOME password when disconnecting the Mac WireGuard contro
 
 Create a new encrypted vault and local password file.
 
-Create a new encrypted vault and a generated password file at `inventories/<env>/.vault-pass` (gitignored). Seeds `vault_meta`, a placeholder `vault_database_url`, and an auto-generated `vault_database_secret`. The first `task up` adds WireGuard keypairs.
+Create a new encrypted vault and a generated password file at `inventories/<env>/.vault-pass` (gitignored). Seeds `vault_meta`, a placeholder `vault_database_url`, and an auto-generated `vault_database_secret`. The first `task up` adds WireGuard keypairs, and rathole Noise/tokens when non-Lima roaming hosts exist.
 
 <Tabs syncKey="pkg">
 <TabItem label="dev">
@@ -359,11 +361,21 @@ task ssh ENV=<env> NODE=<host>
 
 Requires an up mesh and `wg` on PATH.
 
+#### `task rathole-client-bootstrap ENV=<env> NODE=<host>`
+
+Install rathole on the static hub and render a one-shot install script for a non-Lima roaming VM.
+
+```sh
+task rathole-client-bootstrap ENV=prod NODE=roaming-1
+```
+
+Requires `task setup` first (SHA-pinned binary in `.vendor/rathole/`). Writes `.state/<env>/rathole/<host>-install.sh` and `<host>-uninstall.sh`. Follow [Adding a roaming node](/guides/adding-roaming-node/) to open hub TCP **2333**, copy the install script to the VM, run it as root, and prove jump SSH. Then `task up` (Mac control plane) or Actions Deploy `up` (`control_plane: gha`). This task is required once even for GHA inventories; commit `vault.yml` if it added rathole secrets. Lima guests (`node_lima_guest`) do not use this task.
+
 ---
 
 ### Lima (`ENV=<env>` with `node_lima_guest` hosts)
 
-These tasks require `ENV=<slug>` for an inventory that defines `node_lima_guest` hosts (typically **`dev-lima`**). See [Get started locally with a roaming node](/start-here/get-started-roaming-node/).
+These tasks require `ENV=<slug>` for an inventory that defines `node_lima_guest` hosts (typically **`dev-lima`**). See [Adding a node roaming on a Mac](/guides/adding-node-roaming-on-a-mac/).
 
 #### `task lima-up ENV=<env>`
 
@@ -399,7 +411,7 @@ task up ENV=dev
 task ssh ENV=dev NODE=static-1
 ```
 
-**dev-lima** — see [Get started locally with a roaming node](/start-here/get-started-roaming-node/):
+**dev-lima** — see [Adding a node roaming on a Mac](/guides/adding-node-roaming-on-a-mac/):
 
 ```sh
 task setup
@@ -408,6 +420,16 @@ task vault-init ENV=dev-lima
 task vault-edit ENV=dev-lima   # set vault_database_url
 task up ENV=dev-lima
 task ssh ENV=dev-lima NODE=roaming-1
+```
+
+**Home-lab roaming (non-Lima)** — see [Adding a roaming node](/guides/adding-roaming-node/):
+
+```sh
+task setup
+task rathole-client-bootstrap ENV=prod NODE=roaming-1
+# copy .state/prod/rathole/roaming-1-install.sh to the VM; run as root
+task up ENV=prod
+task ssh ENV=prod NODE=roaming-1
 ```
 
 **Prod environment on the Mac** — see [Deploy to production](/start-here/deploy-to-production/):
@@ -445,7 +467,7 @@ These tasks exist but are marked `internal: true` (hidden from `task --list`, st
 
 | Command | Purpose |
 | --- | --- |
-| `task vault-secrets-ensure ENV=<env>` | Ensure WG keys + `vault_database_secret` (`up` does this automatically) |
+| `task vault-secrets-ensure ENV=<env>` | Ensure WG keys, rathole Noise/tokens when roaming exists, and `vault_database_secret` (`up` does this automatically) |
 | `task vault-wireguard-ensure ENV=<env>` | Ensure WG keys only (`up` does this automatically) |
 | `task vault-destroy ENV=<env> CONFIRM=destroy-vault-<env>` | Delete vault without full reset |
 | `task lima-host-fingerprints ENV=<env>` | Re-capture Lima SSH fingerprints (`lima-up` refreshes them) |

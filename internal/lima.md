@@ -50,7 +50,7 @@ Ansible reaches Lima guests via **Lima-local SSH**:
 - Port: `lima_nodes[].ssh_port` (for example `61222` on `dev-lima`)
 - Identity: `LIMA_HOME/_config/user`
 
-**Cloudflare Tunnel is not used** for Lima guests. See [roaming-nodes.md](roaming-nodes.md) for non-Lima roaming.
+**Rathole is not used** for Lima guests. See [roaming-nodes.md](roaming-nodes.md) for non-Lima roaming.
 
 ## Host-key fingerprints
 

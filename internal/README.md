@@ -15,10 +15,10 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 | Document | Audience |
 | --- | --- |
 | [setup-dev.md](setup-dev.md) | `ENV=dev` — public static hub (`control_plane: mac`) |
-| [lima.md](lima.md) | `ENV=dev-lima` — Lima `node_lima_guest` roaming on Apple Silicon |
+| [lima.md](lima.md) | `ENV=dev-lima` — Lima `node_lima_guest` roaming on a Mac |
 | [setup-prod.md](setup-prod.md) | Operator `prod` mesh (two static nodes) |
 | [gha-deploy.md](gha-deploy.md) | Manual GitHub Actions deploy (`control_plane: gha`) |
-| [roaming-nodes.md](roaming-nodes.md) | Non-Lima dynamic-IP roaming via Cloudflare Tunnel SSH |
+| [roaming-nodes.md](roaming-nodes.md) | Non-Lima dynamic-IP roaming via rathole SSH |
 
 ## Concepts
 
@@ -27,7 +27,7 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 | [inventories.md](inventories.md) | `inventories/<slug>/`, groups, `control_plane`, `provider.platform: public` |
 | [wireguard.md](wireguard.md) | Mesh model, hub build-up, post-build roaming dial, Mac / GHA |
 | [lima.md](lima.md) | Lima guests, fingerprints, runtime home |
-| [vault.md](vault.md) | Ansible Vault lifecycle, `.vault-pass` creation, WireGuard keys |
+| [vault.md](vault.md) | Ansible Vault lifecycle, `.vault-pass` creation, WireGuard and rathole keys |
 | [cluster.md](cluster.md) | gVisor, Docker Engine, Caddy, PowerDNS (always part of `task up`) |
 
 ## Reference

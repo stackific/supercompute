@@ -1,0 +1,16 @@
+[server]
+bind_addr = "0.0.0.0:{{ rathole_control_port }}"
+heartbeat_interval = 30
+
+[server.transport]
+type = "noise"
+
+[server.transport.noise]
+local_private_key = "{{ vault_rathole_noise_private_key }}"
+{% for name in hostvars['localhost'].non_lima_roaming_nodes | sort %}
+
+[server.services.{{ name }}]
+type = "tcp"
+token = "{{ vault_rathole_tokens[name] }}"
+bind_addr = "127.0.0.1:{{ rathole_ssh_port_base | int + (hostvars[name].private_address.split('.')[-1] | int) }}"
+{% endfor %}

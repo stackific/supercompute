@@ -31,7 +31,7 @@ vault_database_url: postgresql://REPLACE_WITH_USER:PASSWORD@HOST:5432/DATABASE
 vault_database_secret: …   # auto-generated at vault-init
 ```
 
-After the first `task up`, the vault also has `vault_wireguard_private_keys` and `vault_wireguard_public_keys`.
+After `task up`, the vault also has `vault_wireguard_private_keys` and `vault_wireguard_public_keys`. Inventories with non-Lima roaming also get `vault_rathole_noise_*` keys and `vault_rathole_tokens`.
 
 Replace `vault_database_url` with `task vault-edit` before `task up` (see public docs — PostgreSQL database). `scripts/vault.py` validates the vault on edit.
 
@@ -41,13 +41,13 @@ Replace `vault_database_url` with `task vault-edit` before `task up` (see public
 | --- | --- |
 | `task vault-init ENV=<env>` | Create empty encrypted vault + new password file |
 | `task vault-edit ENV=<env>` | Open vault, edit secrets, save and exit |
-| `task vault-secrets-ensure ENV=<env>` | Internal — ensure WireGuard keys and `vault_database_secret` (`up` calls this) |
+| `task vault-secrets-ensure ENV=<env>` | Internal — ensure WireGuard keys, rathole Noise/tokens, and `vault_database_secret` (`up` calls this) |
 | `task vault-wireguard-ensure ENV=<env>` | Internal — ensure WireGuard key pairs only |
 | `task vault-destroy ENV=<env> CONFIRM=destroy-vault-<slug>` | Internal — delete vault without full reset |
 
 To wipe and recreate a provider vault: `env-reset` (or `dev-reset` / `dev-reset-lima`), then `vault-init`.
 
-`up` calls `vault.py ensure-secrets` automatically before playbooks. `scripts/validate-deployment.py` then checks `hosts.yml` (`project`, `hostname`) and vault secrets (`vault_database_url`, `vault_database_secret`).
+`up` calls `vault.py ensure-secrets` automatically before playbooks. `scripts/validate-deployment.py` then checks `hosts.yml` (`project`, `sc_ns`, `sc_api`, `sc_app`, `sc_apps`) and vault secrets (`vault_database_url`, `vault_database_secret`).
 
 ## Environment reset
 
@@ -65,6 +65,10 @@ task vault-init ENV=dev-lima
 ## WireGuard keys
 
 `ensure-wireguard` generates per-node WireGuard key material in the vault when missing (`vault_wireguard_private_keys` / `vault_wireguard_public_keys`). Keys sync to `.state/<provider>/wireguard/` during `up`. The `macos` key is still generated for Mac-managed inventories; GHA control planes omit the Mac peer from node configs.
+
+## Rathole keys
+
+When the inventory has non-Lima `roaming: true` hosts, `ensure-secrets` also generates Noise keys (`vault_rathole_noise_private_key` / `vault_rathole_noise_public_key`) and per-host tokens (`vault_rathole_tokens`) when missing. Lima guests do not get rathole tokens. Static-only inventories skip this material.
 
 ## Database URL and secret
 
@@ -84,5 +88,6 @@ Mismatch between `hosts.yml` all.vars, vault header, and inner `project` causes 
 ## Related
 
 - [wireguard.md](wireguard.md) — mesh bring-up
+- [roaming-nodes.md](roaming-nodes.md) — rathole bootstrap SSH
 - [cluster.md](cluster.md) — cluster runtime
 - [gha-deploy.md](gha-deploy.md) — GitHub Actions control plane

@@ -9,12 +9,13 @@ inventories/
   dev/                  # tracked dev mesh
   prod/                 # gitignored — operator backup
 playbooks/              # Ansible playbooks
-roles/                  # Ansible roles
+roles/                  # Ansible roles (including rathole)
 scripts/                # Python + shell helpers invoked by Task / GHA
 .github/workflows/      # manual deploy.yml (control_plane=gha)
 internal/               # this documentation
 docs/                   # Starlight public docs site (Bun + Astro)
-.state/<provider>/      # runtime state (known_hosts, wireguard, lima, gha-*)
+.vendor/rathole/        # SHA-pinned rathole binary from task setup (gitignored)
+.state/<provider>/      # runtime state (known_hosts, wireguard, rathole, lima, gha-*)
 ```
 
 ## `inventories/<provider>/hosts.yml`
@@ -25,7 +26,10 @@ Operator source of truth per environment. Required shape:
 all:
   vars:
     project: example
-    hostname: example.com
+    sc_ns: ns.example.com
+    sc_api: sc-api.example.com
+    sc_app: sc-app.example.com
+    sc_apps: sc-apps.example.com
 
 nodes:
   hosts:
@@ -38,7 +42,7 @@ nodes:
 | Key (under `all.vars`) | Purpose |
 | --- | --- |
 | `project` | Stable id; vault label, SSH key path, Lima home, LaunchDaemon |
-| `hostname` | Cloud DNS suffix (for example `example.com`); Supercompute prepends `dns_prefix_*` from `group_vars/all/main.yml`. If the DNS is hosted on Cloudflare, do not enable the proxy orange icons. |
+| `sc_ns`, `sc_api`, `sc_app`, `sc_apps` | Nameserver, API, app, and apps FQDNs copied to `/etc/supercompute/hosts.yml`. `sc_ns` parent zone seeds Mac LaunchDaemon reverse-DNS. |
 
 During WireGuard reconcile, `supercompute_config` renders identity plus a mesh `hosts` list to **`/etc/supercompute/hosts.yml`** on every deployment node, with sidecars `public-endpoints.list` and (on roaming) `roaming-transit.ips`.
 
@@ -46,7 +50,7 @@ During WireGuard reconcile, `supercompute_config` renders identity plus a mesh `
 
 | Path | Purpose |
 | --- | --- |
-| `group_vars/all/main.yml` | Platform, `control_plane`, mesh CIDR, Lima/SSH defaults, DNS prefixes |
+| `group_vars/all/main.yml` | Platform, `control_plane`, mesh CIDR, Lima/SSH defaults |
 | `group_vars/all/vault.yml` | Encrypted secrets (`ansible-vault`; committed) |
 | `.vault-pass` | Vault password (gitignored; local or GHA secret) |
 
@@ -60,6 +64,7 @@ Created by automation; not committed.
 | --- | --- |
 | `known_hosts` | SSH host-key aliases for mesh and bootstrap |
 | `wireguard/` | Generated Mac `scwg0.conf` and keys synced from vault |
+| `rathole/` | Generated roaming client install scripts |
 | `lima/` | Lima instance definitions for `node_lima_guest` hosts |
 | `gha-extra-vars.yml` | GHA workflow Ansible extras (`control_plane: gha`, optional Mac pubkey) |
 | `gha-peer/` | Ephemeral CI WireGuard keys/conf on the **GitHub runner** only |
@@ -75,6 +80,8 @@ Lima **runtime** VMs live under `~/.lima/.<project>-<provider>/` (see [lima.md](
 | `/etc/supercompute/roaming-transit.ips` | Transit AllowedIPs for roaming dial helper |
 | `/usr/local/sbin/supercompute-roaming-dial` | Post-build random static dial (`shuf` + `wg set`) |
 | `/etc/wireguard/<iface>.conf` | Node WireGuard interface config |
+| `/usr/local/bin/rathole` | SHA-pinned rathole on hub and non-Lima roaming |
+| `/etc/rathole/*.toml` | Rathole server/client config (mode `0600`) |
 
 ## `docs/`
 
@@ -88,7 +95,7 @@ Starlight documentation **website** (landing page, guides). Operator runbooks ar
 uv run --locked ansible-playbook …
 ```
 
-Identity vars (`project`, `hostname`) load from `hosts.yml` → `all.vars`. Nameserver, API, app, and apps names are derived from `hostname`.
+Identity vars (`project`, `sc_ns`, `sc_api`, `sc_app`, `sc_apps`) load from `hosts.yml` → `all.vars`.
 
 ## Related
 
