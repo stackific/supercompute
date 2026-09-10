@@ -7,7 +7,7 @@ import { Tabs, TabItem } from "@astrojs/starlight/components";
 import { Card, CardGrid } from "@astrojs/starlight/components";
 import { Kbd } from "starlight-kbd/components";
 
-Supercompute is a free geo-replicated purpose-built cloud for AI-first workloads that you can self-host on own commodity hardware, inside of your laptop's VM, inside of your NAS. You can achieve high availability even with just _two_ nodes. It was created by Stackific Inc.
+Supercompute is a free geo-replicated purpose-built cloud for AI-first workloads that you can self-host on own commodity hardware, inside of your laptop's VM, inside of your NAS. You can achieve high availability even with just _two_ nodes.
 
 All you need is a static IP (because users need to reach your cloud) and a Postgres database with owner role hosted outside of the Supercompute cloud.
 
@@ -234,7 +234,7 @@ task up ENV=dev
 
 When it asks for `BECOME password`, enter your macOS password. You can run `task up` multiple times to retry if you have issues, made mistakes, or just want to be sure, because this is a rather long operation yet an idempotent one.
 
-`up` runs the `sc` and `supercompute` containers. `sc` gets `SC_API` (`https://` + `sc_api`). `supercompute` gets `SC_APP` (`https://` + `sc_app`), `SC_NS` (`sc_ns`), and `SC_APPS` (`sc_apps`).
+`up` makes `https://sc-app.example.com` available for you to configure the rest of the cluster.
 
 Please note that the speed of operations heavily depends on the network connection between the Mac and the VM and the performance of the VM/server.
 
@@ -256,22 +256,3 @@ If you can access the node, you are done with this guide.
 
 Public Task entrypoints are listed with `task --list`. Full reference: [Task commands](/reference/task/).
 
-### Next steps
-
-<CardGrid stagger>
-  <Card title="Roaming node on Apple Silicon" icon="laptop">
-    Add a Lima guest with `dev-lima`: [Get started locally with a roaming node](/start-here/get-started-roaming-node/).
-  </Card>
-  <Card title="Deploy to production" icon="rocket">
-    Configure the committed **prod** inventory with two public static nodes: [Deploy to production](/start-here/deploy-to-production/).
-  </Card>
-  <Card title="Deploy via GitHub Actions" icon="setting">
-    Run mesh lifecycle from CI—no permanent Mac WireGuard peer: [Deploy with GitHub Actions](/start-here/deploy-with-github-actions/).
-  </Card>
-  <Card title="Adding a roaming node" icon="laptop">
-    Home-lab Ubuntu host with a changing public IP: [Adding a roaming node](/guides/adding-roaming-node/).
-  </Card>
-  <Card title="Adding a public node" icon="add-document">
-    Single public VM walkthrough: [Adding a public node](/guides/adding-public-node/).
-  </Card>
-</CardGrid>

@@ -6,14 +6,14 @@ description: Step-by-step tutorial to add a home-lab Ubuntu node with rathole bo
 import { Kbd } from "starlight-kbd/components";
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-This guide walks through adding a **roaming** node: Ubuntu at home (or anywhere with a changing public IP). The home router stays closed. Two outbound connections replace a public SSH hostname and an inbound WireGuard port:
+This guide walks through adding a roaming node: Ubuntu at home (or anywhere with a changing public IP). The home router stays closed. Rathole carries bootstrap SSH: the roaming VM dials the first static hub. Two outbound connections replace a public SSH hostname and an inbound WireGuard port:
 
 | Path | What dials out | Where it lands |
 | --- | --- | --- |
 | Bootstrap SSH | Rathole **client** on the roaming VM | First static hub, **TCP 2333** |
 | Mesh traffic | WireGuard on the roaming VM | Public statics, **UDP 51830** |
 
-Your Mac (and GitHub Actions) never SSH to the home IP. They jump through `127.0.0.1:(61000 + last octet of private_address)` on the hub after the client is up.
+Your Mac (and GitHub Actions) never SSH to the roaming node's IP. They jump through `127.0.0.1:(61000 + last octet of private_address)` on the hub after the client is up.
 
 The example uses the **prod environment** and host name **`roaming-1`**. Mesh IP `.21` means hub listen port **61021**.
 
@@ -21,7 +21,7 @@ Where you see `ENV=<env>`, replace with your environment name (for example `prod
 
 :::note[What this guide does not cover]
 
-- **Lima guests** (`node_lima_guest: true`) — Apple Silicon Lima `roaming-1` uses [Get started locally with a roaming node](/start-here/get-started-roaming-node/) instead (Lima-local SSH, no rathole).
+- **Lima guests** (`node_lima_guest: true`) — Lima `roaming-1` on a Mac uses [Adding a node roaming on a Mac](/guides/adding-node-roaming-on-a-mac/) instead (Lima-local SSH, no rathole).
 
 :::
 
@@ -122,13 +122,15 @@ No `public_ip`. No `bootstrap_ssh_host`. No `node_lima_guest`. The hub jump is d
 
 ### Step 4: Install rathole on the hub and render the client script
 
-From the Mac, in the worktree:
+From the Mac:
 
 ```sh
 task rathole-client-bootstrap ENV=prod NODE=roaming-1
 ```
 
-When it asks for `BECOME password`, enter your macOS password.
+When it asks for `BECOME password`, enter your macOS password. This task is **not** `task up`. Run it from a Mac even when `control_plane: gha` — GitHub Actions cannot copy the install script onto the home VM.
+
+If the vault did not already contain rathole Noise keys and a token for this host, `rathole-client-bootstrap` writes them into `inventories/<env>/group_vars/all/vault.yml`. For a GHA inventory, **commit and push that vault file** before the next Deploy workflow, or the runner will mint different tokens and the client you just installed will not match the hub.
 
 That command:
 
@@ -256,21 +258,29 @@ This must return with no password prompt (key-based `ops` login). Do not run `ta
 | Jump `ssh … ops@127.0.0.1 -p 61021 true` from the Mac | |
 | Fingerprint in `hosts.yml` matches the VM | |
 
-### Step 8: Vault and bring up
+### Step 8: Bring up the mesh
 
-If this is a new environment, run `task vault-init ENV=<env>`, then set `vault_database_url` with `task vault-edit ENV=<env>` before the first `task up`. Existing prod: update `hosts.yml` only, then:
+If this is a new environment, run `task vault-init ENV=<env>`, then set `vault_database_url` with `task vault-edit ENV=<env>` before the first bring-up.
+
+**Mac control plane** (`control_plane: mac`):
 
 ```sh
 task up ENV=prod
 ```
 
+**GitHub Actions** (`control_plane: gha`): do **not** run `task up` on the Mac. Commit `hosts.yml` and `group_vars/all/vault.yml` (if Step 4 added rathole secrets), then Actions → **Deploy** → `up`. The workflow installs the hub server again (idempotent), jumps through the hub, and reconciles the roaming client and WireGuard.
+
 `up` reaches `roaming-1` via the rathole jump when the mesh is down, then over WireGuard after join. Roaming always initiates to the static hub; Mac↔roaming traffic relays through **static-1** (first static by name). `down` leaves rathole running so this jump still works when the mesh is gone.
 
 ### Step 9: SSH over the mesh
 
+**Mac control plane:**
+
 ```sh
 task ssh ENV=prod NODE=roaming-1
 ```
+
+**GitHub Actions:** there is no Mac WireGuard peer. Re-run Deploy with **verify**, or SSH to a static public IP.
 
 Optional on the roaming node:
 

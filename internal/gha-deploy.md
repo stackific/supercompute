@@ -44,7 +44,7 @@ The encrypted vault must contain `vault_database_url` (`postgresql://REPLACE_WIT
 | `OPS_SSH_PRIVATE_KEY` | yes | Private key for `ops` on nodes |
 | `MAC_OPERATOR_SSH_PUBLIC_KEY` | no | If set, installed into `/home/ops/.ssh/authorized_keys` |
 
-Non-Lima roaming uses rathole on the static hub (inbound **TCP 2333**). The workflow fetches the SHA-pinned rathole binary the same way as `task setup`. First known-hosts scan skips roaming until the hub jump is listening (`--skip-non-lima-roaming`); `wireguard-up` refreshes those keys through the jump. The runner jumps through the hub the same way as a Mac (`127.0.0.1` + last octet of `private_address`). `down` leaves rathole in place.
+Non-Lima roaming uses rathole on the static hub (inbound **TCP 2333**). The workflow fetches the SHA-pinned rathole binary the same way as `task setup`. It does **not** replace first-time client install: from a Mac that has `.vault-pass` and the ops key, run `task rathole-client-bootstrap ENV=<env> NODE=<roaming-host>`, copy the script onto the VM (console/LAN), prove jump SSH, and **commit `vault.yml`** if Noise keys/tokens were just created. Then Deploy `up`. First known-hosts scan skips roaming until the hub jump is listening (`--skip-non-lima-roaming`); `wireguard-up` refreshes those keys through the jump. The runner jumps through the hub the same way as a Mac (`127.0.0.1` + last octet of `private_address`). `down` leaves rathole in place.
 
 Nodes must allow passwordless `sudo` for `ops` (GHA cannot prompt for a become password).
 

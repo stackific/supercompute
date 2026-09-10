@@ -1,15 +1,15 @@
 ---
-title: Get started locally with a roaming node
-description: Add a Lima roaming guest on Apple Silicon using the dev-lima environment.
+title: Adding a node roaming on a Mac
+description: Add a Lima roaming guest on your Mac using the dev-lima environment.
 ---
 
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 import { Kbd } from "starlight-kbd/components";
 import { Card, CardGrid } from "@astrojs/starlight/components";
 
-This guide extends [Get started locally](/start-here/get-started/) with a **Lima roaming guest** (`roaming-1`) on Apple Silicon, using the **`dev-lima`** inventory. Mesh CIDR is `10.217.81.0/24` (disjoint from **`dev`** at `10.217.80.0/24`).
+This guide extends [Get started locally](/start-here/get-started/) with a Lima roaming guest (`roaming-1`) on your Mac, using the `dev-lima` inventory.
 
-Finish [Get started locally](/start-here/get-started/) first — you need `task setup`, a prepared `static-1` VM, and familiarity with the `dev` flow. Lima guests use **Lima-local SSH**, not rathole. For a home-lab Ubuntu VM with a changing public IP, use [Adding a roaming node](/guides/adding-roaming-node/) instead.
+Finish [Get started locally](/start-here/get-started/) first — you need `task setup`, a prepared `static-1` VM, and familiarity with the `dev` flow. For a home-lab Ubuntu VM with a changing public IP, use [Adding a roaming node](/guides/adding-roaming-node/) instead.
 
 :::note[One static VM, two environments]
 
@@ -19,9 +19,9 @@ Finish [Get started locally](/start-here/get-started/) first — you need `task 
 
 ### Prerequisites
 
-You need Apple Silicon, Lima, a completed [Get started locally](/start-here/get-started/) setup, and an external Postgres instance (same requirement as dev — you set the connection URL in the dev-lima vault).
+You need a Mac, Lima, a completed [Get started locally](/start-here/get-started/) setup, and an external Postgres instance (same requirement as dev — you set the connection URL in the dev-lima vault).
 
-- macOS on **Apple Silicon**
+- A Mac
 - [Lima](https://lima-vm.io/docs/installation/)
 - Completed [Get started locally](/start-here/get-started/) (`task setup`, prepared `static-1`, familiar with the `dev` flow)
 - Operator SSH key at `~/.ssh/<project>-dev-lima` (inventory path `ssh_private_key_file`)

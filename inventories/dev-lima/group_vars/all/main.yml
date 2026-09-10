@@ -1,5 +1,5 @@
 ---
-# Dev-lima mesh: one static public hub + one Lima roaming guest on Apple Silicon.
+# Dev-lima mesh: one static public hub + one Lima roaming guest on a Mac.
 # Mesh CIDR is disjoint from dev (10.217.80.0/24) and typical prod (10.217.79.0/24).
 project_root: "{{ playbook_dir | dirname }}"
 provider_state_dir: "{{ project_root }}/.state/{{ inventory_slug }}"

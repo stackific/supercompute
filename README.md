@@ -1,6 +1,6 @@
 # Provider automation (worktree root)
 
-Provider automation for public-endpoint WireGuard meshes. **`dev`** is one static hub; **`dev-lima`** adds a Lima roaming guest on Apple Silicon.
+Provider automation for public-endpoint WireGuard meshes. **`dev`** is one static hub; **`dev-lima`** adds a Lima roaming guest on a Mac.
 
 **Operator documentation:** [`internal/`](internal/README.md) (runbooks and reference).
 

@@ -12,7 +12,7 @@ This worktree automates **provider infrastructure**: WireGuard meshes, optional 
 | **WireGuard** | Mac controller and/or Ubuntu nodes on `scwg0` (UDP 51830); post-build roaming dial |
 | **Bootstrap SSH** | Public endpoint, Lima-local SSH, or rathole jump via the static hub (non-Lima roaming) |
 | **Vault** | Encrypted secrets per provider; WireGuard keys; rathole Noise/tokens when non-Lima roaming exists |
-| **Lima** | Factory for `node_lima_guest` Ubuntu guests on Apple Silicon |
+| **Lima** | Factory for `node_lima_guest` Ubuntu guests on a Mac |
 | **Cluster** | Runtime software on `deployment` group hosts (part of every `up`) |
 | **GHA (optional)** | Manual Actions deploy for `control_plane: gha` inventories |
 
@@ -20,7 +20,7 @@ The project does **not** provision VPS instances or parent-zone DNS records. Ope
 
 ## Controller and nodes
 
-- **Mac control plane (`control_plane: mac`)** — macOS on Apple Silicon. Runs WireGuard (`wg-quick`), Task entrypoints, Lima (for dev guests), and Ansible from the Mac. Mesh peer at `node_controller_address` (usually `.1`).
+- **Mac control plane (`control_plane: mac`)** — Runs WireGuard (`wg-quick`), Task entrypoints, Lima (for dev guests), and Ansible from the Mac. Mesh peer at `node_controller_address` (usually `.1`).
 - **GHA control plane (`control_plane: gha`)** — GitHub-hosted runner mutates the mesh; **no** Mac peer. See [gha-deploy.md](gha-deploy.md).
 - **Static public hosts** — Ubuntu 26.04 `x86_64` VMs with stable public IPs (`static-1`, …). Build-up hub is the first static; day-2 roaming may dial any public static when forwarding is enabled on all of them.
 - **Roaming hosts** — `roaming: true`. Initiate WireGuard to a public static; no inbound UDP 51830 on home routers.

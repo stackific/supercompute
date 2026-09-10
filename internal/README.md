@@ -15,7 +15,7 @@ Markdown runbooks and reference at the **worktree root** (`internal/`). The publ
 | Document | Audience |
 | --- | --- |
 | [setup-dev.md](setup-dev.md) | `ENV=dev` — public static hub (`control_plane: mac`) |
-| [lima.md](lima.md) | `ENV=dev-lima` — Lima `node_lima_guest` roaming on Apple Silicon |
+| [lima.md](lima.md) | `ENV=dev-lima` — Lima `node_lima_guest` roaming on a Mac |
 | [setup-prod.md](setup-prod.md) | Operator `prod` mesh (two static nodes) |
 | [gha-deploy.md](gha-deploy.md) | Manual GitHub Actions deploy (`control_plane: gha`) |
 | [roaming-nodes.md](roaming-nodes.md) | Non-Lima dynamic-IP roaming via rathole SSH |

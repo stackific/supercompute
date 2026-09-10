@@ -147,11 +147,12 @@ key-based `ops` login.
 ## 6. Bring-up sequence
 
 1. Finish §1–§5.
-2. `task up ENV=prod`
+2. If `control_plane: mac`, run `task up ENV=prod`.
+   If `control_plane: gha`, commit `hosts.yml` and `group_vars/all/vault.yml` (rathole secrets from §4), then Actions → Deploy → `up`. Do not Mac-`task up` a GHA inventory. `task rathole-client-bootstrap` on a Mac is still required once so the install script exists.
    - Reconciles rathole server on the hub; refreshes roaming known_hosts through the jump.
    - Reaches roaming via mesh if already up, else via the rathole jump.
    - On roaming: reconciles the rathole **client** config, then WireGuard as today.
-3. Spot-check: `task ssh ENV=prod NODE=roaming-1`.
+3. Spot-check: `task ssh ENV=prod NODE=roaming-1` (Mac control plane). GHA inventories have no Mac mesh peer; use Deploy **verify** or SSH to a static public IP.
 
 ## 7. Day-2 operations
 

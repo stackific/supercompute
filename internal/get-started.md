@@ -1,6 +1,6 @@
 # Get started
 
-Minimal path from a fresh clone to a working **`dev`** mesh (one public static hub). For Lima roaming on Apple Silicon, use **`dev-lima`** — [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx).
+Minimal path from a fresh clone to a working **`dev`** mesh (one public static hub). For Lima roaming on a Mac, use **`dev-lima`** — [Adding a node roaming on a Mac](../docs/src/content/docs/guides/adding-node-roaming-on-a-mac.mdx).
 
 ## 1. Install tools
 
@@ -63,7 +63,7 @@ To stop without wiping vault or `.state/`, use `task down ENV=dev CONFIRM=down-d
 | Goal | Document |
 | --- | --- |
 | Full `dev` walkthrough | [setup-dev.md](setup-dev.md) |
-| Lima roaming guest | [lima.md](lima.md), [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx) |
+| Lima roaming guest | [lima.md](lima.md), [Adding a node roaming on a Mac](../docs/src/content/docs/guides/adding-node-roaming-on-a-mac.mdx) |
 | Production mesh | [setup-prod.md](setup-prod.md) |
 | GHA-managed deploy | [gha-deploy.md](gha-deploy.md) |
 | Home lab roaming (rathole) | [roaming-nodes.md](roaming-nodes.md) |

@@ -105,4 +105,4 @@ task rathole-client-bootstrap ENV=prod NODE=roaming-1
 task up ENV=prod
 ```
 
-See [get-started.md](get-started.md) and public [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx).
+See [get-started.md](get-started.md) and public [Adding a node roaming on a Mac](../docs/src/content/docs/guides/adding-node-roaming-on-a-mac.mdx).

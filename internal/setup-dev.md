@@ -6,7 +6,7 @@ The **`dev`** inventory is a `provider.platform: public` WireGuard mesh with one
 
 Mesh CIDR defaults to **`10.217.80.0/24`** (disjoint from **`dev-lima`** at `10.217.81.0/24` and typical prod `10.217.79.0/24`).
 
-For a Lima roaming guest on Apple Silicon, use **`dev-lima`** instead — see [lima.md](lima.md) and [Get started locally with a roaming node](../docs/src/content/docs/start-here/get-started-roaming-node.mdx).
+For a Lima roaming guest on a Mac, use **`dev-lima`** instead — see [lima.md](lima.md) and [Adding a node roaming on a Mac](../docs/src/content/docs/guides/adding-node-roaming-on-a-mac.mdx).
 
 `provider.platform: lima` and `provider.platform: vps` are refused — use `public`.
 

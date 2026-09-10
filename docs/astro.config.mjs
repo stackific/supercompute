@@ -29,7 +29,6 @@ export default defineConfig({
           label: "Start Here",
           items: [
             { label: "Get started locally", slug: "start-here/get-started" },
-            { label: "Get started locally with a roaming node", slug: "start-here/get-started-roaming-node" },
             { label: "Deploy to production", slug: "start-here/deploy-to-production" },
             { label: "Deploy with GitHub Actions", slug: "start-here/deploy-with-github-actions" },
           ],
@@ -39,6 +38,7 @@ export default defineConfig({
           items: [
             { label: "Adding a public node", slug: "guides/adding-public-node" },
             { label: "Adding a roaming node", slug: "guides/adding-roaming-node" },
+            { label: "Adding a node roaming on a Mac", slug: "guides/adding-node-roaming-on-a-mac" },
           ],
         },
         {

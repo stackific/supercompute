@@ -369,13 +369,13 @@ Install rathole on the static hub and render a one-shot install script for a non
 task rathole-client-bootstrap ENV=prod NODE=roaming-1
 ```
 
-Requires `task setup` first (SHA-pinned binary in `.vendor/rathole/`). Writes `.state/<env>/rathole/<host>-install.sh`. Follow [Adding a roaming node](/guides/adding-roaming-node/) to open hub TCP **2333**, copy the script to the VM, run it as root, and prove jump SSH before `task up`. Lima guests (`node_lima_guest`) do not use this task.
+Requires `task setup` first (SHA-pinned binary in `.vendor/rathole/`). Writes `.state/<env>/rathole/<host>-install.sh`. Follow [Adding a roaming node](/guides/adding-roaming-node/) to open hub TCP **2333**, copy the script to the VM, run it as root, and prove jump SSH. Then `task up` (Mac control plane) or Actions Deploy `up` (`control_plane: gha`). This task is required once even for GHA inventories; commit `vault.yml` if it added rathole secrets. Lima guests (`node_lima_guest`) do not use this task.
 
 ---
 
 ### Lima (`ENV=<env>` with `node_lima_guest` hosts)
 
-These tasks require `ENV=<slug>` for an inventory that defines `node_lima_guest` hosts (typically **`dev-lima`**). See [Get started locally with a roaming node](/start-here/get-started-roaming-node/).
+These tasks require `ENV=<slug>` for an inventory that defines `node_lima_guest` hosts (typically **`dev-lima`**). See [Adding a node roaming on a Mac](/guides/adding-node-roaming-on-a-mac/).
 
 #### `task lima-up ENV=<env>`
 
@@ -411,7 +411,7 @@ task up ENV=dev
 task ssh ENV=dev NODE=static-1
 ```
 
-**dev-lima** — see [Get started locally with a roaming node](/start-here/get-started-roaming-node/):
+**dev-lima** — see [Adding a node roaming on a Mac](/guides/adding-node-roaming-on-a-mac/):
 
 ```sh
 task setup

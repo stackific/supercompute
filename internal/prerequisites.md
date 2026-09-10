@@ -4,7 +4,7 @@
 
 | Requirement | Used for |
 | --- | --- |
-| macOS Apple Silicon | Mac control plane (`task up`), Lima guests |
+| A Mac | Mac control plane (`task up`), Lima guests |
 | [Task](https://taskfile.dev/installation/) | All `task …` entrypoints |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | Locked Ansible venv (`uv sync --locked`) |
 | WireGuard (`wg`, `wg-quick`) | Mesh bring-up and status |

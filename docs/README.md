@@ -1,6 +1,6 @@
 # How to deploy on Cloudflare Pages
 
-Starlight site under `docs/` (Bun + `astro build` → `dist`). Operator runbooks are in **`../internal/`** at the worktree root. Home-lab roaming (rathole) is `src/content/docs/guides/adding-roaming-node.mdx`; Lima guests stay on `src/content/docs/start-here/get-started-roaming-node.mdx`. Cloudflare Pages hosts this site only.
+Starlight site under `docs/` (Bun + `astro build` → `dist`). Operator runbooks are in **`../internal/`** at the worktree root. Home-lab roaming (rathole) is `src/content/docs/guides/adding-roaming-node.mdx`; Lima guests are `src/content/docs/guides/adding-node-roaming-on-a-mac.mdx`. Cloudflare Pages hosts this site only.
 
 ## Pages build settings
 

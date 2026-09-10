@@ -14,7 +14,7 @@ whatever `inventories/<slug>/` directory you are configuring). Below,
 
 ## Prerequisites
 
-- macOS on Apple Silicon (controller)
+- A Mac (controller)
 - [Task](https://taskfile.dev/installation/)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - WireGuard tools (`wg`, `wg-quick`)
