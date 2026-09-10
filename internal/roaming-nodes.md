@@ -91,7 +91,7 @@ task rathole-client-bootstrap ENV=prod NODE=roaming-1
 
 That ensures vault Noise keys and the per-host token, installs **rathole
 server** on `static-1` over public SSH, and writes
-`.state/prod/rathole/roaming-1-install.sh`.
+`.state/prod/rathole/roaming-1-install.sh` and `roaming-1-uninstall.sh`.
 
 Copy the script to the roaming VM (LAN `scp`, or USB/console paste) and run it
 as root:
@@ -102,6 +102,9 @@ ssh -t ops@<roaming-lan-ip> 'sudo bash ~/roaming-1-install.sh'
 ```
 
 The client retries until the hub server is reachable on TCP **2333**.
+
+To remove the client, copy `roaming-1-uninstall.sh` the same way and run it
+as root. That does not remove rathole-server on the hub.
 
 Confirm on the roaming VM:
 

@@ -2,20 +2,24 @@
 - name: Require Ubuntu 26.04 with the declared host architecture before bootstrap
   ansible.builtin.assert:
     that:
-      - node_ubuntu_version == '26.04'
-      - node_ubuntu_codename == 'resolute'
+      - ansible_facts['distribution'] == 'Ubuntu'
       - >
           node_host_architecture == (
             'aarch64' if (node_lima_guest | default(false) | bool) else 'x86_64'
           )
-      - ansible_facts['distribution'] == 'Ubuntu'
+      - ansible_facts['architecture'] == node_host_architecture
+      - node_ubuntu_version == '26.04'
+      - node_ubuntu_codename == 'resolute'
       - ansible_facts['distribution_version'] == node_ubuntu_version
       - ansible_facts['distribution_release'] == node_ubuntu_codename
-      - ansible_facts['architecture'] == node_host_architecture
     fail_msg: >-
-      Bootstrap requires Ubuntu {{ node_ubuntu_version }}
-      ({{ node_ubuntu_codename }})
-      {{ 'aarch64 (node_lima_guest)' if (node_lima_guest | default(false) | bool) else 'x86_64' }};
+      Bootstrap requires Ubuntu
+      {{ node_ubuntu_version }} ({{ node_ubuntu_codename }})
+      {{
+        'aarch64 (node_lima_guest)'
+        if (node_lima_guest | default(false) | bool)
+        else 'x86_64'
+      }};
       {{ inventory_hostname }} declares {{ node_host_architecture | default('unknown') }}
       and reports
       {{ ansible_facts['distribution'] | default('unknown') }}

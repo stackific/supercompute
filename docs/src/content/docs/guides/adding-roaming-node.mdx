@@ -137,7 +137,7 @@ That command:
 1. Pins known_hosts for statics (skips roaming until the jump listens).
 2. Ensures vault Noise keys and a per-host token.
 3. Installs **rathole server** on the first static hub over public SSH.
-4. Writes `.state/prod/rathole/roaming-1-install.sh` (mode `0700`; contains the token — keep `.state/` off git).
+4. Writes `.state/prod/rathole/roaming-1-install.sh` and `roaming-1-uninstall.sh` (mode `0700`; the install script contains the token — keep `.state/` off git).
 
 On the hub, confirm the server and the per-host listen port:
 
@@ -181,6 +181,8 @@ sudo bash ./roaming-1-install.sh
 ```
 
 The script must run as root (`sudo bash`). When it finishes you should see `rathole-client.service` **active**.
+
+To remove the client later, copy `.state/<env>/rathole/roaming-1-uninstall.sh` the same way and run it as root. That stops the service and deletes `/etc/rathole` and `/usr/local/bin/rathole`. It does **not** remove rathole from the hub.
 
 ### Step 6: Confirm the reverse tunnel
 
@@ -297,6 +299,7 @@ systemctl status rathole-client
 | `ssh_ed25519_sha256` for `roaming-1` | Inventory + known_hosts contract |
 | Vault password + encrypted `vault.yml` | Mesh keys, rathole Noise keys, tokens |
 | `.state/<env>/rathole/<host>-install.sh` | Re-run on a rebuilt VM; contains the token |
+| `.state/<env>/rathole/<host>-uninstall.sh` | Stop and remove the rathole client on the VM |
 
 The repository does **not** store rathole tokens in plaintext.
 

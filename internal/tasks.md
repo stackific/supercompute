@@ -102,6 +102,7 @@ task up ENV=dev-lima
 task setup
 task rathole-client-bootstrap ENV=prod NODE=roaming-1
 # copy .state/prod/rathole/roaming-1-install.sh to the VM; run as root
+# copy roaming-1-uninstall.sh the same way to remove the client later
 task up ENV=prod
 ```
 

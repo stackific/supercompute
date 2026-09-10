@@ -99,7 +99,8 @@ tasks:
         ENV="{{.ENV}}" uv run --locked python scripts/vault.py ensure-secrets
         bash scripts/ansible-playbook.sh "{{.ENV}}" --ask-become-pass playbooks/rathole-server.yml
         uv run --locked python scripts/rathole.py render-client --provider "{{.ENV}}" --node "{{.NODE}}"
-        echo "Copy that install script to {{.NODE}} and run it as root, then prove jump SSH and task up."
+        echo "Copy .state/{{.ENV}}/rathole/{{.NODE}}-install.sh to {{.NODE}} and run it as root, then prove jump SSH and task up."
+        echo "To remove the client later: copy {{.NODE}}-uninstall.sh and run it as root."
 
   wg-syntax:
     internal: true
